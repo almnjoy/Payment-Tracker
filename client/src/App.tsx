@@ -19,6 +19,9 @@ import ClientDetail from "@/pages/admin/ClientDetail";
 import AdminDocuments from "@/pages/admin/Documents";
 import AdminInvoices from "@/pages/admin/Invoices";
 import AdminSettings from "@/pages/admin/Settings";
+import AccountSummaries from "@/pages/admin/AccountSummaries";
+import SpendingHabits from "@/pages/admin/SpendingHabits";
+import FinanceTracker from "@/pages/admin/FinanceTracker";
 
 function Router() {
   return (
@@ -41,6 +44,11 @@ function Router() {
       <Route path="/admin/documents" component={AdminDocuments} />
       <Route path="/admin/invoices" component={AdminInvoices} />
       <Route path="/admin/settings" component={AdminSettings} />
+      
+      {/* New Admin Finance Routes */}
+      <Route path="/admin/accounts" component={AccountSummaries} />
+      <Route path="/admin/spending" component={SpendingHabits} />
+      <Route path="/admin/finance" component={FinanceTracker} />
       
       <Route component={NotFound} />
     </Switch>

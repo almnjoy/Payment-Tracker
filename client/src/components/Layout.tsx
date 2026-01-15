@@ -11,7 +11,10 @@ import {
   Settings, 
   Menu,
   X,
-  Bell
+  Bell,
+  Wallet,
+  TrendingUp,
+  PieChart
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -27,6 +30,7 @@ export function Layout({ children, role }: LayoutProps) {
   const [location, setLocation] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Client Links (No grouping needed for now)
   const clientLinks = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/client/dashboard" },
     { icon: CreditCard, label: "Payments", href: "/client/payments" },
@@ -34,15 +38,32 @@ export function Layout({ children, role }: LayoutProps) {
     { icon: User, label: "Profile", href: "/client/profile" },
   ];
 
-  const adminLinks = [
-    { icon: LayoutDashboard, label: "Overview", href: "/admin/dashboard" },
-    { icon: Users, label: "Clients", href: "/admin/clients" },
-    { icon: FileText, label: "Documents", href: "/admin/documents" },
-    { icon: FilePlus, label: "Invoice Generator", href: "/admin/invoices" },
-    { icon: Settings, label: "Settings", href: "/admin/settings" },
+  // Admin Links with Grouping
+  const adminGroups = [
+    {
+      label: "Operations",
+      items: [
+        { icon: LayoutDashboard, label: "Overview", href: "/admin/dashboard" },
+        { icon: Users, label: "Clients", href: "/admin/clients" },
+        { icon: FileText, label: "Documents", href: "/admin/documents" },
+        { icon: FilePlus, label: "Invoice Generator", href: "/admin/invoices" },
+      ]
+    },
+    {
+      label: "Finance",
+      items: [
+        { icon: Wallet, label: "Account Summaries", href: "/admin/accounts" },
+        { icon: TrendingUp, label: "Finance Tracker", href: "/admin/finance" },
+        { icon: PieChart, label: "Spending Habits", href: "/admin/spending" },
+      ]
+    },
+    {
+      label: "System",
+      items: [
+        { icon: Settings, label: "Settings", href: "/admin/settings" },
+      ]
+    }
   ];
-
-  const links = role === "admin" ? adminLinks : clientLinks;
 
   const handleLogout = () => {
     setLocation("/");
@@ -81,25 +102,57 @@ export function Layout({ children, role }: LayoutProps) {
         </div>
 
         <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-          {links.map((link) => {
-            const Icon = link.icon;
-            const isActive = location === link.href;
-            return (
-              <Link key={link.href} href={link.href}>
-                <a 
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                    isActive 
-                      ? "bg-primary/10 text-primary" 
-                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                  )}
-                >
-                  <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
-                  {link.label}
-                </a>
-              </Link>
-            );
-          })}
+          {role === "client" ? (
+             // Client Links (Flat List)
+             clientLinks.map((link) => {
+              const Icon = link.icon;
+              const isActive = location === link.href;
+              return (
+                <Link key={link.href} href={link.href}>
+                  <a 
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
+                      isActive 
+                        ? "bg-primary/10 text-primary" 
+                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    )}
+                  >
+                    <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
+                    {link.label}
+                  </a>
+                </Link>
+              );
+            })
+          ) : (
+            // Admin Links (Grouped)
+            adminGroups.map((group, groupIndex) => (
+              <div key={group.label} className={cn("mb-6", groupIndex !== 0 && "pt-2")}>
+                {groupIndex !== 0 && <div className="mx-3 border-t border-gray-100 mb-4" />}
+                <h3 className="px-3 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  {group.label}
+                </h3>
+                {group.items.map((link) => {
+                  const Icon = link.icon;
+                  const isActive = location === link.href;
+                  return (
+                    <Link key={link.href} href={link.href}>
+                      <a 
+                        className={cn(
+                          "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
+                          isActive 
+                            ? "bg-primary/10 text-primary" 
+                            : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                        )}
+                      >
+                        <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
+                        {link.label}
+                      </a>
+                    </Link>
+                  );
+                })}
+              </div>
+            ))
+          )}
         </nav>
 
         <div className="p-4 border-t border-gray-100">

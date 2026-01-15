@@ -1,0 +1,153 @@
+Update the existing portal UI (React + Tailwind) with UI-only changes. Do not add real backend, database, Stripe, or Plaid integrations. Use mock data and front-end state only.
+
+GOAL:
+Expand the Admin portal navigation and add finance-focused pages while keeping everything mock. Preserve the current investor-ready SaaS look and brand styling.
+
+DO NOT:
+- Implement real authentication changes
+- Add a database
+- Add real Stripe/Plaid integrations
+- Add API endpoints
+- Add real file uploads
+
+USE:
+- Mock data arrays in state
+- Front-end-only interactions (modals, tabs, routing)
+
+1) ADMIN SIDEBAR NAVIGATION (ADD GROUPING LABELS)
+In the Admin sidebar, add visual group labels and organize menu items into three grouped sections (with subtle divider + section title text):
+
+SECTION LABEL: "Operations"
+- Overview
+- Clients
+- Documents
+- Invoice Generator
+
+SECTION LABEL: "Finance"
+- Account Summaries
+- Finance Tracker
+- Spending Habits
+
+SECTION LABEL: "System"
+- Settings
+
+Design of labels:
+- Small uppercase or semibold text
+- Gray tone (#8A8A8A or similar)
+- Add spacing above/below
+- Add a thin divider line between sections
+
+Make sure all sidebar routes work and highlight the active route.
+
+2) ADMIN SETTINGS PAGE: EXTERNAL ACCOUNTS SECTION (UI ONLY)
+On the Admin Settings page, add a new card section titled "External Accounts".
+
+Include:
+- Button: "Add Account" that opens a modal
+- A list/table of linked accounts (mock array stored in front-end state)
+
+Each account row should include:
+- Provider (icon + name): example providers "Plaid", "Stripe", "Chase (Mock)", "Vanguard (Mock)"
+- Account nickname (ex: "Main Checking", "Client Payments", "Brokerage")
+- Status badge (mock): Linked / Needs Auth / Error
+- Last sync timestamp (mock)
+- Actions: "Manage" (placeholder button) and "Unlink" (removes from mock state)
+
+Add Account Modal:
+- Title: "Link an Account"
+- Options as selectable cards/buttons:
+  - Plaid (Bank accounts)
+  - Stripe (Payments)
+  - Manual (I will enter data myself)
+Selecting an option should add a new mock account entry to the list and close the modal.
+
+3) NEW PAGE: ACCOUNT SUMMARIES (ADMIN)
+Create a new Admin page/route: "Account Summaries"
+
+Layout:
+- Page header: "Account Summaries" + subtitle
+- Top KPI cards (mock):
+  - Total Cash
+  - Total Debt
+  - Monthly Bills
+  - Net Worth
+- Below: a responsive grid of account cards, one card per linked account (use the mock External Accounts list if available; otherwise use a local mock list)
+
+Each account card shows:
+- Account name
+- Provider
+- Account type (checking, brokerage, payments, credit, etc.)
+- Balance (mock)
+- 30-day change (mock)
+- Button: "View Details" (routes to a placeholder details page or opens a placeholder modal)
+
+Add a subtle accent stripe on the left of each card using either:
+- Blue #007BFF
+- Orange #FF6A00
+
+4) NEW PAGE: SPENDING HABITS (ADMIN)
+Create a new Admin page/route: "Spending Habits"
+
+Layout:
+- Page header
+- Filters row (UI only):
+  - Month dropdown
+  - Account dropdown
+  - Category dropdown
+- Chart area using Recharts with mock spending categories:
+  - Category breakdown (pie or bar)
+- Transactions list (mock) with:
+  - Merchant/name
+  - Date
+  - Amount
+  - Category badge
+
+5) NEW PAGE: FINANCE TRACKER (ADMIN) WITH TABS
+Create a new Admin page/route: "Finance Tracker"
+
+Add top tabs:
+- Income
+- Bills
+- Debts
+- Holdings
+
+For each tab:
+- Summary KPI cards (mock totals relevant to the tab)
+- Table/list of entries (mock)
+- Button: "Add Entry" opens a modal
+
+Add Entry Modal fields (UI only):
+- Type (dropdown, mock types)
+- Name
+- Amount
+- Date
+- Recurring toggle (yes/no)
+- If recurring yes: Frequency dropdown (Weekly, Bi-weekly, Monthly, Quarterly, Yearly)
+
+Also include a clearly labeled section inside each tab:
+"Auto entries from External Accounts (Coming soon)"
+- Show a disabled-looking panel or placeholder list
+- Text indicating this will pull from linked accounts later
+
+6) DESIGN REQUIREMENTS (MUST KEEP CONSISTENT)
+Use the existing Quick IT Projects brand style:
+- Primary Blue: #007BFF
+- Primary Orange: #FF6A00
+- Soft Black: #111111
+- Gray: #8A8A8A
+- White: #FFFFFF
+Typography:
+- Inter font (or existing font stack already in the project)
+UI feel:
+- Rounded cards
+- Soft shadows (shadow-sm/shadow-md)
+- Clean spacing and alignment
+- Subtle motion is okay (Framer Motion) but keep it tasteful
+
+7) NAVIGATION + PLACEHOLDER LINKS
+- Ensure every new sidebar item routes correctly
+- Buttons should either navigate to a page or open a modal (no dead buttons)
+- Use temporary placeholder links for “Manage”, “View Details”, and any future features
+
+DELIVERABLE:
+A working UI-only build with the updated Admin sidebar grouping, new finance pages, and External Accounts settings section, all powered by mock data and front-end state.
