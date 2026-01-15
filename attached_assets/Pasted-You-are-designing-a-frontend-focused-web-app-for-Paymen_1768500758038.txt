@@ -1,0 +1,228 @@
+You are designing a frontend-focused web app for Payment and Finance managment.
+
++ This phase is DESIGN + FLOW ONLY.
+
+DO NOT implement:
+- real authentication
+- databases
+- Stripe
+- APIs
+- backend logic
+
+Use:
+- React (or Next.js if preferred)
+- Tailwind CSS
+- clean component structure
+- placeholder data only
+
+All navigation can use temporary links and mock states.
+
++ GOAL
+Create a modern, clean, tech-styled portal that visually establishes:
+- Landing + Login experience
+- New user creation flow
+- Client portal
+- Admin portal
+
+The app should feel like a real SaaS dashboard, even though everything is mock.
+
++ BRAND STYLE (MUST FOLLOW)
+Colors
+Primary Blue: #007BFF
+Primary Orange: #FF6A00
+Soft Black: #111111
+Gray: #8A8A8A
+White: #FFFFFF
+
++ Typography
+Font stack:
+Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
+
+
+Style:
+- Large bold headlines
+- Clean spacing
+- Soft shadows
+- Rounded cards and buttons
+- Light tech/SaaS feel
+
+Buttons
+- Primary:
+-- Orange background
+-- White text
+-- Rounded full
+-- Subtle hover scale + shadow
+- Secondary:
+-- Blue outline
+-- Blue text
+-- Blue fill on hover
+
++ REQUIRED PAGES / SCREENS
+1. Landing / Login Page
+Includes:
+- logo placeholder
+- Username
+- Password
+- Buttons:
+-- Login
+-- “New user?”
+-- “Forgot password?”
+
+Temporary behavior:
+Login → Client or Admin landing page
+New user → New User Creation page
+
+Design focus:
+- clean centered card
+- brand colors
+- modern SaaS login look
+
+2. New User Creation Page
+Includes:
+- Username
+- Password
+- Magic Number field
+- Create Account button
+- Back to login
+
+Text note:
+“This is invite-only. Enter your magic number to create your account.”
+
+No logic. Just UI.
+
+3. Client Portal
+Main layout:
+- Left sidebar navigation
+- Top header bar
+- Main content panels
+
+Sidebar:
+- Dashboard
+- Payments
+- Documents
+- Profile
+- Logout
+
+Pages:
+Client Dashboard
+Cards for:
+- Current amount due
+- Last payment
+- Reason for charge (lease / agreement)
+- Pay Now button
+
+Client Payments
+- Payment history list
+- “Pay Now” button (fake)
+- Placeholder status badges
+
+Client Documents
+- File cards (Lease, Receipts, Notices)
+- View / Download buttons (no real files)
+
+Client Profile
+- Name
+- Email
+- Phone
+- Reset password button (visual only)
+
+All data fake.
+
+4. Admin Portal
+Main layout:
+- Left sidebar
+- Top header
+- Larger dashboard feel
+
+Sidebar:
+- Overview
+- Clients
+- Documents
+- Invoices
+- Invoice Generator
+- Settings
+- Logout
+
+Pages:
+Admin Overview
+
+Dashboard cards:
+- Total collected
+- Outstanding balance
+- Overdue count
+- Active clients
+Recent activity list (fake).
+
+Clients
+- Client list table
+- Click → Client Detail page
+
+Client Detail
+Cards:
+- Client info
+- Why they are paying
+- How much owed
+- Payment history
+- Overdue status
+
+Buttons:
+- Generate Invoice
+- Upload Document
+
+Documents:
+- Upload area (fake)
+- Document list grouped by client
+
+Invoice Generator:
+- Select client (fake dropdown)
+- Amount
+- Due date
+- Generate invoice button
+
+Settings:
+- Placeholder Stripe connection card
+- Notification settings toggles
+
++ NAVIGATION
+- Use React Router or Next router.
+- All navigation must work.
+- All buttons should route somewhere.
+- Use fake data objects to populate UI.
+
++ COMPONENT STYLE
+
+- Use reusable components:
+- Sidebar
+- Topbar
+- Dashboard cards
+- Tables
+- Status pills
+- Modals (optional)
+- Buttons
+
+Visual direction:
+- Rounded cards
+- Soft drop shadows
+- White background
+- Blue + orange highlights
+- Subtle motion if easy
+
++ IMPORTANT
+
+This build is visual only.
+
+No:
+- Supabase
+- Stripe
+- real auth
+- real uploads
+- real storage
+
+Everything should be mock but look production-quality.
+
++ FINAL RESULT SHOULD FEEL LIKE
+- A real startup portal
+- Investor-ready UI
+- Clear admin vs client separation
+- Branded to Quick IT Projects
+- Ready to later “plug in” backend logic
