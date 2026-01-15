@@ -5,12 +5,43 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 
+import LoginPage from "@/pages/auth/LoginPage";
+import RegisterPage from "@/pages/auth/RegisterPage";
+
+import ClientDashboard from "@/pages/client/Dashboard";
+import ClientPayments from "@/pages/client/Payments";
+import ClientDocuments from "@/pages/client/Documents";
+import ClientProfile from "@/pages/client/Profile";
+
+import AdminDashboard from "@/pages/admin/Dashboard";
+import AdminClients from "@/pages/admin/Clients";
+import ClientDetail from "@/pages/admin/ClientDetail";
+import AdminDocuments from "@/pages/admin/Documents";
+import AdminInvoices from "@/pages/admin/Invoices";
+import AdminSettings from "@/pages/admin/Settings";
+
 function Router() {
   return (
     <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
+      {/* Public Routes */}
+      <Route path="/" component={LoginPage} />
+      <Route path="/register" component={RegisterPage} />
+      <Route path="/forgot-password" component={LoginPage} /> {/* Placeholder */}
+      
+      {/* Client Routes */}
+      <Route path="/client/dashboard" component={ClientDashboard} />
+      <Route path="/client/payments" component={ClientPayments} />
+      <Route path="/client/documents" component={ClientDocuments} />
+      <Route path="/client/profile" component={ClientProfile} />
+      
+      {/* Admin Routes */}
+      <Route path="/admin/dashboard" component={AdminDashboard} />
+      <Route path="/admin/clients" component={AdminClients} />
+      <Route path="/admin/clients/:id" component={ClientDetail} />
+      <Route path="/admin/documents" component={AdminDocuments} />
+      <Route path="/admin/invoices" component={AdminInvoices} />
+      <Route path="/admin/settings" component={AdminSettings} />
+      
       <Route component={NotFound} />
     </Switch>
   );
