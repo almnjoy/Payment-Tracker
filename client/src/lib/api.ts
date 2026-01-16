@@ -223,31 +223,35 @@ export function useAdminExternalAccounts() {
   });
 }
 
-export function useClientDashboard() {
+export function useClientDashboard(asClientId?: string) {
+  const params = asClientId ? `?asClientId=${asClientId}` : "";
   return useQuery<ClientDashboard>({
-    queryKey: ["client", "dashboard"],
-    queryFn: () => fetchApi("/api/client/dashboard"),
+    queryKey: ["client", "dashboard", asClientId],
+    queryFn: () => fetchApi(`/api/client/dashboard${params}`),
   });
 }
 
-export function useClientInvoices() {
+export function useClientInvoices(asClientId?: string) {
+  const params = asClientId ? `?asClientId=${asClientId}` : "";
   return useQuery<Invoice[]>({
-    queryKey: ["client", "invoices"],
-    queryFn: () => fetchApi("/api/client/invoices"),
+    queryKey: ["client", "invoices", asClientId],
+    queryFn: () => fetchApi(`/api/client/invoices${params}`),
   });
 }
 
-export function useClientPayments() {
+export function useClientPayments(asClientId?: string) {
+  const params = asClientId ? `?asClientId=${asClientId}` : "";
   return useQuery<Payment[]>({
-    queryKey: ["client", "payments"],
-    queryFn: () => fetchApi("/api/client/payments"),
+    queryKey: ["client", "payments", asClientId],
+    queryFn: () => fetchApi(`/api/client/payments${params}`),
   });
 }
 
-export function useClientDocuments() {
+export function useClientDocuments(asClientId?: string) {
+  const params = asClientId ? `?asClientId=${asClientId}` : "";
   return useQuery<Document[]>({
-    queryKey: ["client", "documents"],
-    queryFn: () => fetchApi("/api/client/documents"),
+    queryKey: ["client", "documents", asClientId],
+    queryFn: () => fetchApi(`/api/client/documents${params}`),
   });
 }
 
@@ -581,10 +585,11 @@ export function useAdminFinanceEntries(categoryGroup?: string, clientId?: string
   });
 }
 
-export function useClientFinanceEntries() {
+export function useClientFinanceEntries(asClientId?: string) {
+  const params = asClientId ? `?asClientId=${asClientId}` : "";
   return useQuery<FinanceEntry[]>({
-    queryKey: ["client", "finance-entries"],
-    queryFn: () => fetchApi("/api/client/finance-entries"),
+    queryKey: ["client", "finance-entries", asClientId],
+    queryFn: () => fetchApi(`/api/client/finance-entries${params}`),
   });
 }
 
