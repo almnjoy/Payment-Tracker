@@ -322,3 +322,94 @@ export function formatDate(dateString: string | null | undefined): string {
     day: "numeric",
   });
 }
+
+// Plaid Types
+export interface PlaidItem {
+  itemId: string;
+  institutionName: string | null;
+  status: string;
+  createdAt: string;
+  last_sync_at: string | null;
+}
+
+export interface PlaidAccountSummary {
+  item_id: string;
+  institution_name: string | null;
+  last_sync_at: string | null;
+  accounts: {
+    name: string;
+    mask: string | null;
+    type: string | null;
+    subtype: string | null;
+    current_balance_cents: number | null;
+    available_balance_cents: number | null;
+    iso_currency_code: string | null;
+  }[];
+}
+
+export interface PlaidSyncResult {
+  synced_items: number;
+  added: number;
+  modified: number;
+  removed: number;
+}
+
+// Plaid API Hooks
+export function useAdminPlaidItems() {
+  return useQuery<PlaidItem[]>({
+    queryKey: ["admin", "plaid", "items"],
+    queryFn: () => fetchApi("/api/admin/plaid/items"),
+  });
+}
+
+export function useAdminPlaidAccountSummaries() {
+  return useQuery<PlaidAccountSummary[]>({
+    queryKey: ["admin", "plaid", "account-summaries"],
+    queryFn: () => fetchApi("/api/admin/plaid/account-summaries"),
+  });
+}
+
+export function useCreatePlaidLinkToken() {
+  return useMutation<{ link_token: string }, Error>({
+    mutationFn: () => fetchApi("/api/admin/plaid/link-token", {
+      method: "POST",
+    }),
+  });
+}
+
+export function useExchangePlaidToken() {
+  const queryClient = useQueryClient();
+  return useMutation<{ item_id: string; institution_name: string }, Error, { public_token: string; institution_id: string; institution_name: string }>({
+    mutationFn: (data) => fetchApi("/api/admin/plaid/exchange", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useSyncPlaidTransactions() {
+  const queryClient = useQueryClient();
+  return useMutation<PlaidSyncResult, Error>({
+    mutationFn: () => fetchApi("/api/admin/plaid/sync", {
+      method: "POST",
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useDeletePlaidItem() {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (itemId) => fetchApi(`/api/admin/plaid/items/${itemId}`, {
+      method: "DELETE",
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
