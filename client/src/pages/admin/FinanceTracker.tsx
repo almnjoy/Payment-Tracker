@@ -16,6 +16,8 @@ import {
   useDeleteFinanceEntry,
   useAdminPlaidAllAccounts,
   useSyncPlaidTransactions,
+  useAllBillingItems,
+  useAdminClients,
   formatCents,
   formatDate
 } from "@/lib/api";
@@ -44,6 +46,8 @@ export default function FinanceTracker() {
   const createEntry = useCreateFinanceEntry();
   const deleteEntry = useDeleteFinanceEntry();
   const syncTransactions = useSyncPlaidTransactions();
+  const billingItems = useAllBillingItems();
+  const clients = useAdminClients();
 
   const handleCreateEntry = async () => {
     if (!formData.title || !formData.amountCents) {
@@ -102,6 +106,16 @@ export default function FinanceTracker() {
 
   const currentEntries = entries.data || [];
   const manualTotal = currentEntries.reduce((sum, entry) => sum + entry.amountCents, 0);
+
+  const clientBillingItemsList = billingItems.data || [];
+  const monthlyBillingTotal = clientBillingItemsList
+    .filter(item => item.frequency === "monthly" && item.status === "active")
+    .reduce((sum, item) => sum + item.amountCents, 0);
+
+  const getClientName = (clientId: string) => {
+    const client = clients.data?.find(c => c.clientId === clientId);
+    return client?.displayName || "Unknown Client";
+  };
 
   const getPlaidTotalForTab = () => {
     if (!financeTotals.data) return 0;
@@ -253,6 +267,34 @@ export default function FinanceTracker() {
             <TabsTrigger value="holdings" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-holdings">Holdings</TabsTrigger>
           </TabsList>
           
+          {activeTab === "income" && monthlyBillingTotal > 0 && (
+            <Card className="shadow-sm border-gray-200 border-l-4 border-l-green-500">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Wallet className="h-5 w-5 text-green-600" />
+                  Client Rent Income
+                </CardTitle>
+                <span className="text-lg font-bold text-green-600">{formatCents(monthlyBillingTotal)}/mo</span>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {clientBillingItemsList
+                    .filter(item => item.frequency === "monthly" && item.status === "active")
+                    .map(item => (
+                      <div key={item.id} className="flex items-center justify-between p-3 bg-green-50/50 rounded-lg border border-green-100">
+                        <div>
+                          <p className="font-medium text-gray-900">{item.title}</p>
+                          <p className="text-sm text-gray-500">{getClientName(item.clientId)}</p>
+                        </div>
+                        <span className="font-bold text-gray-900">{formatCents(item.amountCents)}</span>
+                      </div>
+                    ))
+                  }
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          
           <div className="grid gap-6 md:grid-cols-3">
             <Card className="md:col-span-1 shadow-sm border-gray-200 h-fit">
               <CardHeader>
@@ -260,11 +302,14 @@ export default function FinanceTracker() {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold text-gray-900 mb-2" data-testid="text-total">
-                  {formatCents(manualTotal + plaidTotal)}
+                  {formatCents(manualTotal + plaidTotal + (activeTab === "income" ? monthlyBillingTotal : 0))}
                 </div>
                 <div className="space-y-1 text-sm text-gray-500">
                   <p>Manual entries: {formatCents(manualTotal)}</p>
                   <p>From Plaid ({dateRange}d): {formatCents(plaidTotal)}</p>
+                  {activeTab === "income" && (
+                    <p className="text-green-600 font-medium">Client rent (monthly): {formatCents(monthlyBillingTotal)}</p>
+                  )}
                 </div>
               </CardContent>
             </Card>
