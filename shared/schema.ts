@@ -49,6 +49,7 @@ export const clients = pgTable("clients", {
   phone: text("phone"),
   address: text("address"),
   notes: text("notes"),
+  status: text("status").notNull().default("active"), // active, paused, inactive, behind
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -403,6 +404,44 @@ export const plaidCursors = pgTable("plaid_cursors", {
 export type PlaidCursor = typeof plaidCursors.$inferSelect;
 
 // ============================================
+// CLIENT BILLING ITEMS (Per-client charges)
+// ============================================
+export const clientBillingItems = pgTable(
+  "client_billing_items",
+  {
+    id: varchar("id").primaryKey(),
+    clientId: varchar("client_id").notNull(),
+    type: text("type").notNull().default("other"), // rent, other
+    title: text("title").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    dueDate: date("due_date").notNull(),
+    frequency: text("frequency").notNull().default("one_time"), // one_time, weekly, monthly, yearly
+    notes: text("notes"),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    clientIdIdx: index("client_billing_items_client_id_idx").on(table.clientId),
+  }),
+);
+
+export const clientBillingItemsRelations = relations(clientBillingItems, ({ one }) => ({
+  client: one(clients, {
+    fields: [clientBillingItems.clientId],
+    references: [clients.clientId],
+  }),
+}));
+
+export const insertClientBillingItemSchema = createInsertSchema(clientBillingItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertClientBillingItem = z.infer<typeof insertClientBillingItemSchema>;
+export type ClientBillingItem = typeof clientBillingItems.$inferSelect;
+
+// ============================================
 // FINANCE ENTRIES (Manual finance tracking)
 // ============================================
 export const financeEntries = pgTable(
@@ -502,4 +541,9 @@ export function generateMagicNumber(): string {
 export function generateFinanceEntryId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
   return `FIN-${num.toString().padStart(6, "0")}`;
+}
+
+export function generateClientBillingItemId(): string {
+  const num = Math.floor(Math.random() * 999999) + 1;
+  return `CBI-${num.toString().padStart(6, "0")}`;
 }

@@ -1,0 +1,206 @@
+You are working in my existing Replit app for Quick IT
+(React + Express + Drizzle + Replit Auth + Replit Object Storage + Plaid already integrated).
+
+GOAL
+Fix admin/client portal issues, clean up data flow, and correctly separate client billing from finance tracking.
+Do NOT redesign UI. Do NOT change styling. Keep existing components and layout.
+Focus strictly on functionality, correctness, and data separation.
+
+IMPORTANT UI CONSTRAINT
+- No em dash characters in any UI text.
+- PDFs only for document uploads.
+- Keep Plaid fully intact and untouched.
+
+--------------------------------
+CONTEXT
+--------------------------------
+- Admin portal exists with Clients list and Client Detail page.
+- Client Detail page includes Documents, Bills/Expenses, Payment History, and Lease info.
+- Documents use Replit Object Storage.
+- Plaid is integrated and working for Account Summaries, Transactions, and Spending Habits.
+- Fake seed data was deleted. I want clean, admin-managed data now.
+- Backend route already exists and works:
+  POST /api/admin/documents/upload (session cookie required)
+- Client Detail page currently has an "Add Bill/Expense" modal with Bill, Income, Debt, Holding.
+  This is WRONG and must be fixed.
+- Finance Tracker already exists and must stay separate.
+- I need an easy way to impersonate a client from admin UI.
+
+--------------------------------
+PART 1: Fix "Upload Document" on Client Detail page
+--------------------------------
+1) The "Upload Document" button on the Admin Client Detail page is not functional.
+2) Clicking it must open an upload modal and upload using:
+   POST /api/admin/documents/upload
+3) Upload requirements:
+   - Use FormData
+   - Field name must be "file"
+   - Include clientId (required)
+   - Include title (required)
+     - Default title = filename without extension if left blank
+   - docType and visibility optional
+4) PDF only:
+   - Frontend file picker allows only .pdf
+   - Backend rejects non-PDF with HTTP 400 and clear error
+5) On success:
+   - Refresh client Documents panel immediately
+   - Show success toast
+6) On failure:
+   - Show error toast
+
+--------------------------------
+PART 2: Separate Client Billing from Finance Tracker (CRITICAL)
+--------------------------------
+
+CURRENT PROBLEM
+Client Bills/Expenses are incorrectly stored in finance_entries.
+This must be completely separated.
+
+NEW DATA MODEL
+1) Create a NEW table:
+   client_billing_items
+
+Purpose:
+Admin-managed per-client charges that represent what the client owes.
+
+client_billing_items schema:
+- id (string, ex: CBI-XXXXXX or uuid)
+- clientId (FK to clients)
+- type: "rent" | "other"
+- title (text, required)
+- amountCents (integer, required)
+- dueDate (date, required)
+- frequency: "one_time" | "weekly" | "monthly" | "yearly"
+- notes (text nullable)
+- status (default "active")
+- createdAt
+- updatedAt
+
+2) finance_entries MUST remain separate:
+- finance_entries = manual finance tracking only
+- Used for admin Income, Bills, Debts, Holdings
+- MUST NOT store client billing items
+
+--------------------------------
+PART 3: Client Detail "Bills & Expenses" UI (Admin)
+--------------------------------
+1) Replace modal options:
+   REMOVE: Bill, Income, Debt, Holding
+   ADD ONLY:
+   - Rent
+   - Other
+
+2) Modal fields:
+   - Type: Rent | Other
+   - Title
+   - Amount (dollars input, store cents)
+   - Due Date
+   - Frequency
+   - Notes (optional)
+
+3) Save entries ONLY to client_billing_items table.
+
+4) Client Detail page:
+   - Show a list/table of client_billing_items under "Bills & Expenses"
+   - Trash icon deletes the item (make functional)
+   - No finance_entries used here
+
+--------------------------------
+PART 4: Lease Status and Monthly Rate (Client Detail)
+--------------------------------
+1) Remove existing "No active lease / N/A" display.
+2) Replace with:
+   - Lease Status dropdown:
+     Active (green)
+     Paused (yellow)
+     Inactive (gray)
+     Behind (red)
+   - Store value in clients.status
+3) Monthly Rate:
+   - NOT editable
+   - Computed as:
+     Sum of client_billing_items where:
+       frequency = "monthly"
+       status = "active"
+       type IN ("rent", "other")
+   - Display computed value only
+
+--------------------------------
+PART 5: Clients List Page fixes
+--------------------------------
+1) Clicking ANYWHERE on a client row opens the client detail page.
+2) Status column uses clients.status and correct colors.
+
+--------------------------------
+PART 6: Finance Tracker integration (Derived ONLY)
+--------------------------------
+1) Finance Tracker keeps using finance_entries for manual entries.
+2) Client billing items must appear as Derived Income ONLY:
+   - Do NOT duplicate rows into finance_entries
+3) Finance Tracker Income section must show:
+   - Manual Income (finance_entries)
+   - Income from Clients (derived from client_billing_items)
+   - Total Income = manual + derived
+4) For derived income calculation:
+   - Use simple logic for now:
+     Include client_billing_items whose dueDate falls within selected range
+   - Label clearly if needed
+
+--------------------------------
+PART 7: View Client Portal as Client (Admin Impersonation)
+--------------------------------
+1) Add admin-only button on Client Detail page:
+   Label: "View Client Portal"
+2) Clicking opens client portal in impersonation mode:
+   Example:
+   /client?asClientId=CL-XXXXXX
+3) Security rules:
+   - Only admins can impersonate
+   - Server must verify admin before honoring asClientId
+   - Normal clients cannot use this flag
+4) UI indicator while impersonating:
+   Banner at top:
+   "Viewing as client: <clientId> (<client name>) [Exit]"
+5) Exit:
+   - Clears impersonation
+   - Returns to admin client detail page
+
+--------------------------------
+PART 8: Sanity and Security Checks
+--------------------------------
+- All new routes must require isAuthenticated
+- Admin routes must require isAdmin
+- clientId must never be hard-coded
+- Do NOT break Plaid tables or features
+- Keep shadcn components and layout
+- Add basic toasts for success/failure
+
+--------------------------------
+API CHANGES REQUIRED
+--------------------------------
+Add endpoints:
+- GET /api/admin/clients/:clientId/billing-items
+- POST /api/admin/clients/:clientId/billing-items
+- DELETE /api/admin/clients/:clientId/billing-items/:id
+
+--------------------------------
+DELIVERABLES
+--------------------------------
+1) Update schema (shared/schema.ts)
+2) Create drizzle migration and run db push
+3) Update backend routes and storage layer
+4) Update React components:
+   - Clients list row click
+   - Client Detail billing modal and list
+   - Upload Document modal
+   - Lease Status dropdown
+   - Monthly Rate computed display
+   - Impersonation banner and routing
+5) After coding, output:
+   - Files changed
+   - Manual test steps for:
+     - Upload PDF
+     - Add Rent item
+     - Status change
+     - Finance Tracker derived income
+     - Client impersonation
