@@ -1,0 +1,285 @@
+You are building backend logic + database + file storage for my Replit app using:
+- Replit Auth (identity + sessions)
+- Replit SQL Database (Postgres-style SQL)
+- Replit App Storage (Object Storage) for document files (leases, receipts, notices)
+
+CRITICAL RULES
+- Do not change any existing UI styling, layouts, colors, or typography unless required to wire real data.
+- Keep all routes and pages working.
+- Implement real backend logic for: invite-only signup (magic_number), role-based portals, CRUD for admin features.
+- Store all application data in Replit SQL.
+- Store all uploaded documents as files in Replit App Storage.
+- Do NOT store passwords (Replit Auth handles that).
+- Do NOT leave dead buttons. If a feature is not implemented yet, clearly label it “Coming soon” but keep navigation intact.
+
+GOAL
+Implement the database schema, relationships, server logic, and object storage so my UI can pull real data for:
+- Admin portal: clients, leases, invoices, payments, documents, external accounts placeholders
+- Client portal: invoices, payments, documents, profile
+- Invite-only user creation via magic_number
+- Document upload, secure view, and download via Replit App Storage
+
+AUTH INTEGRATION (Replit Auth)
+- Use Replit Auth to get a stable user_id for the logged-in user (string).
+- Create a users_profile table to map Replit user_id -> app role + client_id.
+- Roles: admin, client.
+- On each request, verify session, load users_profile, enforce access rules.
+
+DATABASE TABLES (CREATE THESE IN REPLIT SQL)
+
+1) users_profile (bridge between Replit Auth and app data)
+- user_id TEXT PRIMARY KEY                       // from Replit Auth
+- role TEXT NOT NULL CHECK role IN ('admin','client')
+- client_id TEXT NULL                             // FK -> clients.client_id, null for admin
+- status TEXT NOT NULL DEFAULT 'active' CHECK status IN ('active','disabled')
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+2) clients (business record, can exist before login)
+- client_id TEXT PRIMARY KEY                      // readable IDs like CL-000001 or UUID-as-text
+- display_name TEXT NOT NULL
+- email TEXT
+- phone TEXT
+- notes TEXT
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+3) leases (why they pay)
+- lease_id TEXT PRIMARY KEY
+- client_id TEXT NOT NULL                         // FK -> clients.client_id
+- rent_amount_cents INTEGER NOT NULL
+- due_day INTEGER NOT NULL                         // 1-28
+- start_date DATE NOT NULL
+- end_date DATE NULL
+- status TEXT NOT NULL DEFAULT 'active' CHECK status IN ('active','ended','paused')
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+4) invite_codes (invite-only onboarding)
+- magic_number TEXT PRIMARY KEY                    // unique invite token
+- client_id TEXT NOT NULL                          // FK -> clients.client_id
+- lease_id TEXT NULL                               // FK -> leases.lease_id
+- expires_at TIMESTAMP NOT NULL
+- used_at TIMESTAMP NULL
+- used_by_user_id TEXT NULL                        // FK -> users_profile.user_id
+- created_by_user_id TEXT NOT NULL                 // FK -> users_profile.user_id (admin)
+- created_at TIMESTAMP DEFAULT NOW()
+
+5) invoices (bills owed)
+- invoice_id TEXT PRIMARY KEY
+- client_id TEXT NOT NULL                          // FK -> clients.client_id
+- lease_id TEXT NULL                               // FK -> leases.lease_id
+- title TEXT NOT NULL
+- amount_cents INTEGER NOT NULL
+- due_date DATE NOT NULL
+- status TEXT NOT NULL DEFAULT 'open' CHECK status IN ('draft','sent','open','paid','overdue','void')
+- stripe_invoice_id TEXT NULL
+- stripe_hosted_invoice_url TEXT NULL
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+6) payments (money received, supports manual now, Stripe later)
+- payment_id TEXT PRIMARY KEY
+- client_id TEXT NOT NULL                          // FK -> clients.client_id
+- invoice_id TEXT NULL                             // FK -> invoices.invoice_id
+- amount_cents INTEGER NOT NULL
+- method TEXT NOT NULL CHECK method IN ('stripe','cash','venmo','zelle','bank_transfer','other')
+- status TEXT NOT NULL DEFAULT 'paid' CHECK status IN ('pending','paid','failed','refunded')
+- paid_at TIMESTAMP NULL
+- stripe_payment_intent_id TEXT NULL
+- stripe_charge_id TEXT NULL
+- notes TEXT
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+7) documents (metadata for files stored in App Storage)
+- document_id TEXT PRIMARY KEY
+- client_id TEXT NOT NULL                          // FK -> clients.client_id
+- lease_id TEXT NULL                               // FK -> leases.lease_id
+- invoice_id TEXT NULL                             // FK -> invoices.invoice_id
+- title TEXT NOT NULL
+- doc_type TEXT NOT NULL CHECK doc_type IN ('lease','receipt','notice','other')
+- visibility TEXT NOT NULL DEFAULT 'client_and_admin' CHECK visibility IN ('client_and_admin','admin_only')
+- storage_bucket TEXT NOT NULL                      // App Storage bucket name
+- storage_key TEXT NOT NULL                         // object key/path inside bucket
+- content_type TEXT NULL                            // ex: application/pdf
+- file_size_bytes INTEGER NULL
+- uploaded_by_user_id TEXT NOT NULL                 // FK -> users_profile.user_id
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+8) external_accounts (placeholder for future Plaid/Stripe linking UI)
+- account_id TEXT PRIMARY KEY
+- provider TEXT NOT NULL                            // plaid, stripe, manual, mock
+- nickname TEXT NOT NULL
+- status TEXT NOT NULL                              // linked, needs_auth, error
+- last_sync_at TIMESTAMP NULL
+- created_by_user_id TEXT NOT NULL                  // admin user_id
+- created_at TIMESTAMP DEFAULT NOW()
+- updated_at TIMESTAMP DEFAULT NOW()
+
+RELATIONSHIPS (MUST ENFORCE IN LOGIC)
+- invite_codes.magic_number points to client_id and optional lease_id
+- when user claims magic_number:
+  - validate invite exists, not used, not expired
+  - upsert users_profile for this Replit user_id:
+      role='client', client_id=invite_codes.client_id
+  - set invite_codes.used_at=NOW(), used_by_user_id=user_id
+- clients -> leases -> invoices -> payments
+- documents attach to a client and optional lease/invoice; actual file lives in App Storage
+
+OBJECT STORAGE (REPLIT APP STORAGE) REQUIREMENTS
+Implement a proper document upload and retrieval flow using Replit App Storage:
+- Use one bucket for the app (ex: quickitprojects-docs) or environment-configured bucket
+- Store objects using a predictable key pattern:
+  - clients/{client_id}/leases/{lease_id}/{document_id}.pdf
+  - clients/{client_id}/invoices/{invoice_id}/{document_id}.pdf
+  - clients/{client_id}/other/{document_id}/{filename}
+- Save storage_bucket and storage_key into documents table.
+- Enforce access control:
+  - Admin can upload, list, download all
+  - Client can list/download only documents with visibility='client_and_admin' and matching their client_id
+- For downloads, do NOT expose raw object storage credentials.
+  - Provide a backend endpoint that streams the file to the browser, or generate a short-lived signed URL if supported.
+- Support PDF first. Allow other types later.
+
+SERVER / API ENDPOINTS (IMPLEMENT)
+
+Auth + Profile
+- GET /api/me
+  Returns: user_id, role, client_id, status, basic profile info
+
+Invite-only signup
+- POST /api/invite/verify
+  Body: { magic_number }
+  Returns: { valid: boolean, reason, client_display_name (if valid), expires_at }
+
+- POST /api/invite/claim
+  Body: { magic_number }
+  Requires logged-in user (Replit Auth)
+  Behavior:
+    - validate magic_number not used and not expired
+    - upsert users_profile for user_id with role='client' and client_id
+    - mark invite used
+    - return redirect target: /client/dashboard
+
+Admin: Clients + Leases
+- POST /api/admin/clients
+- GET /api/admin/clients
+- GET /api/admin/clients/:client_id
+- POST /api/admin/leases
+- GET /api/admin/leases?client_id=
+
+Admin: Invoices + Payments
+- POST /api/admin/invoices
+- GET /api/admin/invoices?client_id=
+- PATCH /api/admin/invoices/:invoice_id
+- POST /api/admin/payments           // record manual payment
+- GET /api/admin/payments?client_id=
+
+Admin: Documents (METADATA + FILES)
+- GET /api/admin/documents?client_id=
+- POST /api/admin/documents/upload
+  Multipart/form-data:
+    - file
+    - client_id
+    - optional lease_id, invoice_id
+    - title
+    - doc_type
+    - visibility
+  Behavior:
+    - validate admin role
+    - create document_id
+    - upload file to App Storage with key pattern
+    - insert documents row with storage_bucket + storage_key + metadata
+    - return created document metadata
+
+- GET /api/admin/documents/:document_id/download
+  Behavior:
+    - validate admin role
+    - stream file from App Storage to browser
+
+Client: Portal data
+- GET /api/client/dashboard
+  Use users_profile.client_id and return:
+    - open invoices
+    - recent payments
+    - amount due summary
+    - recent documents list
+
+- GET /api/client/invoices
+- GET /api/client/payments
+- GET /api/client/documents
+  Must filter by client_id and visibility='client_and_admin'
+
+Client: Document download
+- GET /api/client/documents/:document_id/download
+  Behavior:
+    - validate role client
+    - validate document.client_id matches users_profile.client_id
+    - validate document.visibility allows client
+    - stream file from App Storage
+
+External accounts (placeholder)
+- GET /api/admin/external-accounts
+- POST /api/admin/external-accounts
+- DELETE /api/admin/external-accounts/:account_id
+
+ACCESS CONTROL (MUST IMPLEMENT)
+- Block all /api/admin/* routes unless role='admin'
+- Client routes must always filter by users_profile.client_id
+- Document downloads must be protected:
+  - admin can download all
+  - client can download only allowed docs for their client_id
+
+UI WIRING (MINIMAL CHANGES)
+- Keep styling and layouts intact.
+- Replace mock arrays with API calls.
+- Login routing:
+  - After login, call GET /api/me
+  - If users_profile missing: route to New User Creation page
+  - If role='admin': route to /admin/overview
+  - If role='client': route to /client/dashboard
+- New User Creation page:
+  - Verify magic number: POST /api/invite/verify
+  - Claim magic number: POST /api/invite/claim
+
+DOCUMENT UI WIRING
+- Admin Documents page:
+  - Add a real upload control (file input + fields) wired to /api/admin/documents/upload
+  - List documents from /api/admin/documents
+  - Download buttons call /api/admin/documents/:document_id/download
+
+- Client Documents page:
+  - List documents from /api/client/documents
+  - Download buttons call /api/client/documents/:document_id/download
+
+ID GENERATION (EASY AND CONSISTENT)
+Implement a simple readable ID strategy for core tables:
+- client_id like CL-000001
+- lease_id like LE-000001
+- invoice_id like INV-000001
+- payment_id like PAY-000001
+- document_id like DOC-000001
+- external_accounts account_id like ACC-000001
+Magic numbers:
+- magic_number should be human-readable and random: example A9F3-22X7 (letters+digits)
+Store as text.
+
+SEED DATA (FOR TESTING)
+- Provide a safe way to create the first admin:
+  - Use env var ADMIN_USER_ID, or a one-time admin bootstrap endpoint protected by a secret.
+- Seed at least:
+  - 2 clients
+  - 2 leases
+  - a few invoices and payments
+  - a few documents (metadata) and allow uploading real PDFs in UI
+  - 1 invite code for testing
+
+DELIVERABLE
+- Replit SQL schema created
+- Replit Auth integrated with users_profile mapping
+- Invite-only signup (magic number) functional
+- Role-based access control working
+- Document upload and download working via Replit App Storage
+- UI pulls real data from endpoints without changing the design system
