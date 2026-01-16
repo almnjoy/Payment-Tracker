@@ -1,22 +1,36 @@
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DollarSign, Users, AlertCircle, TrendingUp, ArrowUpRight, Loader2 } from "lucide-react";
+import { DollarSign, Users, AlertCircle, TrendingUp, ArrowUpRight, Loader2, BarChart3 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useAdminStats, useAdminPayments, formatCents, formatDate } from "@/lib/api";
-
-const chartData = [
-  { name: "Jan", total: 12000 },
-  { name: "Feb", total: 18000 },
-  { name: "Mar", total: 15000 },
-  { name: "Apr", total: 22000 },
-  { name: "May", total: 28000 },
-  { name: "Jun", total: 32000 },
-  { name: "Jul", total: 35000 },
-];
+import { useMemo } from "react";
 
 export default function AdminDashboard() {
   const { data: stats, isLoading: statsLoading } = useAdminStats();
   const { data: payments, isLoading: paymentsLoading } = useAdminPayments();
+
+  const chartData = useMemo(() => {
+    if (!payments || payments.length === 0) return [];
+    
+    const monthlyTotals: Record<string, { name: string; total: number; sortKey: string }> = {};
+    
+    payments.forEach(payment => {
+      if (payment.status === 'paid' && payment.paidAt) {
+        const date = new Date(payment.paidAt);
+        const sortKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        
+        if (!monthlyTotals[sortKey]) {
+          monthlyTotals[sortKey] = { name: monthName, total: 0, sortKey };
+        }
+        monthlyTotals[sortKey].total += payment.amountCents / 100;
+      }
+    });
+    
+    return Object.values(monthlyTotals)
+      .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      .map(({ name, total }) => ({ name, total }));
+  }, [payments]);
 
   if (statsLoading) {
     return (
@@ -29,6 +43,7 @@ export default function AdminDashboard() {
   }
 
   const recentPayments = payments?.slice(0, 5) || [];
+  const hasData = stats && (stats.totalCollectedCents > 0 || stats.outstandingCents > 0 || stats.activeClients > 0);
 
   return (
     <Layout role="admin">
@@ -50,9 +65,8 @@ export default function AdminDashboard() {
               <div className="text-2xl font-bold text-gray-900" data-testid="text-total-collected">
                 {stats ? formatCents(stats.totalCollectedCents) : '$0.00'}
               </div>
-              <p className="text-xs text-green-600 flex items-center mt-1">
-                <ArrowUpRight className="h-3 w-3 mr-1" />
-                All time payments received
+              <p className="text-xs text-gray-500 mt-1">
+                {stats?.totalCollectedCents === 0 ? 'No payments yet' : 'All time payments received'}
               </p>
             </CardContent>
           </Card>
@@ -69,7 +83,7 @@ export default function AdminDashboard() {
                 {stats ? formatCents(stats.outstandingCents) : '$0.00'}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                Across {stats?.overdueCount || 0} overdue accounts
+                {stats?.overdueCount === 0 ? 'No overdue accounts' : `Across ${stats?.overdueCount || 0} overdue accounts`}
               </p>
             </CardContent>
           </Card>
@@ -85,9 +99,8 @@ export default function AdminDashboard() {
               <div className="text-2xl font-bold text-gray-900" data-testid="text-active-clients">
                 {stats?.activeClients || 0}
               </div>
-              <p className="text-xs text-green-600 flex items-center mt-1">
-                <ArrowUpRight className="h-3 w-3 mr-1" />
-                Total registered clients
+              <p className="text-xs text-gray-500 mt-1">
+                {stats?.activeClients === 0 ? 'No clients yet' : 'Total registered clients'}
               </p>
             </CardContent>
           </Card>
@@ -103,10 +116,10 @@ export default function AdminDashboard() {
               <div className="text-2xl font-bold text-gray-900">
                 {stats && stats.totalCollectedCents > 0 
                   ? `${Math.round((stats.totalCollectedCents / (stats.totalCollectedCents + stats.outstandingCents)) * 100)}%`
-                  : '0%'}
+                  : 'N/A'}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                Payments collected vs outstanding
+                {stats?.totalCollectedCents === 0 ? 'No data yet' : 'Payments collected vs outstanding'}
               </p>
             </CardContent>
           </Card>
@@ -118,43 +131,51 @@ export default function AdminDashboard() {
               <CardTitle>Revenue Overview</CardTitle>
             </CardHeader>
             <CardContent className="pl-2">
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#007BFF" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#007BFF" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                  <XAxis 
-                    dataKey="name" 
-                    stroke="#888888" 
-                    fontSize={12} 
-                    tickLine={false} 
-                    axisLine={false} 
-                  />
-                  <YAxis 
-                    stroke="#888888" 
-                    fontSize={12} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    tickFormatter={(value) => `$${value}`} 
-                  />
-                  <Tooltip 
-                     contentStyle={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #f0f0f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                     itemStyle={{ color: '#007BFF', fontWeight: 600 }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="total" 
-                    stroke="#007BFF" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorTotal)" 
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#007BFF" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#007BFF" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                    <XAxis 
+                      dataKey="name" 
+                      stroke="#888888" 
+                      fontSize={12} 
+                      tickLine={false} 
+                      axisLine={false} 
+                    />
+                    <YAxis 
+                      stroke="#888888" 
+                      fontSize={12} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      tickFormatter={(value) => `$${value}`} 
+                    />
+                    <Tooltip 
+                       contentStyle={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #f0f0f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                       itemStyle={{ color: '#007BFF', fontWeight: 600 }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="total" 
+                      stroke="#007BFF" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorTotal)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[300px] text-gray-400">
+                  <BarChart3 className="h-12 w-12 mb-3 text-gray-300" />
+                  <p className="font-medium text-gray-900">No revenue data yet</p>
+                  <p className="text-sm">Payment history will appear here once clients make payments.</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -189,7 +210,11 @@ export default function AdminDashboard() {
                   ))}
                 </div>
               ) : (
-                <p className="text-center text-gray-500 py-8">No payments yet</p>
+                <div className="text-center py-8 text-gray-400">
+                  <DollarSign className="h-10 w-10 mx-auto mb-2 text-gray-300" />
+                  <p className="font-medium text-gray-900">No payments yet</p>
+                  <p className="text-sm">Payments will appear here once recorded.</p>
+                </div>
               )}
             </CardContent>
           </Card>
