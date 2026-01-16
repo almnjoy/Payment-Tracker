@@ -1,12 +1,14 @@
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { DollarSign, Calendar, FileText, ArrowRight, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { DollarSign, Calendar, FileText, ArrowRight, Loader2, Receipt } from "lucide-react";
 import { motion } from "framer-motion";
-import { useClientDashboard, formatCents, formatDate } from "@/lib/api";
+import { useClientDashboard, useClientFinanceEntries, formatCents, formatDate } from "@/lib/api";
 
 export default function ClientDashboard() {
   const { data, isLoading, error } = useClientDashboard();
+  const { data: financeEntries } = useClientFinanceEntries();
 
   if (isLoading) {
     return (
@@ -150,6 +152,48 @@ export default function ClientDashboard() {
              </CardContent>
           </Card>
         </div>
+
+        <Card className="shadow-sm border-gray-200">
+          <CardHeader className="flex flex-row items-center gap-2">
+            <Receipt className="h-5 w-5 text-blue-500" />
+            <CardTitle>Your Bills & Expenses</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {financeEntries && financeEntries.length > 0 ? (
+              <div className="space-y-3">
+                {financeEntries.map((entry) => (
+                  <div key={entry.entryId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100" data-testid={`client-entry-${entry.entryId}`}>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium text-gray-900">{entry.title}</h4>
+                        <Badge variant="outline" className="text-xs capitalize">
+                          {entry.categoryGroup}
+                        </Badge>
+                        {entry.recurrence && entry.recurrence !== 'one_time' && (
+                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                            {entry.recurrence}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        Due: {formatDate(entry.date)}
+                        {entry.notes && ` • ${entry.notes}`}
+                      </p>
+                    </div>
+                    <span className="font-bold text-gray-900 text-lg">
+                      {formatCents(entry.amountCents)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <p className="font-medium text-gray-900">No bills or expenses</p>
+                <p className="text-sm">Your assigned bills and expenses will appear here.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </Layout>
   );
