@@ -403,6 +403,39 @@ export const plaidCursors = pgTable("plaid_cursors", {
 export type PlaidCursor = typeof plaidCursors.$inferSelect;
 
 // ============================================
+// FINANCE ENTRIES (Manual finance tracking)
+// ============================================
+export const financeEntries = pgTable(
+  "finance_entries",
+  {
+    entryId: varchar("entry_id").primaryKey(),
+    adminUserId: varchar("admin_user_id").notNull(),
+    entryType: text("entry_type").notNull().default("manual"), // "manual" | "linked"
+    categoryGroup: text("category_group").notNull(), // "income" | "bills" | "debts" | "holdings"
+    title: text("title").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    date: date("date").notNull(),
+    recurrence: text("recurrence"), // "one_time" | "weekly" | "monthly" | null
+    plaidAccountId: varchar("plaid_account_id"),
+    externalUrl: text("external_url"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    adminUserIdIdx: index("finance_entries_admin_user_id_idx").on(table.adminUserId),
+    categoryGroupIdx: index("finance_entries_category_group_idx").on(table.categoryGroup),
+  }),
+);
+
+export const insertFinanceEntrySchema = createInsertSchema(financeEntries).omit({
+  entryId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertFinanceEntry = z.infer<typeof insertFinanceEntrySchema>;
+export type FinanceEntry = typeof financeEntries.$inferSelect;
+
+// ============================================
 // ID GENERATION HELPERS
 // ============================================
 export function generateClientId(): string {
@@ -461,4 +494,9 @@ export function generateMagicNumber(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+export function generateFinanceEntryId(): string {
+  const num = Math.floor(Math.random() * 999999) + 1;
+  return `FIN-${num.toString().padStart(6, "0")}`;
 }

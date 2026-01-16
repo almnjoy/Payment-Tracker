@@ -1,0 +1,160 @@
+We already have working Plaid Sandbox linking.
+Account Summaries currently display real linked accounts and balances.
+Plaid Transactions product is enabled and supports up to 24 months of transaction data.
+
+Now transition the Admin portal from demo data to real Plaid-powered financial tracking.
+
+GLOBAL RULES
+- Admin only. Do not modify client portal behavior except document list rendering.
+- Keep Quick IT Projects design system exactly the same (no layout, color, font, or spacing changes).
+- Do not remove seeded demo clients:
+  - Sarah Miller (sarah@example.com)
+  - James Chen (james@example.com)
+Keep their leases, invoices, and owed amounts intact.
+- Remove ONLY fake finance tracker entries and fake document links.
+
+-----------------------------------
+1) FINANCE TRACKER – DATA CLEANUP
+-----------------------------------
+- Remove all seeded/demo Finance Tracker entries (ex: "Client Retainers", "Project X Milestone").
+- Keep Finance Tracker UI and tabs:
+  - Income
+  - Bills
+  - Debts
+  - Holdings
+
+Add DB table for manual finance entries only:
+  finance_entries:
+    entry_id (PK)
+    admin_user_id
+    entry_type ("manual" | "linked")
+    category_group ("income" | "bills" | "debts" | "holdings")
+    title
+    amount_cents
+    date
+    recurrence ("one_time" | "weekly" | "monthly" | null)
+    plaid_account_id (nullable)
+    external_url (nullable)
+    created_at
+    updated_at
+
+Run db push after schema update.
+
+-----------------------------------
+2) FINANCE TRACKER – AUTO-SYNC (PLAID)
+-----------------------------------
+Replace the placeholder "Auto-Sync from External Accounts" section with live data.
+
+This section should:
+- Show number of linked institutions
+- Show number of linked accounts
+- Show last Plaid sync time
+- Display derived totals from Plaid data:
+  - Income: sum of inflows from transactions
+  - Bills/Spending: sum of outflows
+  - Debts: balances from credit/loan account types
+  - Holdings: balances from investment accounts
+
+Default date range: last 30 days
+Allow switching to 90 days, 6 months, 12 months.
+
+Derived values should NOT be persisted as rows; compute from Plaid tables.
+
+-----------------------------------
+3) FINANCE TRACKER – ADD ENTRY
+-----------------------------------
+Enhance "Add Entry":
+- Entry Type dropdown:
+  - Manual
+  - Linked
+- External Link URL field (optional)
+- If Entry Type = Linked:
+  - Select Plaid account
+  - Optional label/category override
+
+Manual entries store in finance_entries.
+Linked entries reference plaid_account_id but still allow a custom label.
+
+-----------------------------------
+4) ACCOUNT SUMMARIES – DRILL-DOWN & TRANSACTIONS
+-----------------------------------
+Each account tile in Account Summaries must be clickable.
+
+On click:
+- Open modal or navigate to details page (no design change)
+- Display:
+  - Institution name
+  - Account name, mask, type, subtype
+  - Current and available balances
+  - Last sync time
+
+Add TRANSACTIONS VIEW (statement-like):
+- Pull from plaid_transactions table
+- Support up to 24 months of data
+- Default view: last 30 days
+- Date presets:
+  - 30 days
+  - 90 days
+  - 6 months
+  - 12 months
+  - 24 months
+- Monthly grouping option:
+  - Group transactions by month (ex: January 2026, December 2025)
+- Filters:
+  - Search by merchant/name
+  - Min/max amount
+- Sorting: newest first
+
+Backend endpoint:
+GET /api/admin/plaid/accounts/:plaidAccountId/transactions
+Query params:
+  - start_date
+  - end_date
+
+DO NOT label this as "PDF statements".
+Label it as "Transaction History".
+
+-----------------------------------
+5) SPENDING HABITS – PLAID POWERED
+-----------------------------------
+Replace all demo content with derived summaries from Plaid transactions.
+
+Backend endpoint:
+GET /api/admin/plaid/spending-summary
+Params:
+  - date range (default 30d)
+
+Return:
+- Totals by personal_finance_category.primary (or fallback category)
+- Top merchants
+- Transaction counts
+- Net cash flow (inflow - outflow)
+
+UI:
+- Charts/cards using existing components
+- Date range selector (30d / 90d / 6mo)
+- No random or placeholder values
+
+-----------------------------------
+6) DOCUMENTS – REAL STORAGE ONLY
+-----------------------------------
+- Remove all fake document links.
+- Use existing endpoints:
+  - POST /api/admin/documents/upload
+  - GET /api/admin/documents
+  - GET /api/admin/documents/:documentId/download
+- Admin can upload a real test PDF/image.
+- Refresh document list after upload.
+- Allow download via existing download endpoint.
+- App Storage is already configured; reuse it.
+
+-----------------------------------
+DELIVERABLE SUMMARY
+-----------------------------------
+- Finance Tracker shows real Plaid-derived totals + optional manual entries.
+- Auto-Sync section reflects real linked accounts and sync times.
+- Account tiles open a transaction browser supporting up to 24 months.
+- Spending Habits is fully Plaid-powered.
+- Documents page supports real uploads and downloads.
+- Demo clients remain intact.
+- No visual redesign or layout changes.

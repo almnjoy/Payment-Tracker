@@ -12,11 +12,14 @@ import {
   plaidAccounts, 
   plaidTransactions, 
   plaidCursors,
+  financeEntries,
   generatePlaidItemId,
   generatePlaidAccountRowId,
-  generatePlaidTransactionRowId
+  generatePlaidTransactionRowId,
+  generateFinanceEntryId,
+  insertFinanceEntrySchema
 } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, lte, desc, sql, ilike, or } from "drizzle-orm";
 
 // Extend Express Request to include user info
 declare global {
@@ -1122,6 +1125,8 @@ export async function registerRoutes(
           institution_name: item.institutionName,
           last_sync_at: cursor[0]?.lastSyncAt || null,
           accounts: accounts.map(acc => ({
+            account_id: acc.accountId,
+            plaid_account_id: acc.plaidAccountId,
             name: acc.name,
             mask: acc.mask,
             type: acc.type,
@@ -1137,6 +1142,390 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching account summaries:", error);
       res.status(500).json({ message: "Failed to fetch account summaries" });
+    }
+  });
+
+  // G) Get transactions for a specific Plaid account
+  app.get("/api/admin/plaid/accounts/:plaidAccountId/transactions", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { plaidAccountId } = req.params;
+      const { start_date, end_date, search, min_amount, max_amount } = req.query;
+      
+      // Default to last 30 days
+      const endDate = end_date ? new Date(end_date as string) : new Date();
+      const startDate = start_date ? new Date(start_date as string) : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+      
+      // Verify admin owns this account
+      const account = await db.select({
+        accountId: plaidAccounts.accountId,
+        itemId: plaidAccounts.itemId,
+        name: plaidAccounts.name,
+        mask: plaidAccounts.mask,
+        type: plaidAccounts.type,
+        subtype: plaidAccounts.subtype,
+        currentBalanceCents: plaidAccounts.currentBalanceCents,
+        availableBalanceCents: plaidAccounts.availableBalanceCents,
+      }).from(plaidAccounts)
+        .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+        .where(and(
+          eq(plaidAccounts.plaidAccountId, plaidAccountId),
+          eq(plaidItems.adminUserId, userId!)
+        ))
+        .limit(1);
+      
+      if (account.length === 0) {
+        return res.status(404).json({ message: "Account not found" });
+      }
+      
+      // Get item info for institution name
+      const item = await db.select().from(plaidItems)
+        .where(eq(plaidItems.itemId, account[0].itemId))
+        .limit(1);
+      
+      // Get cursor for last sync time
+      const cursor = await db.select().from(plaidCursors)
+        .where(eq(plaidCursors.itemId, account[0].itemId))
+        .limit(1);
+      
+      // Build query conditions
+      let conditions = [
+        eq(plaidTransactions.plaidAccountId, plaidAccountId),
+        gte(plaidTransactions.date, startDate.toISOString().split('T')[0]),
+        lte(plaidTransactions.date, endDate.toISOString().split('T')[0]),
+      ];
+      
+      // Add search filter
+      if (search) {
+        const searchTerm = `%${search}%`;
+        conditions.push(or(
+          ilike(plaidTransactions.name, searchTerm),
+          ilike(plaidTransactions.merchantName, searchTerm)
+        )!);
+      }
+      
+      // Add amount filters
+      if (min_amount) {
+        conditions.push(gte(plaidTransactions.amountCents, Math.round(parseFloat(min_amount as string) * 100)));
+      }
+      if (max_amount) {
+        conditions.push(lte(plaidTransactions.amountCents, Math.round(parseFloat(max_amount as string) * 100)));
+      }
+      
+      const transactions = await db.select().from(plaidTransactions)
+        .where(and(...conditions))
+        .orderBy(desc(plaidTransactions.date));
+      
+      res.json({
+        account: {
+          ...account[0],
+          institution_name: item[0]?.institutionName,
+          last_sync_at: cursor[0]?.lastSyncAt,
+        },
+        transactions: transactions.map(t => ({
+          transaction_id: t.transactionId,
+          date: t.date,
+          name: t.name,
+          merchant_name: t.merchantName,
+          amount_cents: t.amountCents,
+          pending: t.pending,
+          category_primary: t.categoryPrimary,
+        })),
+      });
+    } catch (error) {
+      console.error("Error fetching account transactions:", error);
+      res.status(500).json({ message: "Failed to fetch transactions" });
+    }
+  });
+
+  // H) Get Plaid sync status
+  app.get("/api/admin/plaid/sync-status", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      const items = await db.select().from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      const accounts = await db.select().from(plaidAccounts)
+        .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      // Get latest sync time
+      let lastSyncAt: Date | null = null;
+      for (const item of items) {
+        const cursor = await db.select().from(plaidCursors)
+          .where(eq(plaidCursors.itemId, item.itemId))
+          .limit(1);
+        if (cursor[0]?.lastSyncAt && (!lastSyncAt || cursor[0].lastSyncAt > lastSyncAt)) {
+          lastSyncAt = cursor[0].lastSyncAt;
+        }
+      }
+      
+      res.json({
+        linked_institutions: items.length,
+        linked_accounts: accounts.length,
+        last_sync_at: lastSyncAt,
+      });
+    } catch (error) {
+      console.error("Error fetching sync status:", error);
+      res.status(500).json({ message: "Failed to fetch sync status" });
+    }
+  });
+
+  // I) Get Plaid-derived financial totals
+  app.get("/api/admin/plaid/finance-totals", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { days = "30" } = req.query;
+      
+      const daysNum = parseInt(days as string) || 30;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysNum);
+      
+      // Get all items for this admin
+      const items = await db.select().from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      const itemIds = items.map(i => i.itemId);
+      
+      if (itemIds.length === 0) {
+        return res.json({
+          income: 0,
+          spending: 0,
+          debts: 0,
+          holdings: 0,
+          date_range: daysNum,
+        });
+      }
+      
+      // Get transactions in date range
+      const transactions = await db.select().from(plaidTransactions)
+        .where(and(
+          gte(plaidTransactions.date, startDate.toISOString().split('T')[0]),
+          sql`${plaidTransactions.itemId} = ANY(${itemIds})`
+        ));
+      
+      // Calculate income (negative amounts in Plaid = money in)
+      const income = transactions
+        .filter(t => t.amountCents < 0)
+        .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
+      
+      // Calculate spending (positive amounts in Plaid = money out)
+      const spending = transactions
+        .filter(t => t.amountCents > 0)
+        .reduce((sum, t) => sum + t.amountCents, 0);
+      
+      // Get account balances for debts and holdings
+      const accounts = await db.select().from(plaidAccounts)
+        .where(sql`${plaidAccounts.itemId} = ANY(${itemIds})`);
+      
+      // Debts: credit, loan account types
+      const debts = accounts
+        .filter(a => ['credit', 'loan'].includes(a.type?.toLowerCase() || ''))
+        .reduce((sum, a) => sum + (a.currentBalanceCents || 0), 0);
+      
+      // Holdings: investment accounts
+      const holdings = accounts
+        .filter(a => ['investment', 'brokerage'].includes(a.type?.toLowerCase() || ''))
+        .reduce((sum, a) => sum + (a.currentBalanceCents || 0), 0);
+      
+      res.json({
+        income,
+        spending,
+        debts,
+        holdings,
+        date_range: daysNum,
+      });
+    } catch (error) {
+      console.error("Error fetching finance totals:", error);
+      res.status(500).json({ message: "Failed to fetch finance totals" });
+    }
+  });
+
+  // J) Spending summary for charts
+  app.get("/api/admin/plaid/spending-summary", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { days = "30" } = req.query;
+      
+      const daysNum = parseInt(days as string) || 30;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - daysNum);
+      
+      const items = await db.select().from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      const itemIds = items.map(i => i.itemId);
+      
+      if (itemIds.length === 0) {
+        return res.json({
+          categories: [],
+          top_merchants: [],
+          transaction_count: 0,
+          net_cash_flow: 0,
+          total_inflow: 0,
+          total_outflow: 0,
+        });
+      }
+      
+      const transactions = await db.select().from(plaidTransactions)
+        .where(and(
+          gte(plaidTransactions.date, startDate.toISOString().split('T')[0]),
+          sql`${plaidTransactions.itemId} = ANY(${itemIds})`
+        ))
+        .orderBy(desc(plaidTransactions.date));
+      
+      // Aggregate by category
+      const categoryMap = new Map<string, number>();
+      const merchantMap = new Map<string, number>();
+      let totalInflow = 0;
+      let totalOutflow = 0;
+      
+      for (const txn of transactions) {
+        const category = txn.categoryPrimary || "Uncategorized";
+        const merchant = txn.merchantName || txn.name;
+        
+        if (txn.amountCents > 0) {
+          // Money out (spending)
+          totalOutflow += txn.amountCents;
+          categoryMap.set(category, (categoryMap.get(category) || 0) + txn.amountCents);
+          merchantMap.set(merchant, (merchantMap.get(merchant) || 0) + txn.amountCents);
+        } else {
+          // Money in (income)
+          totalInflow += Math.abs(txn.amountCents);
+        }
+      }
+      
+      // Sort categories by value
+      const categories = Array.from(categoryMap.entries())
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value);
+      
+      // Top 10 merchants
+      const topMerchants = Array.from(merchantMap.entries())
+        .map(([name, amount_cents]) => ({ name, amount_cents }))
+        .sort((a, b) => b.amount_cents - a.amount_cents)
+        .slice(0, 10);
+      
+      res.json({
+        categories,
+        top_merchants: topMerchants,
+        transaction_count: transactions.length,
+        net_cash_flow: totalInflow - totalOutflow,
+        total_inflow: totalInflow,
+        total_outflow: totalOutflow,
+      });
+    } catch (error) {
+      console.error("Error fetching spending summary:", error);
+      res.status(500).json({ message: "Failed to fetch spending summary" });
+    }
+  });
+
+  // ============================================
+  // FINANCE ENTRIES (Manual/Linked)
+  // ============================================
+
+  // Get all finance entries for admin
+  app.get("/api/admin/finance-entries", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { category_group } = req.query;
+      
+      let conditions = [eq(financeEntries.adminUserId, userId!)];
+      
+      if (category_group) {
+        conditions.push(eq(financeEntries.categoryGroup, category_group as string));
+      }
+      
+      const entries = await db.select().from(financeEntries)
+        .where(and(...conditions))
+        .orderBy(desc(financeEntries.date));
+      
+      res.json(entries);
+    } catch (error) {
+      console.error("Error fetching finance entries:", error);
+      res.status(500).json({ message: "Failed to fetch finance entries" });
+    }
+  });
+
+  // Create finance entry
+  app.post("/api/admin/finance-entries", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const data = req.body;
+      
+      const entryId = generateFinanceEntryId();
+      
+      await db.insert(financeEntries).values({
+        entryId,
+        adminUserId: userId!,
+        entryType: data.entryType || "manual",
+        categoryGroup: data.categoryGroup,
+        title: data.title,
+        amountCents: data.amountCents,
+        date: data.date,
+        recurrence: data.recurrence || null,
+        plaidAccountId: data.plaidAccountId || null,
+        externalUrl: data.externalUrl || null,
+      });
+      
+      const entry = await db.select().from(financeEntries)
+        .where(eq(financeEntries.entryId, entryId))
+        .limit(1);
+      
+      res.status(201).json(entry[0]);
+    } catch (error) {
+      console.error("Error creating finance entry:", error);
+      res.status(500).json({ message: "Failed to create finance entry" });
+    }
+  });
+
+  // Delete finance entry
+  app.delete("/api/admin/finance-entries/:entryId", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { entryId } = req.params;
+      
+      const entry = await db.select().from(financeEntries)
+        .where(and(
+          eq(financeEntries.entryId, entryId),
+          eq(financeEntries.adminUserId, userId!)
+        ))
+        .limit(1);
+      
+      if (entry.length === 0) {
+        return res.status(404).json({ message: "Entry not found" });
+      }
+      
+      await db.delete(financeEntries).where(eq(financeEntries.entryId, entryId));
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting finance entry:", error);
+      res.status(500).json({ message: "Failed to delete finance entry" });
+    }
+  });
+
+  // Get all Plaid accounts for dropdown selection
+  app.get("/api/admin/plaid/all-accounts", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      const accounts = await db.select({
+        accountId: plaidAccounts.accountId,
+        plaidAccountId: plaidAccounts.plaidAccountId,
+        name: plaidAccounts.name,
+        mask: plaidAccounts.mask,
+        type: plaidAccounts.type,
+        institutionName: plaidItems.institutionName,
+      }).from(plaidAccounts)
+        .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      res.json(accounts);
+    } catch (error) {
+      console.error("Error fetching all accounts:", error);
+      res.status(500).json({ message: "Failed to fetch accounts" });
     }
   });
 
