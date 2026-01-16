@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Download, ExternalLink, Loader2, X, FileText } from "lucide-react";
@@ -14,6 +14,13 @@ interface PDFViewerModalProps {
 export function PDFViewerModal({ open, onOpenChange, documentId, title, downloadUrl }: PDFViewerModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setLoading(true);
+      setError(false);
+    }
+  }, [open, documentId]);
 
   const handleIframeLoad = () => {
     setLoading(false);
@@ -99,7 +106,8 @@ export function PDFViewerModal({ open, onOpenChange, documentId, title, download
             </div>
           ) : (
             <iframe
-              src={`${downloadUrl}#toolbar=1&navpanes=0`}
+              key={documentId}
+              src={`${downloadUrl}?preview=true#toolbar=1&navpanes=0`}
               className="w-full h-full border-0"
               onLoad={handleIframeLoad}
               onError={handleIframeError}

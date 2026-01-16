@@ -458,6 +458,7 @@ export async function registerRoutes(
   app.get("/api/admin/documents/:documentId/download", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
     try {
       const { documentId } = req.params;
+      const isPreview = req.query.preview === 'true';
       const document = await storage.getDocument(documentId);
       
       if (!document) {
@@ -474,7 +475,7 @@ export async function registerRoutes(
       
       res.set({
         'Content-Type': document.contentType || 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${document.title}"`,
+        'Content-Disposition': `${isPreview ? 'inline' : 'attachment'}; filename="${document.title}"`,
       });
       
       file.createReadStream().pipe(res);
@@ -696,6 +697,7 @@ export async function registerRoutes(
     try {
       const profile = (req as any).userProfile;
       const { documentId } = req.params;
+      const isPreview = req.query.preview === 'true';
       
       const document = await storage.getDocument(documentId);
       
@@ -718,7 +720,7 @@ export async function registerRoutes(
       
       res.set({
         'Content-Type': document.contentType || 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${document.title}"`,
+        'Content-Disposition': `${isPreview ? 'inline' : 'attachment'}; filename="${document.title}"`,
       });
       
       file.createReadStream().pipe(res);
