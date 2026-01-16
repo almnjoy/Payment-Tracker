@@ -1,11 +1,10 @@
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MOCK_ADMIN_STATS, MOCK_RECENT_ACTIVITY } from "@/lib/mockData";
-import { DollarSign, Users, AlertCircle, TrendingUp, ArrowUpRight, ArrowDownRight, Activity } from "lucide-react";
-import { motion } from "framer-motion";
+import { DollarSign, Users, AlertCircle, TrendingUp, ArrowUpRight, Loader2 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
+import { useAdminStats, useAdminPayments, formatCents, formatDate } from "@/lib/api";
 
-const data = [
+const chartData = [
   { name: "Jan", total: 12000 },
   { name: "Feb", total: 18000 },
   { name: "Mar", total: 15000 },
@@ -16,7 +15,20 @@ const data = [
 ];
 
 export default function AdminDashboard() {
-  const { totalCollected, outstandingBalance, overdueCount, activeClients } = MOCK_ADMIN_STATS;
+  const { data: stats, isLoading: statsLoading } = useAdminStats();
+  const { data: payments, isLoading: paymentsLoading } = useAdminPayments();
+
+  if (statsLoading) {
+    return (
+      <Layout role="admin">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      </Layout>
+    );
+  }
+
+  const recentPayments = payments?.slice(0, 5) || [];
 
   return (
     <Layout role="admin">
@@ -35,10 +47,12 @@ export default function AdminDashboard() {
               <DollarSign className="h-4 w-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">${totalCollected.toLocaleString()}</div>
+              <div className="text-2xl font-bold text-gray-900" data-testid="text-total-collected">
+                {stats ? formatCents(stats.totalCollectedCents) : '$0.00'}
+              </div>
               <p className="text-xs text-green-600 flex items-center mt-1">
                 <ArrowUpRight className="h-3 w-3 mr-1" />
-                +12.5% from last month
+                All time payments received
               </p>
             </CardContent>
           </Card>
@@ -51,9 +65,11 @@ export default function AdminDashboard() {
               <AlertCircle className="h-4 w-4 text-orange-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">${outstandingBalance.toLocaleString()}</div>
+              <div className="text-2xl font-bold text-gray-900" data-testid="text-outstanding">
+                {stats ? formatCents(stats.outstandingCents) : '$0.00'}
+              </div>
               <p className="text-xs text-gray-500 mt-1">
-                Across {overdueCount} overdue accounts
+                Across {stats?.overdueCount || 0} overdue accounts
               </p>
             </CardContent>
           </Card>
@@ -66,10 +82,12 @@ export default function AdminDashboard() {
               <Users className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">{activeClients}</div>
+              <div className="text-2xl font-bold text-gray-900" data-testid="text-active-clients">
+                {stats?.activeClients || 0}
+              </div>
               <p className="text-xs text-green-600 flex items-center mt-1">
                 <ArrowUpRight className="h-3 w-3 mr-1" />
-                +3 new this month
+                Total registered clients
               </p>
             </CardContent>
           </Card>
@@ -77,14 +95,18 @@ export default function AdminDashboard() {
           <Card className="shadow-sm hover:shadow-md transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-gray-500">
-                Growth Rate
+                Collection Rate
               </CardTitle>
               <TrendingUp className="h-4 w-4 text-purple-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-gray-900">8.2%</div>
+              <div className="text-2xl font-bold text-gray-900">
+                {stats && stats.totalCollectedCents > 0 
+                  ? `${Math.round((stats.totalCollectedCents / (stats.totalCollectedCents + stats.outstandingCents)) * 100)}%`
+                  : '0%'}
+              </div>
               <p className="text-xs text-gray-500 mt-1">
-                Month over month
+                Payments collected vs outstanding
               </p>
             </CardContent>
           </Card>
@@ -97,7 +119,7 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent className="pl-2">
               <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={data}>
+                <AreaChart data={chartData}>
                   <defs>
                     <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#007BFF" stopOpacity={0.1}/>
@@ -138,34 +160,37 @@ export default function AdminDashboard() {
 
           <Card className="md:col-span-3 shadow-sm border-gray-200">
             <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
+              <CardTitle>Recent Payments</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-8">
-                {MOCK_RECENT_ACTIVITY.map((activity, index) => (
-                  <div key={activity.id} className="flex items-start gap-4">
-                    <div className="mt-1">
-                       {activity.type === 'payment' && <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />}
-                       {activity.type === 'invoice' && <div className="h-2 w-2 rounded-full bg-blue-500" />}
-                       {activity.type === 'alert' && <div className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />}
-                       {activity.type === 'document' && <div className="h-2 w-2 rounded-full bg-gray-400" />}
+              {paymentsLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                </div>
+              ) : recentPayments.length > 0 ? (
+                <div className="space-y-6">
+                  {recentPayments.map((payment) => (
+                    <div key={payment.paymentId} className="flex items-start gap-4">
+                      <div className="mt-1">
+                        <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium leading-none text-gray-900">
+                          Payment received
+                          <span className="font-bold text-green-700 ml-1">
+                            {formatCents(payment.amountCents)}
+                          </span>
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(payment.paidAt || payment.createdAt)} • {payment.method}
+                        </p>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium leading-none text-gray-900">
-                        {activity.user}
-                        {activity.type === 'payment' && <span className="text-gray-500 font-normal"> made a payment of </span>}
-                        {activity.type === 'invoice' && <span className="text-gray-500 font-normal"> - </span>}
-                        {activity.type === 'alert' && <span className="text-gray-500 font-normal"> has an alert: </span>}
-                        {activity.type === 'payment' && <span className="font-bold text-green-700">${activity.amount?.toFixed(2)}</span>}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                         {activity.message || activity.time}
-                      </p>
-                      {activity.message && <p className="text-xs text-gray-400">{activity.time}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-gray-500 py-8">No payments yet</p>
+              )}
             </CardContent>
           </Card>
         </div>
