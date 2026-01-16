@@ -48,7 +48,7 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// Middleware to check if user is client
+// Middleware to check if user is client (or admin for access)
 async function isClient(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
   if (!userId) {
@@ -58,6 +58,11 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   const profile = await storage.getUserProfile(userId);
   if (!profile) {
     return res.status(403).json({ message: "Forbidden: No user profile found" });
+  }
+  
+  // Client role required (admins can also access for impersonation/support purposes)
+  if (profile.role !== "client" && profile.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden: Client access required" });
   }
   
   (req as any).userProfile = profile;
