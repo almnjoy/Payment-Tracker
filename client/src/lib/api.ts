@@ -612,3 +612,79 @@ export function useDeleteFinanceEntry() {
     },
   });
 }
+
+// Client Billing Items
+export interface ClientBillingItem {
+  id: string;
+  clientId: string;
+  type: string;
+  title: string;
+  amountCents: number;
+  dueDate: string;
+  frequency: string;
+  notes: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function useClientBillingItems(clientId: string) {
+  return useQuery<ClientBillingItem[]>({
+    queryKey: ["admin", "clients", clientId, "billing-items"],
+    queryFn: () => fetchApi(`/api/admin/clients/${clientId}/billing-items`),
+    enabled: !!clientId,
+  });
+}
+
+export function useCreateBillingItem() {
+  const queryClient = useQueryClient();
+  return useMutation<ClientBillingItem, Error, { clientId: string; type: string; title: string; amountCents: number; dueDate: string; frequency: string; notes?: string }>({
+    mutationFn: ({ clientId, ...data }) => fetchApi(`/api/admin/clients/${clientId}/billing-items`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients", variables.clientId, "billing-items"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients", variables.clientId] });
+    },
+  });
+}
+
+export function useDeleteBillingItem() {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { clientId: string; id: string }>({
+    mutationFn: ({ clientId, id }) => fetchApi(`/api/admin/clients/${clientId}/billing-items/${id}`, {
+      method: "DELETE",
+    }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients", variables.clientId, "billing-items"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients", variables.clientId] });
+    },
+  });
+}
+
+export function useAllBillingItems(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.append("startDate", startDate);
+  if (endDate) params.append("endDate", endDate);
+  const queryString = params.toString();
+  
+  return useQuery<ClientBillingItem[]>({
+    queryKey: ["admin", "billing-items", startDate, endDate],
+    queryFn: () => fetchApi(`/api/admin/billing-items${queryString ? `?${queryString}` : ""}`),
+  });
+}
+
+export function useUpdateClientStatus() {
+  const queryClient = useQueryClient();
+  return useMutation<Client, Error, { clientId: string; status: string }>({
+    mutationFn: ({ clientId, status }) => fetchApi(`/api/admin/clients/${clientId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients", variables.clientId] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients"] });
+    },
+  });
+}
