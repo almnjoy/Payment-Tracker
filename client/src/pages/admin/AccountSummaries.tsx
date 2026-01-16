@@ -1,16 +1,51 @@
+import { useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { DollarSign, Wallet, CreditCard, Building, ArrowUpRight, TrendingUp, RefreshCw, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DollarSign, Wallet, CreditCard, Building, ArrowUpRight, TrendingUp, RefreshCw, Loader2, Search, X } from "lucide-react";
 import { motion } from "framer-motion";
-import { useAdminPlaidAccountSummaries, useSyncPlaidTransactions, formatCents, formatDate } from "@/lib/api";
+import { useAdminPlaidAccountSummaries, useAdminPlaidAccountTransactions, useSyncPlaidTransactions, formatCents, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+
+const DATE_PRESETS = [
+  { label: "30 days", days: 30 },
+  { label: "90 days", days: 90 },
+  { label: "6 months", days: 180 },
+  { label: "12 months", days: 365 },
+  { label: "24 months", days: 730 },
+];
 
 export default function AccountSummaries() {
   const { data: summaries, isLoading, refetch } = useAdminPlaidAccountSummaries();
   const syncTransactions = useSyncPlaidTransactions();
   const { toast } = useToast();
+  
+  const [selectedAccount, setSelectedAccount] = useState<{
+    plaidAccountId: string;
+    institutionName: string;
+  } | null>(null);
+  
+  const [datePreset, setDatePreset] = useState("30");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [groupByMonth, setGroupByMonth] = useState(false);
+  
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - parseInt(datePreset));
+  
+  const { data: accountData, isLoading: transactionsLoading } = useAdminPlaidAccountTransactions(
+    selectedAccount?.plaidAccountId || null,
+    {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0],
+      search: searchQuery || undefined,
+    }
+  );
 
   const handleSync = async () => {
     try {
@@ -38,6 +73,23 @@ export default function AccountSummaries() {
     .reduce((sum, acc) => sum + (acc.current_balance_cents || 0), 0);
 
   const netWorth = totalCash - totalCredit;
+
+  const groupTransactionsByMonth = (transactions: NonNullable<typeof accountData>['transactions']) => {
+    const groups: Record<string, typeof transactions> = {};
+    
+    for (const txn of transactions) {
+      const date = new Date(txn.date);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const label = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+      
+      if (!groups[label]) {
+        groups[label] = [];
+      }
+      groups[label].push(txn);
+    }
+    
+    return groups;
+  };
 
   return (
     <Layout role="admin">
@@ -150,7 +202,14 @@ export default function AccountSummaries() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
                     >
-                      <Card className="relative overflow-hidden border-gray-200 shadow-sm hover:shadow-md transition-shadow group" data-testid={`card-account-${account.mask || index}`}>
+                      <Card 
+                        className="relative overflow-hidden border-gray-200 shadow-sm hover:shadow-md transition-shadow group cursor-pointer" 
+                        data-testid={`card-account-${account.mask || index}`}
+                        onClick={() => setSelectedAccount({
+                          plaidAccountId: account.plaid_account_id,
+                          institutionName: summary.institution_name || "Unknown",
+                        })}
+                      >
                         <div className={`absolute left-0 top-0 bottom-0 w-1 ${institutionIndex % 2 === 0 ? 'bg-[#007BFF]' : 'bg-[#FF6A00]'}`} />
                         <CardContent className="p-6">
                           <div className="flex justify-between items-start mb-4">
@@ -160,8 +219,8 @@ export default function AccountSummaries() {
                                 {account.type} • {account.subtype} {account.mask && `• ••${account.mask}`}
                               </p>
                             </div>
-                            <div className="p-2 bg-gray-50 rounded-lg">
-                              <Wallet className="h-5 w-5 text-gray-400" />
+                            <div className="p-2 bg-gray-50 rounded-lg group-hover:bg-blue-50 transition-colors">
+                              <Wallet className="h-5 w-5 text-gray-400 group-hover:text-blue-500" />
                             </div>
                           </div>
                           
@@ -177,12 +236,12 @@ export default function AccountSummaries() {
                           </div>
                           
                           <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                             <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-50 text-green-700">
-                               Linked
-                             </span>
-                             <span className="text-xs text-gray-400">
-                               {account.iso_currency_code || "USD"}
-                             </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-50 text-green-700">
+                              Click for transactions
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {account.iso_currency_code || "USD"}
+                            </span>
                           </div>
                         </CardContent>
                       </Card>
@@ -209,6 +268,144 @@ export default function AccountSummaries() {
           </Card>
         )}
       </div>
+
+      <Dialog open={!!selectedAccount} onOpenChange={(open) => !open && setSelectedAccount(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>Transaction History</span>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedAccount(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+          
+          {accountData && (
+            <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-900">{accountData.account.name}</h3>
+                    <p className="text-sm text-gray-500">
+                      {accountData.account.institution_name} • {accountData.account.type} • {accountData.account.subtype}
+                      {accountData.account.mask && ` • ••${accountData.account.mask}`}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-gray-900">{formatCents(accountData.account.currentBalanceCents || 0)}</p>
+                    {accountData.account.availableBalanceCents !== null && (
+                      <p className="text-sm text-gray-500">Available: {formatCents(accountData.account.availableBalanceCents)}</p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  Last sync: {accountData.account.last_sync_at ? formatDate(accountData.account.last_sync_at) : "Never"}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3 items-center">
+                <div className="flex-1 min-w-[200px]">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input 
+                      placeholder="Search by merchant/name..." 
+                      className="pl-9"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      data-testid="input-search"
+                    />
+                  </div>
+                </div>
+                
+                <Select value={datePreset} onValueChange={setDatePreset}>
+                  <SelectTrigger className="w-[140px]" data-testid="select-date-preset">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATE_PRESETS.map(preset => (
+                      <SelectItem key={preset.days} value={preset.days.toString()}>
+                        {preset.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                <Button 
+                  variant={groupByMonth ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setGroupByMonth(!groupByMonth)}
+                  data-testid="button-group-by-month"
+                >
+                  Group by Month
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
+                {transactionsLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                  </div>
+                ) : accountData.transactions.length > 0 ? (
+                  groupByMonth ? (
+                    Object.entries(groupTransactionsByMonth(accountData.transactions)).map(([month, txns]) => (
+                      <div key={month} className="mb-6">
+                        <h4 className="font-semibold text-gray-700 mb-2 sticky top-0 bg-white py-2">{month}</h4>
+                        <div className="space-y-2">
+                          {txns.map((txn) => (
+                            <div 
+                              key={txn.transaction_id} 
+                              className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                              data-testid={`txn-${txn.transaction_id}`}
+                            >
+                              <div>
+                                <p className="font-medium text-gray-900">{txn.merchant_name || txn.name}</p>
+                                <p className="text-xs text-gray-500">
+                                  {formatDate(txn.date)}
+                                  {txn.category_primary && ` • ${txn.category_primary}`}
+                                  {txn.pending && " • Pending"}
+                                </p>
+                              </div>
+                              <span className={`font-bold ${txn.amount_cents > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {txn.amount_cents > 0 ? '-' : '+'}{formatCents(Math.abs(txn.amount_cents))}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="space-y-2">
+                      {accountData.transactions.map((txn) => (
+                        <div 
+                          key={txn.transaction_id} 
+                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                          data-testid={`txn-${txn.transaction_id}`}
+                        >
+                          <div>
+                            <p className="font-medium text-gray-900">{txn.merchant_name || txn.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {formatDate(txn.date)}
+                              {txn.category_primary && ` • ${txn.category_primary}`}
+                              {txn.pending && " • Pending"}
+                            </p>
+                          </div>
+                          <span className={`font-bold ${txn.amount_cents > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {txn.amount_cents > 0 ? '-' : '+'}{formatCents(Math.abs(txn.amount_cents))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    No transactions found for this period.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
