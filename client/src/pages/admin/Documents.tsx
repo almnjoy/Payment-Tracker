@@ -46,7 +46,9 @@ export default function AdminDocuments() {
 
   const handleDownload = async (documentId: string, title: string) => {
     try {
-      const response = await fetch(`/api/admin/documents/${documentId}/download`);
+      const response = await fetch(`/api/admin/documents/${documentId}/download`, {
+        credentials: "include",
+      });
       if (!response.ok) throw new Error("Download failed");
       
       const blob = await response.blob();
