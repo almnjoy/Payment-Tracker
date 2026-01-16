@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { objectStorageClient, ObjectStorageService } from "./replit_integrations/object_storage";
 import multer from "multer";
+import { inArray } from "drizzle-orm";
 import { plaidClient } from "./plaid/client";
 import { CountryCode, Products } from "plaid";
 import { db } from "./db";
@@ -1457,7 +1458,7 @@ export async function registerRoutes(
       const transactions = await db.select().from(plaidTransactions)
         .where(and(
           gte(plaidTransactions.date, startDate.toISOString().split('T')[0]),
-          sql`${plaidTransactions.itemId} = ANY(${itemIds})`
+          inArray(plaidTransactions.itemId, itemIds)
         ));
       
       // Calculate income (negative amounts in Plaid = money in)
@@ -1472,7 +1473,7 @@ export async function registerRoutes(
       
       // Get account balances for debts and holdings
       const accounts = await db.select().from(plaidAccounts)
-        .where(sql`${plaidAccounts.itemId} = ANY(${itemIds})`);
+        .where(inArray(plaidAccounts.itemId, itemIds));
       
       // Debts: credit, loan account types
       const debts = accounts
@@ -1524,11 +1525,11 @@ export async function registerRoutes(
       }
       
       const transactions = await db.select().from(plaidTransactions)
-        .where(and(
-          gte(plaidTransactions.date, startDate.toISOString().split('T')[0]),
-          sql`${plaidTransactions.itemId} = ANY(${itemIds})`
-        ))
-        .orderBy(desc(plaidTransactions.date));
+      .where(and(
+        gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+        inArray(plaidTransactions.itemId, itemIds)
+      ))
+      .orderBy(desc(plaidTransactions.date));
       
       // Aggregate by category
       const categoryMap = new Map<string, number>();
