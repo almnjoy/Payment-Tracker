@@ -41,6 +41,10 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 6. **payments** - Payment transactions
 7. **documents** - Document metadata (files in Object Storage)
 8. **external_accounts** - External financial accounts
+9. **plaid_items** - Linked Plaid institutions (admin only)
+10. **plaid_accounts** - Accounts from linked institutions
+11. **plaid_transactions** - Transactions synced from Plaid
+12. **plaid_cursors** - Sync cursors for transactions
 
 ## Authentication Flow
 1. Users authenticate via Replit Auth (/api/login)
@@ -81,6 +85,14 @@ Run `npx tsx server/seed.ts` to populate test data:
 - GET/POST `/api/admin/invite-codes` - List/create invite codes
 - GET `/api/admin/stats` - Dashboard statistics
 
+### Plaid Integration (Admin Only)
+- POST `/api/admin/plaid/link-token` - Create Plaid Link token
+- POST `/api/admin/plaid/exchange` - Exchange public token, fetch accounts/transactions
+- POST `/api/admin/plaid/sync` - Sync transactions for all linked items
+- GET `/api/admin/plaid/items` - List linked institutions
+- DELETE `/api/admin/plaid/items/:itemId` - Unlink an institution
+- GET `/api/admin/plaid/account-summaries` - Get account balances grouped by institution
+
 ### Client Endpoints (requires client role)
 - GET `/api/client/dashboard` - Client dashboard data
 - GET `/api/client/invoices` - Client's invoices
@@ -96,6 +108,9 @@ Run `npx tsx server/seed.ts` to populate test data:
 - `SESSION_SECRET` - Session encryption key
 - `REPL_ID` - Replit environment ID (auto-configured)
 - Object Storage environment variables (auto-configured)
+- `PLAID_CLIENT_ID` - Plaid API client ID
+- `PLAID_SECRET` - Plaid API secret
+- `PLAID_ENV` - Plaid environment (sandbox, development, production)
 
 ## Development Notes
 - All monetary amounts are stored in cents (integer) to avoid floating point issues
