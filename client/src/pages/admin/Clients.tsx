@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Search, Plus, Filter, ArrowRight, Loader2 } from "lucide-react";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 import { useAdminClients, useCreateClient, formatCents, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -16,9 +16,21 @@ export default function AdminClients() {
   const { data: clients, isLoading, refetch } = useAdminClients();
   const createClient = useCreateClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newClient, setNewClient] = useState({ displayName: "", email: "", phone: "", address: "" });
+
+  const handleRowClick = (clientId: string) => {
+    navigate(`/admin/clients/${clientId}`);
+  };
+
+  const handleRowKeyDown = (e: React.KeyboardEvent, clientId: string) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleRowClick(clientId);
+    }
+  };
 
   const handleCreateClient = async () => {
     if (!newClient.displayName.trim()) {
@@ -149,7 +161,16 @@ export default function AdminClients() {
                </TableHeader>
                <TableBody>
                  {filteredClients.map((client) => (
-                   <TableRow key={client.clientId} className="cursor-pointer hover:bg-gray-50" data-testid={`row-client-${client.clientId}`}>
+                   <TableRow 
+                     key={client.clientId} 
+                     className="cursor-pointer hover:bg-blue-50 active:bg-blue-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2" 
+                     data-testid={`row-client-${client.clientId}`}
+                     onClick={() => handleRowClick(client.clientId)}
+                     onKeyDown={(e) => handleRowKeyDown(e, client.clientId)}
+                     tabIndex={0}
+                     role="button"
+                     aria-label={`View details for ${client.displayName}`}
+                   >
                      <TableCell className="font-medium text-gray-900">{client.displayName}</TableCell>
                      <TableCell className="text-gray-500">{client.email || '-'}</TableCell>
                      <TableCell>
@@ -171,11 +192,7 @@ export default function AdminClients() {
                        {formatDate(client.lastPaymentAt)}
                      </TableCell>
                      <TableCell>
-                        <Link href={`/admin/clients/${client.clientId}`}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-primary">
-                             <ArrowRight size={16} />
-                          </Button>
-                        </Link>
+                        <ArrowRight size={16} className="text-gray-400" />
                      </TableCell>
                    </TableRow>
                  ))}

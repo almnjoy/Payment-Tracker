@@ -1,0 +1,95 @@
+You are working on the existing Quick IT admin/client portal app in this Replit project.
+DO NOT change the overall design system, colors, typography, or navigation layout. Keep the UI consistent with what exists today.
+Focus on fixing these specific UX + document management issues. Implement end-to-end wiring (frontend + backend where needed), but keep it minimal and clean.
+
+IMPORTANT CONTEXT
+- Auth is already working (admin role exists).
+- Documents upload endpoint exists: POST /api/admin/documents/upload (multipart form-data)
+- Documents list endpoint exists: GET /api/admin/documents?clientId=CL-XXXXXX
+- Documents are stored as PDFs in Replit App Storage (object storage) and metadata in the `documents` table.
+- Some issues were caused by session/cookie behavior when testing with curl (401). In-app fetch works with credentials.
+
+TASKS
+
+1) Clients page: make rows fully clickable
+- On the Admin > Clients page, make each client row clickable anywhere (not just the arrow icon).
+- Clicking a row should navigate to the client detail page for that client.
+- Preserve the arrow icon if you want, but row click should work too.
+- Ensure accessibility: row should be keyboard navigable (Enter/Space triggers navigation) and show hover/active states.
+
+2) Client detail: add “manual bill/expense” creation (admin-side first, client-visible after)
+- In the Client Detail page, add a button like “Add Bill/Expense” (wording ok to adjust).
+- This creates a record in the existing finance table(s). Use the existing `finance_entries` table (already present).
+- Fields to capture:
+  - type/category: (bill | expense | income | debt | holding) OR whatever enum/string is already used in finance_entries
+  - title/description
+  - amount (store in cents)
+  - due date
+  - frequency (one-time, weekly, biweekly, monthly, yearly)
+  - optional notes
+- Save the entry associated to the client (clientId).
+- After save, show it immediately in the client detail view (a small “Upcoming Bills/Expenses” section is fine).
+- ALSO: wire the client portal side to display these entries (read-only is fine for now).
+  - If a client is logged in, they should see their own finance entries in their portal page where it makes sense (simple list).
+  - Keep permissions correct: clients can only see their own clientId’s entries.
+
+Backend/API work for #2
+- Add minimal API routes if missing:
+  - Admin: POST /api/admin/finance-entries (create)
+  - Admin: GET /api/admin/finance-entries?clientId=...
+  - Client: GET /api/client/finance-entries
+- Ensure routes use existing auth middleware patterns (isAuthenticated, isAdmin, client role check).
+- Update storage layer functions accordingly (create/get by client).
+
+3) PDF quick-view modal (Client Detail + Documents page)
+- Add a “Quick View” capability for PDFs:
+  - On the Client Detail “Documents” card/list, clicking a document should open a modal.
+  - The modal should embed the PDF (iframe/object) using a secure download URL from the backend.
+  - Include: document title, a Download button, and a Close button.
+- Apply the same modal behavior on the main Admin > Documents page.
+- If iframe embedding fails due to headers/content-disposition, implement a fallback:
+  - Provide a “Open in new tab” link to the signed download URL.
+- Ensure the download endpoint returns a valid PDF response and can be embedded if possible.
+
+4) Admin Documents page: group by Client, then “Invoices” and “Other”
+- Change the Admin > Documents page UI to a simple folder-like hierarchy:
+  - Top level: list of Clients (expand/collapse)
+  - Under each client: two sections/folders
+    - “Invoices” (docType === 'invoice' OR documents linked to invoiceId)
+    - “Other” (everything else)
+- Within each folder show documents list with:
+  - Title, uploaded date, size (optional), quick-view icon/button, download icon/button.
+- Add a client filter/search if it already exists; do not add heavy new UI, keep it simple.
+
+5) Upload fixes and guardrails
+- Ensure the upload flow always sends:
+  - file (field name MUST be "file")
+  - clientId (required)
+  - title (required)
+  - docType default 'other' unless user chooses 'invoice'
+- On the UI upload dialog:
+  - Require selecting a Client (dropdown/search)
+  - Restrict to PDF only:
+    - Frontend: accept="application/pdf"
+    - Backend: verify mimetype and/or extension, reject non-PDF with clear error
+- Fix any bug causing uploads to fail in the UI:
+  - Ensure fetch uses credentials: "include"
+  - Ensure form-data is correct and error handling shows the backend message
+- After upload success:
+  - Refresh the documents list automatically (and the client detail documents card if you uploaded while in a client page).
+
+IMPLEMENTATION NOTES
+- Keep code changes localized and incremental.
+- Follow the existing folder/file patterns for routes, API calls, hooks, and components.
+- Keep all styling consistent with current Tailwind/shadcn usage.
+- Do not introduce new large libraries.
+
+DELIVERABLE
+- After implementing, ensure these flows work in preview:
+  - Click client row anywhere -> opens client detail
+  - Add Bill/Expense -> saves to DB -> shows in admin client view and client portal view
+  - Upload PDF -> appears under correct client folder and quick-view works
+  - Quick-view modal works on both client detail and documents page
+  - Documents page groups by client -> invoices/other
+
+Go implement all of the above now.
