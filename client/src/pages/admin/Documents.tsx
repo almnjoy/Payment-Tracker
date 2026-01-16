@@ -1,47 +1,169 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { Layout } from "@/components/Layout";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { FileText, Upload, Folder, Search, Loader2, Download, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useAdminDocuments, useUploadDocument, formatDate } from "@/lib/api";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { FileText, Upload, Search, Loader2, Download, Eye, ChevronDown, ChevronRight, FolderOpen, User, FileArchive } from "lucide-react";
+import { useAdminDocuments, useAdminClients, useUploadDocument, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { PDFViewerModal } from "@/components/PDFViewerModal";
+
+interface Document {
+  documentId: string;
+  clientId: string | null;
+  title: string;
+  docType: string;
+  fileSizeBytes: number | null;
+  createdAt: string;
+  contentType: string | null;
+}
+
+interface ClientGroup {
+  clientId: string;
+  clientName: string;
+  invoices: Document[];
+  other: Document[];
+}
 
 export default function AdminDocuments() {
   const { toast } = useToast();
-  const [selectedFolder, setSelectedFolder] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [isDragging, setIsDragging] = useState(false);
+  const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadFormData, setUploadFormData] = useState({
+    clientId: "",
+    title: "",
+    docType: "other",
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  
   const { data: documents, isLoading, refetch } = useAdminDocuments();
+  const { data: clients } = useAdminClients();
   const uploadDocument = useUploadDocument();
 
-  const handleFileUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+  const groupedDocuments = useMemo(() => {
+    if (!documents) return { byClient: [], noClient: [] as Document[] };
     
-    const file = files[0];
+    const clientMap = new Map<string, ClientGroup>();
+    const noClient: Document[] = [];
+    
+    documents.forEach(doc => {
+      if (!doc.clientId) {
+        noClient.push(doc);
+        return;
+      }
+      
+      if (!clientMap.has(doc.clientId)) {
+        const client = clients?.find(c => c.clientId === doc.clientId);
+        clientMap.set(doc.clientId, {
+          clientId: doc.clientId,
+          clientName: client?.displayName || doc.clientId,
+          invoices: [],
+          other: [],
+        });
+      }
+      
+      const group = clientMap.get(doc.clientId)!;
+      if (doc.docType === 'invoice' || doc.docType === 'receipt') {
+        group.invoices.push(doc);
+      } else {
+        group.other.push(doc);
+      }
+    });
+    
+    const byClient = Array.from(clientMap.values()).sort((a, b) => 
+      a.clientName.localeCompare(b.clientName)
+    );
+    
+    return { byClient, noClient };
+  }, [documents, clients]);
+
+  const filteredGroupedDocs = useMemo(() => {
+    if (!searchQuery) return groupedDocuments;
+    
+    const lowerSearch = searchQuery.toLowerCase();
+    
+    const byClient = groupedDocuments.byClient.map(group => ({
+      ...group,
+      invoices: group.invoices.filter(doc => doc.title.toLowerCase().includes(lowerSearch)),
+      other: group.other.filter(doc => doc.title.toLowerCase().includes(lowerSearch)),
+    })).filter(group => group.invoices.length > 0 || group.other.length > 0);
+    
+    const noClient = groupedDocuments.noClient.filter(doc => 
+      doc.title.toLowerCase().includes(lowerSearch)
+    );
+    
+    return { byClient, noClient };
+  }, [groupedDocuments, searchQuery]);
+
+  const toggleClient = (clientId: string) => {
+    setExpandedClients(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) {
+        next.delete(clientId);
+      } else {
+        next.add(clientId);
+      }
+      return next;
+    });
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type !== 'application/pdf') {
+        toast({ title: "Invalid File", description: "Only PDF files are allowed", variant: "destructive" });
+        return;
+      }
+      setSelectedFile(file);
+      setUploadFormData(prev => ({ ...prev, title: file.name.replace('.pdf', '') }));
+      setUploadDialogOpen(true);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      toast({ title: "Error", description: "Please select a file", variant: "destructive" });
+      return;
+    }
+    if (!uploadFormData.clientId) {
+      toast({ title: "Error", description: "Please select a client", variant: "destructive" });
+      return;
+    }
+    if (!uploadFormData.title.trim()) {
+      toast({ title: "Error", description: "Please enter a title", variant: "destructive" });
+      return;
+    }
     
     try {
       await uploadDocument.mutateAsync({
-        file,
-        title: file.name,
-        docType: getDocType(file.name),
-        visibility: "admin_only",
+        file: selectedFile,
+        clientId: uploadFormData.clientId,
+        title: uploadFormData.title + '.pdf',
+        docType: uploadFormData.docType,
+        visibility: "client_and_admin",
       });
-      toast({ title: "Upload Complete", description: `${file.name} uploaded successfully` });
+      toast({ title: "Upload Complete", description: `${uploadFormData.title}.pdf uploaded successfully` });
+      setUploadDialogOpen(false);
+      setSelectedFile(null);
+      setUploadFormData({ clientId: "", title: "", docType: "other" });
       refetch();
     } catch (error: any) {
       toast({ title: "Upload Failed", description: error.message, variant: "destructive" });
     }
   };
 
-  const getDocType = (filename: string): string => {
-    const lower = filename.toLowerCase();
-    if (lower.includes("lease") || lower.includes("agreement")) return "contract";
-    if (lower.includes("receipt") || lower.includes("invoice")) return "receipt";
-    if (lower.includes("notice")) return "notice";
-    return "other";
+  const handleQuickView = (doc: Document) => {
+    setSelectedDocument(doc);
+    setPdfModalOpen(true);
   };
 
   const handleDownload = async (documentId: string, title: string) => {
@@ -65,36 +187,45 @@ export default function AdminDocuments() {
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileUpload(e.dataTransfer.files);
-  };
-
-  const filteredDocuments = documents?.filter(doc => {
-    const matchesSearch = searchQuery === "" || 
-      doc.title.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFolder = selectedFolder === "all" || doc.docType === selectedFolder;
-    return matchesSearch && matchesFolder;
-  }) || [];
-
-  const folders = [
-    { id: "all", label: "All Files", count: documents?.length || 0 },
-    { id: "contract", label: "Leases", count: documents?.filter(d => d.docType === "contract").length || 0 },
-    { id: "receipt", label: "Receipts", count: documents?.filter(d => d.docType === "receipt").length || 0 },
-    { id: "notice", label: "Notices", count: documents?.filter(d => d.docType === "notice").length || 0 },
-    { id: "other", label: "Other", count: documents?.filter(d => d.docType === "other").length || 0 },
-  ];
+  const DocumentItem = ({ doc }: { doc: Document }) => (
+    <div 
+      className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors group"
+      data-testid={`doc-${doc.documentId}`}
+    >
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className="h-8 w-8 rounded bg-red-50 flex items-center justify-center text-red-500 shrink-0">
+          <FileText size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-gray-900 truncate" title={doc.title}>{doc.title}</p>
+          <p className="text-xs text-gray-500">
+            {formatDate(doc.createdAt)}
+            {doc.fileSizeBytes && ` • ${(doc.fileSizeBytes / 1024).toFixed(1)} KB`}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="h-8 w-8 text-gray-400 hover:text-blue-500"
+          onClick={() => handleQuickView(doc)}
+          data-testid={`button-view-${doc.documentId}`}
+        >
+          <Eye size={16} />
+        </Button>
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="h-8 w-8 text-gray-400 hover:text-blue-500"
+          onClick={() => handleDownload(doc.documentId, doc.title)}
+          data-testid={`button-download-${doc.documentId}`}
+        >
+          <Download size={16} />
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <Layout role="admin">
@@ -102,14 +233,14 @@ export default function AdminDocuments() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Documents</h2>
-            <p className="text-gray-500">Manage all client documents and files.</p>
+            <p className="text-gray-500">Manage all client documents organized by client.</p>
           </div>
           <input
             ref={fileInputRef}
             type="file"
             className="hidden"
-            onChange={(e) => handleFileUpload(e.target.files)}
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+            accept="application/pdf"
+            onChange={handleFileSelect}
           />
           <Button 
             className="btn-primary-orange" 
@@ -117,113 +248,223 @@ export default function AdminDocuments() {
             disabled={uploadDocument.isPending}
             data-testid="button-upload"
           >
-            {uploadDocument.isPending ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="mr-2 h-4 w-4" />
-            )}
-            Upload Document
+            <Upload className="mr-2 h-4 w-4" />
+            Upload PDF
           </Button>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-4">
-          <Card className="md:col-span-1 border-gray-200 h-fit">
-            <CardContent className="p-4 space-y-1">
-              {folders.map(folder => (
-                <Button 
-                  key={folder.id}
-                  variant="ghost" 
-                  className={`w-full justify-start ${selectedFolder === folder.id ? 'font-medium bg-blue-50 text-blue-700' : 'text-gray-600'}`}
-                  onClick={() => setSelectedFolder(folder.id)}
-                  data-testid={`folder-${folder.id}`}
-                >
-                  <Folder className={`mr-2 h-4 w-4 ${selectedFolder === folder.id ? 'fill-blue-200' : ''}`} />
-                  {folder.label}
-                  <span className="ml-auto text-xs text-gray-400">{folder.count}</span>
-                </Button>
-              ))}
-            </CardContent>
-          </Card>
-           
-          <div className="md:col-span-3 space-y-4">
-            <div className="flex gap-2 mb-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+        <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Upload Document</DialogTitle>
+              <DialogDescription>
+                Upload a PDF document for a client
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label className="text-right">File</Label>
+                <div className="col-span-3 flex items-center gap-2 p-2 bg-gray-50 rounded border border-gray-200">
+                  <FileText size={16} className="text-red-500" />
+                  <span className="text-sm truncate">{selectedFile?.name || 'No file selected'}</span>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="clientId" className="text-right">Client *</Label>
+                <Select value={uploadFormData.clientId} onValueChange={(v) => setUploadFormData({ ...uploadFormData, clientId: v })}>
+                  <SelectTrigger className="col-span-3" data-testid="select-upload-client">
+                    <SelectValue placeholder="Select client" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients?.map(client => (
+                      <SelectItem key={client.clientId} value={client.clientId}>
+                        {client.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="title" className="text-right">Title *</Label>
                 <Input 
-                  placeholder="Search documents..." 
-                  className="pl-9 bg-white"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  data-testid="input-search"
+                  id="title" 
+                  className="col-span-3"
+                  value={uploadFormData.title}
+                  onChange={(e) => setUploadFormData({ ...uploadFormData, title: e.target.value })}
+                  data-testid="input-upload-title"
                 />
               </div>
-            </div>
-            
-            {isLoading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+              
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="docType" className="text-right">Type</Label>
+                <Select value={uploadFormData.docType} onValueChange={(v) => setUploadFormData({ ...uploadFormData, docType: v })}>
+                  <SelectTrigger className="col-span-3" data-testid="select-upload-type">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="invoice">Invoice</SelectItem>
+                    <SelectItem value="contract">Contract/Lease</SelectItem>
+                    <SelectItem value="receipt">Receipt</SelectItem>
+                    <SelectItem value="notice">Notice</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div 
-                  className={`border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-6 text-gray-400 transition-colors cursor-pointer bg-gray-50/30 ${
-                    isDragging ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-400 hover:bg-blue-50/50'
-                  }`}
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  data-testid="dropzone"
-                >
-                  <Upload className="h-8 w-8 mb-2" />
-                  <span className="text-sm font-medium">
-                    {uploadDocument.isPending ? "Uploading..." : "Drop files to upload"}
-                  </span>
-                </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setUploadDialogOpen(false)}>Cancel</Button>
+              <Button 
+                onClick={handleUpload} 
+                className="btn-primary-orange"
+                disabled={uploadDocument.isPending}
+                data-testid="button-confirm-upload"
+              >
+                {uploadDocument.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Upload
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-                {filteredDocuments.map((doc) => (
-                  <Card key={doc.documentId} className="group hover:shadow-md transition-shadow" data-testid={`doc-${doc.documentId}`}>
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-start">
-                        <div className="h-10 w-10 rounded-lg bg-red-50 flex items-center justify-center text-red-500 mb-3">
-                          <FileText size={20} />
+        <div className="flex gap-4 items-center">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+            <Input 
+              placeholder="Search documents..." 
+              className="pl-9 bg-white"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              data-testid="input-search"
+            />
+          </div>
+          <p className="text-sm text-gray-500">
+            {documents?.length || 0} documents total
+          </p>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredGroupedDocs.byClient.map(group => (
+              <Card key={group.clientId} className="border-gray-200" data-testid={`client-group-${group.clientId}`}>
+                <Collapsible open={expandedClients.has(group.clientId)} onOpenChange={() => toggleClient(group.clientId)}>
+                  <CollapsibleTrigger asChild>
+                    <CardHeader className="cursor-pointer hover:bg-gray-50 transition-colors py-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {expandedClients.has(group.clientId) ? (
+                            <ChevronDown className="h-4 w-4 text-gray-400" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          )}
+                          <User className="h-5 w-5 text-blue-500" />
+                          <CardTitle className="text-lg">{group.clientName}</CardTitle>
                         </div>
-                        <div className="flex gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-gray-400 hover:text-blue-500"
-                            onClick={() => handleDownload(doc.documentId, doc.title)}
-                            data-testid={`button-download-${doc.documentId}`}
-                          >
-                            <Download size={16} />
-                          </Button>
+                        <div className="flex gap-4 text-sm text-gray-500">
+                          <span>{group.invoices.length} invoices</span>
+                          <span>{group.other.length} other</span>
                         </div>
                       </div>
-                      <h3 className="font-medium text-gray-900 truncate" title={doc.title}>{doc.title}</h3>
-                      <div className="flex justify-between items-center mt-2 text-xs text-gray-500">
-                        <span>{doc.fileSizeBytes ? `${(doc.fileSizeBytes / 1024).toFixed(1)} KB` : ''}</span>
-                        <span>{formatDate(doc.createdAt)}</span>
+                    </CardHeader>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0 space-y-6">
+                      {group.invoices.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-2 mb-3">
+                            <FolderOpen className="h-4 w-4 text-orange-500" />
+                            <h4 className="font-medium text-gray-700">Invoices & Receipts</h4>
+                          </div>
+                          <div className="space-y-2 pl-6">
+                            {group.invoices.map(doc => (
+                              <DocumentItem key={doc.documentId} doc={doc} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {group.other.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-2 mb-3">
+                            <FileArchive className="h-4 w-4 text-gray-500" />
+                            <h4 className="font-medium text-gray-700">Other Documents</h4>
+                          </div>
+                          <div className="space-y-2 pl-6">
+                            {group.other.map(doc => (
+                              <DocumentItem key={doc.documentId} doc={doc} />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </CollapsibleContent>
+                </Collapsible>
+              </Card>
+            ))}
+
+            {filteredGroupedDocs.noClient.length > 0 && (
+              <Card className="border-gray-200 border-dashed" data-testid="client-group-unassigned">
+                <Collapsible open={expandedClients.has('unassigned')} onOpenChange={() => toggleClient('unassigned')}>
+                  <CollapsibleTrigger asChild>
+                    <CardHeader className="cursor-pointer hover:bg-gray-50 transition-colors py-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          {expandedClients.has('unassigned') ? (
+                            <ChevronDown className="h-4 w-4 text-gray-400" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          )}
+                          <FileArchive className="h-5 w-5 text-gray-400" />
+                          <CardTitle className="text-lg text-gray-500">Unassigned Documents</CardTitle>
+                        </div>
+                        <span className="text-sm text-gray-500">{filteredGroupedDocs.noClient.length} documents</span>
                       </div>
-                      <div className="mt-3 text-xs bg-gray-100 inline-block px-2 py-1 rounded text-gray-600 capitalize">
-                        {doc.docType}
+                    </CardHeader>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <CardContent className="pt-0">
+                      <div className="space-y-2">
+                        {filteredGroupedDocs.noClient.map(doc => (
+                          <DocumentItem key={doc.documentId} doc={doc} />
+                        ))}
                       </div>
                     </CardContent>
-                  </Card>
-                ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              </Card>
+            )}
 
-                {filteredDocuments.length === 0 && !isLoading && (
-                  <div className="col-span-full text-center py-12 text-gray-400">
-                    <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                    <p className="font-medium text-gray-900">No documents found</p>
-                    <p className="text-sm mt-1">Upload your first document to get started.</p>
-                  </div>
-                )}
-              </div>
+            {filteredGroupedDocs.byClient.length === 0 && filteredGroupedDocs.noClient.length === 0 && (
+              <Card className="border-dashed border-2 border-gray-200 bg-gray-50/50">
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <FileText className="h-12 w-12 text-gray-300 mb-4" />
+                  <h3 className="font-semibold text-gray-900 mb-2">No documents found</h3>
+                  <p className="text-gray-500 text-center max-w-md">
+                    {searchQuery 
+                      ? "Try adjusting your search terms" 
+                      : "Upload your first PDF document to get started"}
+                  </p>
+                </CardContent>
+              </Card>
             )}
           </div>
-        </div>
+        )}
       </div>
+
+      {selectedDocument && (
+        <PDFViewerModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          documentId={selectedDocument.documentId}
+          title={selectedDocument.title}
+          downloadUrl={`/api/admin/documents/${selectedDocument.documentId}/download`}
+        />
+      )}
     </Layout>
   );
 }

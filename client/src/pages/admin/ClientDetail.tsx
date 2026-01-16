@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2, Eye } from "lucide-react";
 import { Link, useRoute } from "wouter";
 import { useAdminClient, useAdminFinanceEntries, useCreateFinanceEntry, useDeleteFinanceEntry, formatCents, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { PDFViewerModal } from "@/components/PDFViewerModal";
 
 export default function ClientDetail() {
   const [match, params] = useRoute("/admin/clients/:id");
@@ -24,6 +25,8 @@ export default function ClientDetail() {
   const deleteEntry = useDeleteFinanceEntry();
   
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState<{ documentId: string; title: string } | null>(null);
   const [formData, setFormData] = useState({
     categoryGroup: "bills",
     title: "",
@@ -32,6 +35,11 @@ export default function ClientDetail() {
     recurrence: "one_time",
     notes: "",
   });
+
+  const handleQuickView = (doc: { documentId: string; title: string }) => {
+    setSelectedDocument(doc);
+    setPdfModalOpen(true);
+  };
 
   const handleCreateEntry = async () => {
     if (!formData.title.trim() || !formData.amountCents) {
@@ -415,12 +423,22 @@ export default function ClientDetail() {
                 <CardContent className="space-y-3">
                    {documents.length > 0 ? (
                      documents.map(doc => (
-                       <div key={doc.documentId} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer" data-testid={`doc-${doc.documentId}`}>
-                          <div className="flex items-center gap-3">
-                            <FileText size={18} className="text-blue-500" />
-                            <span className="text-sm font-medium truncate max-w-[150px]">{doc.title}</span>
+                       <div key={doc.documentId} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors group" data-testid={`doc-${doc.documentId}`}>
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <FileText size={18} className="text-red-500 shrink-0" />
+                            <span className="text-sm font-medium truncate">{doc.title}</span>
                           </div>
-                          <Download size={14} className="text-gray-400" />
+                          <div className="flex items-center gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-7 w-7 text-gray-400 hover:text-blue-500"
+                              onClick={() => handleQuickView(doc)}
+                              data-testid={`button-view-${doc.documentId}`}
+                            >
+                              <Eye size={14} />
+                            </Button>
+                          </div>
                        </div>
                      ))
                    ) : (
@@ -433,6 +451,16 @@ export default function ClientDetail() {
           </div>
         </div>
       </div>
+
+      {selectedDocument && (
+        <PDFViewerModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          documentId={selectedDocument.documentId}
+          title={selectedDocument.title}
+          downloadUrl={`/api/admin/documents/${selectedDocument.documentId}/download`}
+        />
+      )}
     </Layout>
   );
 }

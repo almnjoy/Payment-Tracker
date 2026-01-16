@@ -408,7 +408,11 @@ export async function registerRoutes(
       const { clientId, leaseId, invoiceId, title, docType, visibility } = req.body;
       
       if (!file || !clientId || !title) {
-        return res.status(400).json({ message: "Missing required fields" });
+        return res.status(400).json({ message: "Missing required fields: file, clientId, and title are required" });
+      }
+      
+      if (file.mimetype !== 'application/pdf') {
+        return res.status(400).json({ message: "Only PDF files are allowed" });
       }
       
       // Get the private object directory
