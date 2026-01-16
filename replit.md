@@ -7,6 +7,9 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 - **Admin Portal**: Manage clients, leases, invoices, payments, documents, and invite codes
 - **Client Portal**: View dashboard, invoices, payments, and documents
 - **Invite-Only Registration**: Clients receive magic numbers (e.g., "ABCD-1234") to create accounts
+- **PDF Quick-View**: Inline PDF preview modal for documents with fallback error handling
+- **Documents Organization**: Documents grouped by client with Invoices/Other sub-folders
+- **Finance Entries**: Admin can assign bills/expenses to clients; clients view read-only
 
 ## Tech Stack
 - **Frontend**: React with Vite, TailwindCSS, shadcn/ui components
