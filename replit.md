@@ -10,6 +10,10 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 - **PDF Quick-View**: Inline PDF preview modal for documents with fallback error handling
 - **Documents Organization**: Documents grouped by client with Invoices/Other sub-folders
 - **Finance Entries**: Admin can assign bills/expenses to clients; clients view read-only
+- **Client Billing Items**: Per-client charges (rent/other) with frequency tracking (one_time, weekly, monthly, yearly)
+- **Lease Status Management**: Status dropdown (active, paused, inactive, behind) with color-coded badges
+- **Admin Impersonation**: Admins can view client portal using `?asClientId={clientId}` query parameter
+- **Derived Income**: Finance Tracker shows monthly rent income from client billing items
 
 ## Tech Stack
 - **Frontend**: React with Vite, TailwindCSS, shadcn/ui components
@@ -37,7 +41,7 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 
 ## Database Tables
 1. **users_profile** - User accounts (linked to Replit Auth)
-2. **clients** - Client business records
+2. **clients** - Client business records (includes status: active/paused/inactive/behind)
 3. **leases** - Lease agreements
 4. **invite_codes** - Magic numbers for client registration
 5. **invoices** - Invoice records
@@ -48,6 +52,7 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 10. **plaid_accounts** - Accounts from linked institutions
 11. **plaid_transactions** - Transactions synced from Plaid
 12. **plaid_cursors** - Sync cursors for transactions
+13. **client_billing_items** - Per-client charges (rent/other) with frequency tracking
 
 ## Authentication Flow
 1. Users authenticate via Replit Auth (/api/login)
@@ -81,6 +86,9 @@ Run `npx tsx server/seed.ts` to populate test data:
 ### Admin Endpoints (requires admin role)
 - GET/POST `/api/admin/clients` - List/create clients
 - GET/PUT/DELETE `/api/admin/clients/:id` - Manage single client
+- PATCH `/api/admin/clients/:id/status` - Update client status (active/paused/inactive/behind)
+- GET/POST/DELETE `/api/admin/clients/:id/billing-items` - Manage client billing items
+- GET `/api/admin/billing-items` - Get all billing items (for derived income)
 - GET/POST `/api/admin/leases` - List/create leases
 - GET/POST `/api/admin/invoices` - List/create invoices
 - GET/POST `/api/admin/payments` - List/create payments
@@ -96,11 +104,12 @@ Run `npx tsx server/seed.ts` to populate test data:
 - DELETE `/api/admin/plaid/items/:itemId` - Unlink an institution
 - GET `/api/admin/plaid/account-summaries` - Get account balances grouped by institution
 
-### Client Endpoints (requires client role)
+### Client Endpoints (requires client role, supports admin impersonation via ?asClientId={id})
 - GET `/api/client/dashboard` - Client dashboard data
 - GET `/api/client/invoices` - Client's invoices
 - GET `/api/client/payments` - Client's payments
 - GET `/api/client/documents` - Client's documents
+- GET `/api/client/finance-entries` - Client's assigned finance entries
 - POST `/api/client/payments` - Make a payment
 
 ### Public

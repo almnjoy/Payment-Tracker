@@ -2,13 +2,20 @@ import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, CheckCircle, Clock, Loader2 } from "lucide-react";
+import { Download, CheckCircle, Clock, Loader2, Eye, ArrowLeft } from "lucide-react";
 import { motion } from "framer-motion";
-import { useClientPayments, useClientInvoices, formatCents, formatDate } from "@/lib/api";
+import { useClientPayments, useClientInvoices, useClientDashboard, formatCents, formatDate } from "@/lib/api";
+import { useLocation } from "wouter";
 
 export default function ClientPayments() {
-  const { data: payments, isLoading: paymentsLoading } = useClientPayments();
-  const { data: invoices, isLoading: invoicesLoading } = useClientInvoices();
+  const [, navigate] = useLocation();
+  const searchParams = new URLSearchParams(window.location.search);
+  const asClientId = searchParams.get("asClientId") || undefined;
+  const isImpersonating = !!asClientId;
+  
+  const { data: payments, isLoading: paymentsLoading } = useClientPayments(asClientId);
+  const { data: invoices, isLoading: invoicesLoading } = useClientInvoices(asClientId);
+  const { data: dashboardData } = useClientDashboard(asClientId);
 
   const isLoading = paymentsLoading || invoicesLoading;
   const openInvoices = invoices?.filter(inv => ['open', 'sent', 'overdue'].includes(inv.status)) || [];
@@ -16,14 +23,37 @@ export default function ClientPayments() {
   return (
     <Layout role="client">
       <div className="space-y-6">
+        {isImpersonating && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between" data-testid="impersonation-banner">
+            <div className="flex items-center gap-3">
+              <Eye className="h-5 w-5 text-amber-600" />
+              <div>
+                <p className="font-medium text-amber-900">Admin Preview Mode</p>
+                <p className="text-sm text-amber-700">Viewing payments for <strong>{dashboardData?.client?.displayName || 'Client'}</strong></p>
+              </div>
+            </div>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => navigate(`/admin/clients/${asClientId}`)}
+              className="border-amber-300 text-amber-700 hover:bg-amber-100"
+              data-testid="button-exit-preview"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" /> Back to Admin
+            </Button>
+          </div>
+        )}
+        
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Payments</h2>
             <p className="text-gray-500">View your payment history and current invoices.</p>
           </div>
-          <Button className="btn-primary-orange" data-testid="button-make-payment">
-             Make a Payment
-          </Button>
+          {!isImpersonating && (
+            <Button className="btn-primary-orange" data-testid="button-make-payment">
+               Make a Payment
+            </Button>
+          )}
         </div>
 
         {openInvoices.length > 0 && (
