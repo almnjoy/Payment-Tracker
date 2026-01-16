@@ -1,0 +1,138 @@
+We now have these Postgres tables created and ready:
+- plaid_items
+- plaid_accounts
+- plaid_transactions
+- plaid_cursors
+
+The Drizzle schema is in shared/schema.ts and exports:
+- plaidItems, plaidAccounts, plaidTransactions, plaidCursors
+And we have ID helpers:
+- generatePlaidItemId()
+- generatePlaidAccountRowId()
+- generatePlaidTransactionRowId()
+
+Server routes are defined in server/routes.ts. There are existing middlewares:
+- isAuthenticated
+- isAdmin
+
+Implement Plaid Sandbox integration for ADMIN ONLY.
+Do NOT change any UI styling (colors, fonts, layout).
+Do NOT touch client portal pages.
+
+SECRETS:
+- PLAID_CLIENT_ID
+- PLAID_SECRET
+- PLAID_ENV=sandbox
+
+1) SERVER: Plaid client
+Create a PlaidApi client (can be in server/plaid/client.ts or directly in server/routes.ts).
+Use the official Plaid Node SDK (already installed).
+Use PlaidEnvironments[PLAID_ENV].
+
+2) SERVER: Admin-only Plaid endpoints (in server/routes.ts)
+Add these endpoints, all protected by isAuthenticated + isAdmin:
+
+A) POST /api/admin/plaid/link-token
+- Call plaid.linkTokenCreate:
+  - client_name: "Quick IT Projects"
+  - products: ["transactions"]
+  - country_codes: ["US"]
+  - language: "en"
+  - user.client_user_id = current authenticated user id (the same id returned by /api/me)
+Return: { link_token }
+
+B) POST /api/admin/plaid/exchange
+Body: { public_token, institution_id, institution_name }
+- Exchange public_token for access_token + plaid_item_id using itemPublicTokenExchange
+- Insert into plaid_items:
+  - item_id = generatePlaidItemId()
+  - admin_user_id = current user id
+  - plaid_item_id, access_token
+  - institution_id/name
+- Fetch accounts via accountsGet(access_token)
+- For each Plaid account:
+  - Upsert into plaid_accounts for this item_id and plaid_account_id
+  - Use accountId = generatePlaidAccountRowId() only when inserting a new row
+  - Convert balances to cents (Math.round(balance * 100)) for current and available
+- Initialize transactions via transactionsSync(access_token) with no cursor:
+  - Upsert added transactions into plaid_transactions
+  - Use transactionId = generatePlaidTransactionRowId() only when inserting new rows
+  - Store raw_json as jsonb (store the Plaid txn object)
+  - Store cursor + last_sync_at in plaid_cursors
+Return: { item_id, institution_name }
+
+C) POST /api/admin/plaid/sync
+- For each plaid_items row for this admin_user_id:
+  - Read cursor from plaid_cursors (may be null initially)
+  - Call transactionsSync(access_token, cursor)
+  - Upsert added + modified into plaid_transactions
+  - For removed: delete rows where item_id + plaid_transaction_id match
+  - Update cursor and last_sync_at
+Return counts: { synced_items, added, modified, removed }
+
+D) GET /api/admin/plaid/items
+- Return list of linked items for this admin:
+  - item_id, institution_name, status
+  - last_sync_at (join from plaid_cursors)
+Return array.
+
+E) DELETE /api/admin/plaid/items/:itemId
+- Ensure the item belongs to this admin_user_id
+- Delete in order:
+  - plaid_transactions where item_id
+  - plaid_accounts where item_id
+  - plaid_cursors where item_id
+  - plaid_items where item_id
+Return success.
+
+F) GET /api/admin/plaid/account-summaries
+- For this admin_user_id:
+  - Query plaid_items + plaid_accounts + last_sync_at
+- Return grouped payload by institution:
+[
+  {
+    item_id,
+    institution_name,
+    last_sync_at,
+    accounts: [
+      { name, mask, type, subtype, current_balance_cents, available_balance_cents, iso_currency_code }
+    ]
+  }
+]
+
+IMPORTANT SECURITY:
+- Never return access_token to client
+- Never log secrets
+
+3) CLIENT: Admin Settings page wiring (admin only)
+Find the Admin Settings page that currently shows “External Accounts”.
+Implement “Add Account” using Plaid Link.
+- Install/use react-plaid-link if not already installed.
+Flow:
+- Click Add Account -> call POST /api/admin/plaid/link-token
+- Open Plaid Link with the token
+- On success, call POST /api/admin/plaid/exchange with:
+  - public_token
+  - metadata.institution.institution_id and name
+- Refresh linked list from GET /api/admin/plaid/items
+Also add:
+- Sync Now button -> POST /api/admin/plaid/sync then refresh list
+- Unlink button per item -> DELETE /api/admin/plaid/items/:itemId then refresh
+
+Keep UI styling identical; only change behavior and data.
+
+4) CLIENT: Admin Account Summaries page wiring
+Replace mock data with GET /api/admin/plaid/account-summaries.
+Add a Sync button that calls POST /api/admin/plaid/sync then refreshes.
+
+5) Testing notes (comments only)
+Sandbox logins:
+- user_good / pass_good
+- or user_transactions_dynamic / any password for richer transactions
+
+DELIVERABLE:
+- Admin can link Plaid sandbox accounts via Settings
+- Account Summaries shows real linked accounts and balances
+- Sync updates transactions in DB
+- Unlink removes DB data
+- No UI design changes

@@ -4,6 +4,19 @@ import { storage } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { objectStorageClient, ObjectStorageService } from "./replit_integrations/object_storage";
 import multer from "multer";
+import { plaidClient } from "./plaid/client";
+import { CountryCode, Products } from "plaid";
+import { db } from "./db";
+import { 
+  plaidItems, 
+  plaidAccounts, 
+  plaidTransactions, 
+  plaidCursors,
+  generatePlaidItemId,
+  generatePlaidAccountRowId,
+  generatePlaidTransactionRowId
+} from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 
 // Extend Express Request to include user info
 declare global {
@@ -736,6 +749,394 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error bootstrapping admin:", error);
       res.status(500).json({ message: "Failed to bootstrap admin" });
+    }
+  });
+
+  // ============================================
+  // PLAID INTEGRATION (Admin Only)
+  // ============================================
+
+  // A) Create Link Token for Plaid Link
+  app.post("/api/admin/plaid/link-token", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      const response = await plaidClient.linkTokenCreate({
+        client_name: "Quick IT Projects",
+        products: [Products.Transactions],
+        country_codes: [CountryCode.Us],
+        language: "en",
+        user: {
+          client_user_id: userId!,
+        },
+      });
+      
+      res.json({ link_token: response.data.link_token });
+    } catch (error: any) {
+      console.error("Error creating link token:", error?.response?.data || error);
+      res.status(500).json({ message: "Failed to create link token" });
+    }
+  });
+
+  // B) Exchange public token and initialize transactions
+  app.post("/api/admin/plaid/exchange", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { public_token, institution_id, institution_name } = req.body;
+      
+      if (!public_token) {
+        return res.status(400).json({ message: "public_token is required" });
+      }
+      
+      // Exchange public token for access token
+      const exchangeResponse = await plaidClient.itemPublicTokenExchange({
+        public_token,
+      });
+      
+      const accessToken = exchangeResponse.data.access_token;
+      const plaidItemIdValue = exchangeResponse.data.item_id;
+      
+      // Insert into plaid_items
+      const itemId = generatePlaidItemId();
+      await db.insert(plaidItems).values({
+        itemId,
+        adminUserId: userId!,
+        plaidItemId: plaidItemIdValue,
+        accessToken,
+        institutionId: institution_id || null,
+        institutionName: institution_name || null,
+        status: "linked",
+      });
+      
+      // Fetch accounts
+      const accountsResponse = await plaidClient.accountsGet({
+        access_token: accessToken,
+      });
+      
+      for (const account of accountsResponse.data.accounts) {
+        const existingAccount = await db.select().from(plaidAccounts)
+          .where(and(
+            eq(plaidAccounts.itemId, itemId),
+            eq(plaidAccounts.plaidAccountId, account.account_id)
+          ))
+          .limit(1);
+        
+        if (existingAccount.length === 0) {
+          await db.insert(plaidAccounts).values({
+            accountId: generatePlaidAccountRowId(),
+            itemId,
+            plaidAccountId: account.account_id,
+            name: account.name,
+            officialName: account.official_name || null,
+            mask: account.mask || null,
+            type: account.type,
+            subtype: account.subtype || null,
+            currentBalanceCents: account.balances.current ? Math.round(account.balances.current * 100) : null,
+            availableBalanceCents: account.balances.available ? Math.round(account.balances.available * 100) : null,
+            isoCurrencyCode: account.balances.iso_currency_code || "USD",
+          });
+        } else {
+          await db.update(plaidAccounts)
+            .set({
+              name: account.name,
+              officialName: account.official_name || null,
+              mask: account.mask || null,
+              type: account.type,
+              subtype: account.subtype || null,
+              currentBalanceCents: account.balances.current ? Math.round(account.balances.current * 100) : null,
+              availableBalanceCents: account.balances.available ? Math.round(account.balances.available * 100) : null,
+              isoCurrencyCode: account.balances.iso_currency_code || "USD",
+              updatedAt: new Date(),
+            })
+            .where(eq(plaidAccounts.accountId, existingAccount[0].accountId));
+        }
+      }
+      
+      // Initialize transactions sync
+      const syncResponse = await plaidClient.transactionsSync({
+        access_token: accessToken,
+      });
+      
+      // Upsert added transactions
+      for (const txn of syncResponse.data.added) {
+        const existingTxn = await db.select().from(plaidTransactions)
+          .where(and(
+            eq(plaidTransactions.itemId, itemId),
+            eq(plaidTransactions.plaidTransactionId, txn.transaction_id)
+          ))
+          .limit(1);
+        
+        if (existingTxn.length === 0) {
+          await db.insert(plaidTransactions).values({
+            transactionId: generatePlaidTransactionRowId(),
+            itemId,
+            plaidTransactionId: txn.transaction_id,
+            plaidAccountId: txn.account_id,
+            date: txn.date,
+            name: txn.name,
+            merchantName: txn.merchant_name || null,
+            amountCents: Math.round(txn.amount * 100),
+            isoCurrencyCode: txn.iso_currency_code || "USD",
+            pending: txn.pending,
+            categoryPrimary: txn.personal_finance_category?.primary || null,
+            rawJson: txn as any,
+          });
+        }
+      }
+      
+      // Store cursor
+      await db.insert(plaidCursors).values({
+        itemId,
+        cursor: syncResponse.data.next_cursor,
+        lastSyncAt: new Date(),
+      }).onConflictDoUpdate({
+        target: plaidCursors.itemId,
+        set: {
+          cursor: syncResponse.data.next_cursor,
+          lastSyncAt: new Date(),
+        },
+      });
+      
+      res.json({ item_id: itemId, institution_name: institution_name || "Unknown" });
+    } catch (error: any) {
+      console.error("Error exchanging token:", error?.response?.data || error);
+      res.status(500).json({ message: "Failed to exchange token" });
+    }
+  });
+
+  // C) Sync transactions for all linked items
+  app.post("/api/admin/plaid/sync", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      // Get all items for this admin
+      const items = await db.select().from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      let totalAdded = 0;
+      let totalModified = 0;
+      let totalRemoved = 0;
+      
+      for (const item of items) {
+        // Get current cursor
+        const cursorResult = await db.select().from(plaidCursors)
+          .where(eq(plaidCursors.itemId, item.itemId))
+          .limit(1);
+        
+        const currentCursor = cursorResult[0]?.cursor || undefined;
+        
+        // Sync transactions
+        const syncResponse = await plaidClient.transactionsSync({
+          access_token: item.accessToken,
+          cursor: currentCursor,
+        });
+        
+        // Process added transactions
+        for (const txn of syncResponse.data.added) {
+          const existingTxn = await db.select().from(plaidTransactions)
+            .where(and(
+              eq(plaidTransactions.itemId, item.itemId),
+              eq(plaidTransactions.plaidTransactionId, txn.transaction_id)
+            ))
+            .limit(1);
+          
+          if (existingTxn.length === 0) {
+            await db.insert(plaidTransactions).values({
+              transactionId: generatePlaidTransactionRowId(),
+              itemId: item.itemId,
+              plaidTransactionId: txn.transaction_id,
+              plaidAccountId: txn.account_id,
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              isoCurrencyCode: txn.iso_currency_code || "USD",
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+            });
+            totalAdded++;
+          }
+        }
+        
+        // Process modified transactions
+        for (const txn of syncResponse.data.modified) {
+          await db.update(plaidTransactions)
+            .set({
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(plaidTransactions.itemId, item.itemId),
+              eq(plaidTransactions.plaidTransactionId, txn.transaction_id)
+            ));
+          totalModified++;
+        }
+        
+        // Process removed transactions
+        for (const removed of syncResponse.data.removed) {
+          if (removed.transaction_id) {
+            await db.delete(plaidTransactions)
+              .where(and(
+                eq(plaidTransactions.itemId, item.itemId),
+                eq(plaidTransactions.plaidTransactionId, removed.transaction_id)
+              ));
+            totalRemoved++;
+          }
+        }
+        
+        // Update accounts balances
+        const accountsResponse = await plaidClient.accountsGet({
+          access_token: item.accessToken,
+        });
+        
+        for (const account of accountsResponse.data.accounts) {
+          await db.update(plaidAccounts)
+            .set({
+              currentBalanceCents: account.balances.current ? Math.round(account.balances.current * 100) : null,
+              availableBalanceCents: account.balances.available ? Math.round(account.balances.available * 100) : null,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(plaidAccounts.itemId, item.itemId),
+              eq(plaidAccounts.plaidAccountId, account.account_id)
+            ));
+        }
+        
+        // Update cursor
+        await db.insert(plaidCursors).values({
+          itemId: item.itemId,
+          cursor: syncResponse.data.next_cursor,
+          lastSyncAt: new Date(),
+        }).onConflictDoUpdate({
+          target: plaidCursors.itemId,
+          set: {
+            cursor: syncResponse.data.next_cursor,
+            lastSyncAt: new Date(),
+          },
+        });
+      }
+      
+      res.json({
+        synced_items: items.length,
+        added: totalAdded,
+        modified: totalModified,
+        removed: totalRemoved,
+      });
+    } catch (error: any) {
+      console.error("Error syncing transactions:", error?.response?.data || error);
+      res.status(500).json({ message: "Failed to sync transactions" });
+    }
+  });
+
+  // D) Get linked items for this admin
+  app.get("/api/admin/plaid/items", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      const items = await db.select({
+        itemId: plaidItems.itemId,
+        institutionName: plaidItems.institutionName,
+        status: plaidItems.status,
+        createdAt: plaidItems.createdAt,
+      }).from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      // Add last_sync_at from cursors
+      const result = await Promise.all(items.map(async (item) => {
+        const cursor = await db.select().from(plaidCursors)
+          .where(eq(plaidCursors.itemId, item.itemId))
+          .limit(1);
+        
+        return {
+          ...item,
+          last_sync_at: cursor[0]?.lastSyncAt || null,
+        };
+      }));
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching plaid items:", error);
+      res.status(500).json({ message: "Failed to fetch linked accounts" });
+    }
+  });
+
+  // E) Delete/Unlink a Plaid item
+  app.delete("/api/admin/plaid/items/:itemId", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const { itemId } = req.params;
+      
+      // Verify item belongs to this admin
+      const item = await db.select().from(plaidItems)
+        .where(and(
+          eq(plaidItems.itemId, itemId),
+          eq(plaidItems.adminUserId, userId!)
+        ))
+        .limit(1);
+      
+      if (item.length === 0) {
+        return res.status(404).json({ message: "Item not found" });
+      }
+      
+      // Delete in order: transactions, accounts, cursors, items
+      await db.delete(plaidTransactions).where(eq(plaidTransactions.itemId, itemId));
+      await db.delete(plaidAccounts).where(eq(plaidAccounts.itemId, itemId));
+      await db.delete(plaidCursors).where(eq(plaidCursors.itemId, itemId));
+      await db.delete(plaidItems).where(eq(plaidItems.itemId, itemId));
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting plaid item:", error);
+      res.status(500).json({ message: "Failed to unlink account" });
+    }
+  });
+
+  // F) Get account summaries grouped by institution
+  app.get("/api/admin/plaid/account-summaries", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      
+      // Get all items for this admin
+      const items = await db.select().from(plaidItems)
+        .where(eq(plaidItems.adminUserId, userId!));
+      
+      const result = await Promise.all(items.map(async (item) => {
+        // Get accounts for this item
+        const accounts = await db.select().from(plaidAccounts)
+          .where(eq(plaidAccounts.itemId, item.itemId));
+        
+        // Get last sync time
+        const cursor = await db.select().from(plaidCursors)
+          .where(eq(plaidCursors.itemId, item.itemId))
+          .limit(1);
+        
+        return {
+          item_id: item.itemId,
+          institution_name: item.institutionName,
+          last_sync_at: cursor[0]?.lastSyncAt || null,
+          accounts: accounts.map(acc => ({
+            name: acc.name,
+            mask: acc.mask,
+            type: acc.type,
+            subtype: acc.subtype,
+            current_balance_cents: acc.currentBalanceCents,
+            available_balance_cents: acc.availableBalanceCents,
+            iso_currency_code: acc.isoCurrencyCode,
+          })),
+        };
+      }));
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching account summaries:", error);
+      res.status(500).json({ message: "Failed to fetch account summaries" });
     }
   });
 
