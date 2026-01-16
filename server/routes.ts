@@ -13,11 +13,15 @@ import {
   plaidTransactions, 
   plaidCursors,
   financeEntries,
+  clientBillingItems,
+  clients,
   generatePlaidItemId,
   generatePlaidAccountRowId,
   generatePlaidTransactionRowId,
   generateFinanceEntryId,
-  insertFinanceEntrySchema
+  generateClientBillingItemId,
+  insertFinanceEntrySchema,
+  insertClientBillingItemSchema
 } from "@shared/schema";
 import { eq, and, gte, lte, desc, sql, ilike, or } from "drizzle-orm";
 
@@ -64,7 +68,7 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-// Middleware to check if user is client (or admin for access)
+// Middleware to check if user is client (or admin for impersonation)
 async function isClient(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
   if (!userId) {
@@ -74,6 +78,19 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   const profile = await storage.getUserProfile(userId);
   if (!profile) {
     return res.status(403).json({ message: "Forbidden: No user profile found" });
+  }
+  
+  // Check for admin impersonation
+  const asClientId = req.query.asClientId as string | undefined;
+  if (asClientId && profile.role === "admin") {
+    // Admin impersonating a client
+    const client = await storage.getClient(asClientId);
+    if (!client) {
+      return res.status(404).json({ message: "Client not found for impersonation" });
+    }
+    (req as any).userProfile = { ...profile, clientId: asClientId, impersonating: true };
+    (req as any).impersonatedClient = client;
+    return next();
   }
   
   // Client role required (admins can also access for impersonation/support purposes)
@@ -482,6 +499,118 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error downloading document:", error);
       res.status(500).json({ message: "Failed to download document" });
+    }
+  });
+
+  // ============================================
+  // ADMIN: CLIENT BILLING ITEMS
+  // ============================================
+  
+  app.get("/api/admin/clients/:clientId/billing-items", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.params;
+      const items = await db.select().from(clientBillingItems)
+        .where(eq(clientBillingItems.clientId, clientId))
+        .orderBy(desc(clientBillingItems.createdAt));
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching billing items:", error);
+      res.status(500).json({ message: "Failed to fetch billing items" });
+    }
+  });
+  
+  app.post("/api/admin/clients/:clientId/billing-items", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.params;
+      const { type, title, amountCents, dueDate, frequency, notes } = req.body;
+      
+      if (!title || !amountCents || !dueDate) {
+        return res.status(400).json({ message: "title, amountCents, and dueDate are required" });
+      }
+      
+      const item = await db.insert(clientBillingItems).values({
+        id: generateClientBillingItemId(),
+        clientId,
+        type: type || "other",
+        title,
+        amountCents,
+        dueDate,
+        frequency: frequency || "one_time",
+        notes: notes || null,
+        status: "active",
+      }).returning();
+      
+      res.status(201).json(item[0]);
+    } catch (error) {
+      console.error("Error creating billing item:", error);
+      res.status(500).json({ message: "Failed to create billing item" });
+    }
+  });
+  
+  app.delete("/api/admin/clients/:clientId/billing-items/:id", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const { clientId, id } = req.params;
+      const deleted = await db.delete(clientBillingItems)
+        .where(and(eq(clientBillingItems.id, id), eq(clientBillingItems.clientId, clientId)))
+        .returning();
+      
+      if (deleted.length === 0) {
+        return res.status(404).json({ message: "Billing item not found" });
+      }
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting billing item:", error);
+      res.status(500).json({ message: "Failed to delete billing item" });
+    }
+  });
+  
+  // Get all billing items (for Finance Tracker derived income)
+  app.get("/api/admin/billing-items", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const { startDate, endDate } = req.query;
+      let query = db.select().from(clientBillingItems).where(eq(clientBillingItems.status, "active"));
+      
+      if (startDate && endDate) {
+        query = db.select().from(clientBillingItems)
+          .where(and(
+            eq(clientBillingItems.status, "active"),
+            gte(clientBillingItems.dueDate, startDate as string),
+            lte(clientBillingItems.dueDate, endDate as string)
+          ));
+      }
+      
+      const items = await query.orderBy(desc(clientBillingItems.dueDate));
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching all billing items:", error);
+      res.status(500).json({ message: "Failed to fetch billing items" });
+    }
+  });
+  
+  // Update client status (lease status)
+  app.patch("/api/admin/clients/:clientId/status", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.params;
+      const { status } = req.body;
+      
+      if (!["active", "paused", "inactive", "behind"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status. Must be active, paused, inactive, or behind" });
+      }
+      
+      const updated = await db.update(clients)
+        .set({ status, updatedAt: new Date() })
+        .where(eq(clients.clientId, clientId))
+        .returning();
+      
+      if (updated.length === 0) {
+        return res.status(404).json({ message: "Client not found" });
+      }
+      
+      res.json(updated[0]);
+    } catch (error) {
+      console.error("Error updating client status:", error);
+      res.status(500).json({ message: "Failed to update client status" });
     }
   });
 
