@@ -724,6 +724,26 @@ export async function registerRoutes(
     }
   });
 
+  // Get finance entries for client (read-only - entries assigned to their clientId)
+  app.get("/api/client/finance-entries", isAuthenticated, isClient, async (req: Request, res: Response) => {
+    try {
+      const profile = (req as any).userProfile;
+      
+      if (!profile.clientId) {
+        return res.status(403).json({ message: "No client profile linked" });
+      }
+      
+      const entries = await db.select().from(financeEntries)
+        .where(eq(financeEntries.clientId, profile.clientId))
+        .orderBy(desc(financeEntries.date));
+      
+      res.json(entries);
+    } catch (error) {
+      console.error("Error fetching client finance entries:", error);
+      res.status(500).json({ message: "Failed to fetch finance entries" });
+    }
+  });
+
   // ============================================
   // ADMIN BOOTSTRAP (for first admin setup)
   // ============================================
@@ -1425,16 +1445,20 @@ export async function registerRoutes(
   // FINANCE ENTRIES (Manual/Linked)
   // ============================================
 
-  // Get all finance entries for admin
+  // Get all finance entries for admin (optionally filter by clientId)
   app.get("/api/admin/finance-entries", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
     try {
       const userId = getUserId(req);
-      const { category_group } = req.query;
+      const { category_group, clientId } = req.query;
       
       let conditions = [eq(financeEntries.adminUserId, userId!)];
       
       if (category_group) {
         conditions.push(eq(financeEntries.categoryGroup, category_group as string));
+      }
+      
+      if (clientId) {
+        conditions.push(eq(financeEntries.clientId, clientId as string));
       }
       
       const entries = await db.select().from(financeEntries)
@@ -1459,12 +1483,14 @@ export async function registerRoutes(
       await db.insert(financeEntries).values({
         entryId,
         adminUserId: userId!,
+        clientId: data.clientId || null,
         entryType: data.entryType || "manual",
         categoryGroup: data.categoryGroup,
         title: data.title,
         amountCents: data.amountCents,
         date: data.date,
         recurrence: data.recurrence || null,
+        notes: data.notes || null,
         plaidAccountId: data.plaidAccountId || null,
         externalUrl: data.externalUrl || null,
       });

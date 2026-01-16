@@ -440,12 +440,14 @@ export interface PlaidAccountOption {
 export interface FinanceEntry {
   entryId: string;
   adminUserId: string;
+  clientId: string | null;
   entryType: string;
   categoryGroup: string;
   title: string;
   amountCents: number;
   date: string;
   recurrence: string | null;
+  notes: string | null;
   plaidAccountId: string | null;
   externalUrl: string | null;
   createdAt: string;
@@ -567,11 +569,22 @@ export function useAdminPlaidAllAccounts() {
   });
 }
 
-export function useAdminFinanceEntries(categoryGroup?: string) {
-  const queryString = categoryGroup ? `?category_group=${categoryGroup}` : "";
+export function useAdminFinanceEntries(categoryGroup?: string, clientId?: string) {
+  const params = new URLSearchParams();
+  if (categoryGroup) params.append("category_group", categoryGroup);
+  if (clientId) params.append("clientId", clientId);
+  const queryString = params.toString();
+  
   return useQuery<FinanceEntry[]>({
-    queryKey: ["admin", "finance-entries", categoryGroup],
-    queryFn: () => fetchApi(`/api/admin/finance-entries${queryString}`),
+    queryKey: ["admin", "finance-entries", categoryGroup, clientId],
+    queryFn: () => fetchApi(`/api/admin/finance-entries${queryString ? `?${queryString}` : ""}`),
+  });
+}
+
+export function useClientFinanceEntries() {
+  return useQuery<FinanceEntry[]>({
+    queryKey: ["client", "finance-entries"],
+    queryFn: () => fetchApi("/api/client/finance-entries"),
   });
 }
 

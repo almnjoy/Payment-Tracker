@@ -410,12 +410,14 @@ export const financeEntries = pgTable(
   {
     entryId: varchar("entry_id").primaryKey(),
     adminUserId: varchar("admin_user_id").notNull(),
+    clientId: varchar("client_id"), // Optional: links entry to specific client
     entryType: text("entry_type").notNull().default("manual"), // "manual" | "linked"
     categoryGroup: text("category_group").notNull(), // "income" | "bills" | "debts" | "holdings"
     title: text("title").notNull(),
     amountCents: integer("amount_cents").notNull(),
     date: date("date").notNull(),
-    recurrence: text("recurrence"), // "one_time" | "weekly" | "monthly" | null
+    recurrence: text("recurrence"), // "one_time" | "weekly" | "biweekly" | "monthly" | "yearly" | null
+    notes: text("notes"),
     plaidAccountId: varchar("plaid_account_id"),
     externalUrl: text("external_url"),
     createdAt: timestamp("created_at").defaultNow(),
@@ -424,6 +426,7 @@ export const financeEntries = pgTable(
   (table) => ({
     adminUserIdIdx: index("finance_entries_admin_user_id_idx").on(table.adminUserId),
     categoryGroupIdx: index("finance_entries_category_group_idx").on(table.categoryGroup),
+    clientIdIdx: index("finance_entries_client_id_idx").on(table.clientId),
   }),
 );
 
