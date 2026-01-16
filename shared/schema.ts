@@ -1,5 +1,15 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, date, index, jsonb } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  integer,
+  timestamp,
+  date,
+  boolean,
+  index,
+  jsonb,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -51,10 +61,10 @@ export const clientsRelations = relations(clients, ({ many }) => ({
   inviteCodes: many(inviteCodes),
 }));
 
-export const insertClientSchema = createInsertSchema(clients).omit({ 
-  clientId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertClientSchema = createInsertSchema(clients).omit({
+  clientId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Client = typeof clients.$inferSelect;
@@ -84,10 +94,10 @@ export const leasesRelations = relations(leases, ({ one, many }) => ({
   documents: many(documents),
 }));
 
-export const insertLeaseSchema = createInsertSchema(leases).omit({ 
-  leaseId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertLeaseSchema = createInsertSchema(leases).omit({
+  leaseId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertLease = z.infer<typeof insertLeaseSchema>;
 export type Lease = typeof leases.$inferSelect;
@@ -117,10 +127,10 @@ export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
   }),
 }));
 
-export const insertInviteCodeSchema = createInsertSchema(inviteCodes).omit({ 
-  usedAt: true, 
+export const insertInviteCodeSchema = createInsertSchema(inviteCodes).omit({
+  usedAt: true,
   usedByUserId: true,
-  createdAt: true 
+  createdAt: true,
 });
 export type InsertInviteCode = z.infer<typeof insertInviteCodeSchema>;
 export type InviteCode = typeof inviteCodes.$inferSelect;
@@ -155,10 +165,10 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   documents: many(documents),
 }));
 
-export const insertInvoiceSchema = createInsertSchema(invoices).omit({ 
-  invoiceId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  invoiceId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type Invoice = typeof invoices.$inferSelect;
@@ -192,10 +202,10 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
   }),
 }));
 
-export const insertPaymentSchema = createInsertSchema(payments).omit({ 
-  paymentId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertPaymentSchema = createInsertSchema(payments).omit({
+  paymentId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertPayment = z.infer<typeof insertPaymentSchema>;
 export type Payment = typeof payments.$inferSelect;
@@ -235,10 +245,10 @@ export const documentsRelations = relations(documents, ({ one }) => ({
   }),
 }));
 
-export const insertDocumentSchema = createInsertSchema(documents).omit({ 
-  documentId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertDocumentSchema = createInsertSchema(documents).omit({
+  documentId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type Document = typeof documents.$inferSelect;
@@ -258,54 +268,195 @@ export const externalAccounts = pgTable("external_accounts", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertExternalAccountSchema = createInsertSchema(externalAccounts).omit({ 
-  accountId: true, 
-  createdAt: true, 
-  updatedAt: true 
+export const insertExternalAccountSchema = createInsertSchema(
+  externalAccounts,
+).omit({
+  accountId: true,
+  createdAt: true,
+  updatedAt: true,
 });
 export type InsertExternalAccount = z.infer<typeof insertExternalAccountSchema>;
 export type ExternalAccount = typeof externalAccounts.$inferSelect;
+
+// ============================================
+// PLAID ITEMS (Linked institutions)
+// ============================================
+export const plaidItems = pgTable(
+  "plaid_items",
+  {
+    itemId: varchar("item_id").primaryKey(), // ITEM-000001
+    adminUserId: varchar("admin_user_id").notNull(),
+    plaidItemId: varchar("plaid_item_id").notNull(),
+    accessToken: text("access_token").notNull(),
+    institutionId: text("institution_id"),
+    institutionName: text("institution_name"),
+    status: text("status").notNull().default("linked"), // linked, needs_auth, error
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    plaidItemIdIdx: index("plaid_items_plaid_item_id_idx").on(
+      table.plaidItemId,
+    ),
+    adminUserIdIdx: index("plaid_items_admin_user_id_idx").on(
+      table.adminUserId,
+    ),
+  }),
+);
+
+export const insertPlaidItemSchema = createInsertSchema(plaidItems).omit({
+  itemId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPlaidItem = z.infer<typeof insertPlaidItemSchema>;
+export type PlaidItem = typeof plaidItems.$inferSelect;
+
+// ============================================
+// PLAID ACCOUNTS (Accounts under each item)
+// ============================================
+export const plaidAccounts = pgTable(
+  "plaid_accounts",
+  {
+    accountId: varchar("account_id").primaryKey(), // PACCT-000001
+    itemId: varchar("item_id").notNull(),
+    plaidAccountId: varchar("plaid_account_id").notNull(),
+    name: text("name").notNull(),
+    officialName: text("official_name"),
+    mask: text("mask"),
+    type: text("type"),
+    subtype: text("subtype"),
+    currentBalanceCents: integer("current_balance_cents"),
+    availableBalanceCents: integer("available_balance_cents"),
+    isoCurrencyCode: text("iso_currency_code"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    itemIdIdx: index("plaid_accounts_item_id_idx").on(table.itemId),
+    plaidAccountIdIdx: index("plaid_accounts_plaid_account_id_idx").on(
+      table.plaidAccountId,
+    ),
+  }),
+);
+
+export const insertPlaidAccountSchema = createInsertSchema(plaidAccounts).omit({
+  accountId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPlaidAccount = z.infer<typeof insertPlaidAccountSchema>;
+export type PlaidAccount = typeof plaidAccounts.$inferSelect;
+
+// ============================================
+// PLAID TRANSACTIONS (Transactions pulled from Plaid)
+// ============================================
+export const plaidTransactions = pgTable(
+  "plaid_transactions",
+  {
+    transactionId: varchar("transaction_id").primaryKey(), // PTXN-000001
+    itemId: varchar("item_id").notNull(),
+    plaidTransactionId: varchar("plaid_transaction_id").notNull(),
+    plaidAccountId: varchar("plaid_account_id").notNull(),
+    date: date("date").notNull(),
+    name: text("name").notNull(),
+    merchantName: text("merchant_name"),
+    amountCents: integer("amount_cents").notNull(),
+    isoCurrencyCode: text("iso_currency_code"),
+    pending: boolean("pending").notNull().default(false),
+    categoryPrimary: text("category_primary"),
+    rawJson: jsonb("raw_json"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    itemIdIdx: index("plaid_transactions_item_id_idx").on(table.itemId),
+    plaidTxnIdIdx: index("plaid_transactions_plaid_transaction_id_idx").on(
+      table.plaidTransactionId,
+    ),
+    plaidAccountIdIdx: index("plaid_transactions_plaid_account_id_idx").on(
+      table.plaidAccountId,
+    ),
+  }),
+);
+
+export const insertPlaidTransactionSchema = createInsertSchema(
+  plaidTransactions,
+).omit({
+  transactionId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPlaidTransaction = z.infer<
+  typeof insertPlaidTransactionSchema
+>;
+export type PlaidTransaction = typeof plaidTransactions.$inferSelect;
+
+// ============================================
+// PLAID CURSORS (Cursor for /transactions/sync)
+// ============================================
+export const plaidCursors = pgTable("plaid_cursors", {
+  itemId: varchar("item_id").primaryKey(),
+  cursor: text("cursor"),
+  lastSyncAt: timestamp("last_sync_at"),
+});
+export type PlaidCursor = typeof plaidCursors.$inferSelect;
 
 // ============================================
 // ID GENERATION HELPERS
 // ============================================
 export function generateClientId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `CL-${num.toString().padStart(6, '0')}`;
+  return `CL-${num.toString().padStart(6, "0")}`;
 }
 
 export function generateLeaseId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `LE-${num.toString().padStart(6, '0')}`;
+  return `LE-${num.toString().padStart(6, "0")}`;
 }
 
 export function generateInvoiceId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `INV-${num.toString().padStart(6, '0')}`;
+  return `INV-${num.toString().padStart(6, "0")}`;
 }
 
 export function generatePaymentId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `PAY-${num.toString().padStart(6, '0')}`;
+  return `PAY-${num.toString().padStart(6, "0")}`;
 }
 
 export function generateDocumentId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `DOC-${num.toString().padStart(6, '0')}`;
+  return `DOC-${num.toString().padStart(6, "0")}`;
 }
 
 export function generateAccountId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
-  return `ACC-${num.toString().padStart(6, '0')}`;
+  return `ACC-${num.toString().padStart(6, "0")}`;
+}
+
+export function generatePlaidItemId(): string {
+  const num = Math.floor(Math.random() * 999999) + 1;
+  return `ITEM-${num.toString().padStart(6, "0")}`;
+}
+
+export function generatePlaidAccountRowId(): string {
+  const num = Math.floor(Math.random() * 999999) + 1;
+  return `PACCT-${num.toString().padStart(6, "0")}`;
+}
+
+export function generatePlaidTransactionRowId(): string {
+  const num = Math.floor(Math.random() * 999999) + 1;
+  return `PTXN-${num.toString().padStart(6, "0")}`;
 }
 
 export function generateMagicNumber(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let result = '';
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "";
   for (let i = 0; i < 4; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  result += '-';
+  result += "-";
   for (let i = 0; i < 4; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
