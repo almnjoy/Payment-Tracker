@@ -436,10 +436,10 @@ export default function ClientDetail() {
                      <p className="text-gray-900 mt-1">{client.address || 'Not provided'}</p>
                   </div>
                   <div>
-                     <p className="text-sm font-medium text-gray-500">Lease Status</p>
+                     <p className="text-sm font-medium text-gray-500">Status</p>
                      <div className="mt-1">
                        <Select value={client.status || "active"} onValueChange={handleStatusChange}>
-                         <SelectTrigger className="w-[180px]" data-testid="select-lease-status">
+                         <SelectTrigger className="w-[180px]" data-testid="select-client-status">
                            <SelectValue />
                          </SelectTrigger>
                          <SelectContent>

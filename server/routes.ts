@@ -278,10 +278,6 @@ export async function registerRoutes(
               ...client,
               amountOwedCents: totalOwed,
               lastPaymentAt: lastPayment?.paidAt || lastPayment?.createdAt,
-              status:
-                totalOwed > 0 && invoices.some((i) => i.status === "overdue")
-                  ? "overdue"
-                  : "active",
             };
           }),
         );
