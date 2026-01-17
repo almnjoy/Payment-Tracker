@@ -1780,6 +1780,108 @@ export async function registerRoutes(
     },
   );
 
+  // G2) Get transactions for multiple Plaid accounts (for tile drilldowns)
+  app.post(
+    "/api/admin/plaid/accounts/transactions-bulk",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { plaidAccountIds, start_date, end_date, search } = req.body;
+
+        if (!plaidAccountIds || !Array.isArray(plaidAccountIds) || plaidAccountIds.length === 0) {
+          return res.status(400).json({ message: "plaidAccountIds array required" });
+        }
+
+        // Default to last 30 days
+        const endDate = end_date ? new Date(end_date) : new Date();
+        const startDate = start_date
+          ? new Date(start_date)
+          : new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        // Verify admin owns these accounts
+        const accounts = await db
+          .select({
+            accountId: plaidAccounts.accountId,
+            plaidAccountId: plaidAccounts.plaidAccountId,
+            itemId: plaidAccounts.itemId,
+            name: plaidAccounts.name,
+            mask: plaidAccounts.mask,
+            type: plaidAccounts.type,
+            subtype: plaidAccounts.subtype,
+            currentBalanceCents: plaidAccounts.currentBalanceCents,
+            availableBalanceCents: plaidAccounts.availableBalanceCents,
+            institutionName: plaidItems.institutionName,
+          })
+          .from(plaidAccounts)
+          .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+          .where(
+            and(
+              inArray(plaidAccounts.plaidAccountId, plaidAccountIds),
+              eq(plaidItems.adminUserId, userId!),
+            ),
+          );
+
+        if (accounts.length === 0) {
+          return res.status(404).json({ message: "No accounts found" });
+        }
+
+        // Build query conditions for transactions
+        let conditions: any[] = [
+          inArray(plaidTransactions.plaidAccountId, plaidAccountIds),
+          gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+          lte(plaidTransactions.date, endDate.toISOString().split("T")[0]),
+        ];
+
+        // Add search filter
+        if (search) {
+          const searchTerm = `%${search}%`;
+          conditions.push(
+            or(
+              ilike(plaidTransactions.name, searchTerm),
+              ilike(plaidTransactions.merchantName, searchTerm),
+            )!,
+          );
+        }
+
+        const transactions = await db
+          .select()
+          .from(plaidTransactions)
+          .where(and(...conditions))
+          .orderBy(desc(plaidTransactions.date))
+          .limit(500);
+
+        res.json({
+          accounts: accounts.map((a) => ({
+            account_id: a.accountId,
+            plaid_account_id: a.plaidAccountId,
+            name: a.name,
+            mask: a.mask,
+            type: a.type,
+            subtype: a.subtype,
+            current_balance_cents: a.currentBalanceCents,
+            available_balance_cents: a.availableBalanceCents,
+            institution_name: a.institutionName,
+          })),
+          transactions: transactions.map((t) => ({
+            transaction_id: t.transactionId,
+            plaid_account_id: t.plaidAccountId,
+            date: t.date,
+            name: t.name,
+            merchant_name: t.merchantName,
+            amount_cents: t.amountCents,
+            pending: t.pending,
+            category_primary: t.categoryPrimary,
+          })),
+        });
+      } catch (error) {
+        console.error("Error fetching bulk account transactions:", error);
+        res.status(500).json({ message: "Failed to fetch transactions" });
+      }
+    },
+  );
+
   // H) Get Plaid sync status
   app.get(
     "/api/admin/plaid/sync-status",

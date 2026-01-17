@@ -1,0 +1,62 @@
+Update the Account Summaries page to add drilldown popups for the TOP SUMMARY TILES. 
+
+CURRENT STATE:
+- Account Summaries page already shows top tiles (Total Cash, Total Credit, Linked Accounts, Net Worth).
+- Clicking an individual account card already opens a “Transaction History” modal showing that account’s transactions (this works and should stay the same).
+
+WHAT I WANT:
+A) Make the TOP TILES clickable.
+B) Clicking a tile opens a modal/pop-up that looks/feels like the existing “Transaction History” modal.
+C) The tile modal must explain EXACTLY where the tile total is pulled from:
+   - List the accounts included in that tile’s total
+   - Show the transactions used (if applicable)
+   - Show the sum breakdown
+
+RULES FOR WHAT TO SHOW PER TILE:
+1) Total Cash tile drilldown modal:
+   - Show all accounts included in Total Cash (ex: accounts with type = depository / checking / savings / money market OR however the tile currently calculates it).
+   - For each included account, show:
+     - Account name + institution + mask
+     - Current balance + available (if present)
+     - Subtotal contribution (balance amount used)
+   - Under the accounts list, show “Recent transactions for included accounts”:
+     - Pull and show the same transactions data source already used in the account click modal
+     - Default to last 30 days
+     - Allow search/filter (same UI as account modal)
+   - Show a “Total Cash calculation” section:
+     - List each included account and the exact number used
+     - Sum = Total Cash
+
+2) Total Credit tile drilldown modal:
+   - Same pattern as Total Cash, but include ONLY credit/loan accounts used in the Total Credit tile calculation.
+   - Show balances used and recent transactions for those accounts.
+   - Show a “Total Credit calculation” breakdown list + sum.
+
+3) Linked Accounts tile drilldown modal:
+   - Show all linked accounts grouped by institution.
+   - No transaction list required here, but it’s OK to include a simple “View transactions” action that reuses the existing account modal.
+
+4) Net Worth tile drilldown modal:
+   - Show the formula at the top (Net Worth = Total Cash - Total Credit) OR whatever your current formula is.
+   - Show the included accounts for each side (cash accounts + credit accounts).
+   - Show the exact numbers used and the final calculation line.
+
+IMPORTANT REQUIREMENTS:
+- DO NOT change how totals are calculated currently. Just reveal the sources and drill down.
+- Reuse the same Dialog/Modal component and styling from the existing account transaction modal.
+- Keep the account card click behavior unchanged.
+- Tile drilldown modal should be responsive and not break mobile layout.
+
+IMPLEMENTATION NOTES:
+- Add an onClick to each tile card.
+- When clicked, set “selectedTileType” state (cash|credit|linked|netWorth) and open a Dialog.
+- In the modal, compute included accounts by reusing the same arrays/logic already used to compute the tile totals.
+- For the “transactions used”, reuse existing transaction fetch logic used by the account click modal, but load transactions for ALL included accounts (or fetch per account and merge), then sort by date desc.
+- Show totals at top right of modal similar to account transaction modal.
+- Add a line: “Accounts included: X” and “Transactions shown: last 30 days”.
+
+ACCEPTANCE TEST:
+- Clicking Total Cash opens a modal showing accounts that sum to Total Cash, plus recent transactions from those accounts.
+- Clicking Total Credit opens a modal showing accounts that sum to Total Credit, plus recent transactions from those accounts.
+- Clicking Net Worth opens a modal that clearly shows the calculation with the accounts used.
+- No other pages or features change.
