@@ -10,6 +10,7 @@ import multer from "multer";
 import { plaidClient } from "./plaid/client";
 import { CountryCode, Products } from "plaid";
 import { db } from "./db";
+import { z } from "zod";
 import {
   plaidItems,
   plaidAccounts,
@@ -1781,18 +1782,35 @@ export async function registerRoutes(
   );
 
   // G2) Get transactions for multiple Plaid accounts (for tile drilldowns)
+  const bulkTransactionsSchema = z.object({
+    plaidAccountIds: z.array(z.string()).min(1, "At least one account ID required"),
+    start_date: z.string().optional().refine(
+      (val) => !val || !isNaN(Date.parse(val)),
+      { message: "Invalid start_date format" }
+    ),
+    end_date: z.string().optional().refine(
+      (val) => !val || !isNaN(Date.parse(val)),
+      { message: "Invalid end_date format" }
+    ),
+    search: z.string().optional(),
+  });
+
   app.post(
     "/api/admin/plaid/accounts/transactions-bulk",
     isAuthenticated,
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
-        const { plaidAccountIds, start_date, end_date, search } = req.body;
-
-        if (!plaidAccountIds || !Array.isArray(plaidAccountIds) || plaidAccountIds.length === 0) {
-          return res.status(400).json({ message: "plaidAccountIds array required" });
+        const parseResult = bulkTransactionsSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          return res.status(400).json({ 
+            message: "Validation error", 
+            errors: parseResult.error.flatten().fieldErrors 
+          });
         }
+
+        const { plaidAccountIds, start_date, end_date, search } = parseResult.data;
+        const userId = getUserId(req);
 
         // Default to last 30 days
         const endDate = end_date ? new Date(end_date) : new Date();
