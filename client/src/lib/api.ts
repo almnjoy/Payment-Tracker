@@ -573,6 +573,49 @@ export function useAdminPlaidAllAccounts() {
   });
 }
 
+export interface BulkTransactionsResponse {
+  accounts: {
+    account_id: string;
+    plaid_account_id: string;
+    name: string;
+    mask: string | null;
+    type: string | null;
+    subtype: string | null;
+    current_balance_cents: number | null;
+    available_balance_cents: number | null;
+    institution_name: string | null;
+  }[];
+  transactions: {
+    transaction_id: string;
+    plaid_account_id: string;
+    date: string;
+    name: string;
+    merchant_name: string | null;
+    amount_cents: number;
+    pending: boolean;
+    category_primary: string | null;
+  }[];
+}
+
+export function useAdminPlaidBulkTransactions(
+  plaidAccountIds: string[],
+  options?: { startDate?: string; endDate?: string; search?: string }
+) {
+  return useQuery<BulkTransactionsResponse>({
+    queryKey: ["admin", "plaid", "bulk-transactions", plaidAccountIds, options],
+    queryFn: () => fetchApi("/api/admin/plaid/accounts/transactions-bulk", {
+      method: "POST",
+      body: JSON.stringify({
+        plaidAccountIds,
+        start_date: options?.startDate,
+        end_date: options?.endDate,
+        search: options?.search,
+      }),
+    }),
+    enabled: plaidAccountIds.length > 0,
+  });
+}
+
 export function useAdminFinanceEntries(categoryGroup?: string, clientId?: string) {
   const params = new URLSearchParams();
   if (categoryGroup) params.append("category_group", categoryGroup);
