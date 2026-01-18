@@ -34,6 +34,11 @@ import {
   TimePeriod,
   RecurrenceType
 } from "@/lib/api";
+import { 
+  getRecurrenceMultiplier as sharedGetRecurrenceMultiplier, 
+  getMultiplierLabel as sharedGetMultiplierLabel,
+  isOneTimeInRange
+} from "@shared/recurrence";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
@@ -62,52 +67,9 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType | "one_time"; label: string }[
   { value: "yearly", label: "Yearly" },
 ];
 
-function getRecurrenceMultiplier(entryRecurrence: string | null, selectedPeriod: TimePeriod): number {
-  if (!entryRecurrence || entryRecurrence === "one_time") return 1;
-  
-  // Exact deterministic multipliers - no averaging
-  const multiplierTable: Record<string, Record<TimePeriod, number>> = {
-    weekly: { weekly: 1, biweekly: 2, monthly: 4, yearly: 52 },
-    biweekly: { weekly: 0.5, biweekly: 1, monthly: 2, yearly: 26 },
-    monthly: { weekly: 0.25, biweekly: 0.5, monthly: 1, yearly: 12 },
-    yearly: { weekly: 1/52, biweekly: 1/26, monthly: 1/12, yearly: 1 },
-  };
-  
-  return multiplierTable[entryRecurrence]?.[selectedPeriod] ?? 1;
-}
-
-function getMultiplierLabel(entryRecurrence: string | null, selectedPeriod: TimePeriod): string | null {
-  if (!entryRecurrence || entryRecurrence === "one_time") return null;
-  
-  const multiplier = getRecurrenceMultiplier(entryRecurrence, selectedPeriod);
-  if (multiplier === 1) return null;
-  
-  // Format multiplier: show fractions nicely, round to 2 decimals at display only
-  let formatted: string;
-  if (multiplier < 1) {
-    formatted = multiplier.toFixed(2).replace(/\.?0+$/, '');
-  } else if (Number.isInteger(multiplier)) {
-    formatted = multiplier.toString();
-  } else {
-    formatted = multiplier.toFixed(2).replace(/\.?0+$/, '');
-  }
-    
-  const recLabels: Record<string, string> = {
-    weekly: "Weekly",
-    biweekly: "Bi-weekly",
-    monthly: "Monthly",
-    yearly: "Yearly",
-  };
-  
-  const periodLabels: Record<TimePeriod, string> = {
-    weekly: "weekly",
-    biweekly: "biweekly",
-    monthly: "monthly",
-    yearly: "yearly",
-  };
-  
-  return `${formatted}x for ${periodLabels[selectedPeriod]}`;
-}
+// Use shared recurrence utilities for consistency
+const getRecurrenceMultiplier = sharedGetRecurrenceMultiplier;
+const getMultiplierLabel = sharedGetMultiplierLabel;
 
 export default function FinanceTracker() {
   const [activeTab, setActiveTab] = useState("income");
@@ -246,10 +208,26 @@ export default function FinanceTracker() {
   };
 
   const currentEntries = entries.data || [];
-  const manualTotal = currentEntries.reduce((sum, entry) => {
-    const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
-    return sum + Math.round(entry.amountCents * multiplier);
-  }, 0);
+  
+  // Calculate manual total with proper recurrence handling
+  // One-time entries only count if within the selected period's date range
+  const manualTotal = useMemo(() => {
+    return currentEntries.reduce((sum, entry) => {
+      const isOneTime = !entry.recurrence || entry.recurrence === "one_time";
+      
+      if (isOneTime) {
+        // One-time entries only count if within date range
+        if (!entry.date || !isOneTimeInRange(entry.date, selectedPeriod)) {
+          return sum;
+        }
+        return sum + entry.amountCents;
+      }
+      
+      // Recurring entries get multiplied
+      const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
+      return sum + Math.round(entry.amountCents * multiplier);
+    }, 0);
+  }, [currentEntries, selectedPeriod]);
 
   const clientBillingItemsList = billingItems.data || [];
   const monthlyBillingTotal = clientBillingItemsList
@@ -262,7 +240,9 @@ export default function FinanceTracker() {
   };
 
   // Calculate Plaid total from typed transactions with proper recurrence multipliers
-  // One-time transactions only count once (no scaling), recurring transactions get multiplied
+  // Note: The API already filters transactions by date range based on selected period
+  // One-time transactions (no recurrence) are already in range, so include as-is
+  // Recurring transactions get multiplied by the appropriate factor
   const plaidTotal = useMemo(() => {
     if (!typedTransactions.data?.transactions) return 0;
     
@@ -270,7 +250,7 @@ export default function FinanceTracker() {
       const txRecurrence = tx.override_recurrence || null;
       const baseAmount = Math.abs(tx.amount_cents);
       
-      // For one-time transactions, include them as-is (no scaling)
+      // For one-time transactions (already filtered by API date range), include as-is
       if (!txRecurrence || txRecurrence === "one_time") {
         return sum + baseAmount;
       }
