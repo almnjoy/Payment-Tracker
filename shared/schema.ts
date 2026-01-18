@@ -330,6 +330,7 @@ export const plaidAccounts = pgTable(
     currentBalanceCents: integer("current_balance_cents"),
     availableBalanceCents: integer("available_balance_cents"),
     isoCurrencyCode: text("iso_currency_code"),
+    defaultFinanceType: text("default_finance_type"), // income, bill, debt, holding, other, or null
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
   },
@@ -366,6 +367,7 @@ export const plaidTransactions = pgTable(
     isoCurrencyCode: text("iso_currency_code"),
     pending: boolean("pending").notNull().default(false),
     categoryPrimary: text("category_primary"),
+    overrideFinanceType: text("override_finance_type"), // income, bill, debt, holding, other, or null (uses account default if null)
     rawJson: jsonb("raw_json"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),

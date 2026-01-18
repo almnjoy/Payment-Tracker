@@ -1,0 +1,52 @@
+Update the Admin “Finance Tracker” page (current UI stays, just enhance the Auto-Sync section to be drillable and actionable).
+
+CURRENT STATE:
+- Finance Tracker page has tabs: Income, Bills, Debts, Holdings
+- Has “Auto-Sync from Linked Accounts” section with summary cards (Institutions, Accounts, Last Sync, Income(30d)) and a “Sync Now” button + date range dropdown.
+- Transactions can be viewed elsewhere (Account Summaries page has a good modal).
+
+GOALS (what I want):
+1) Everything in the Auto-Sync section should be clickable to show exactly what it is referencing.
+2) Under the Auto-Sync section, show a list/table of linked accounts (list view).
+3) Clicking an account opens a transactions pop-up (reuse the same Transaction History modal style from Account Summaries).
+4) Inside the transactions popup, allow me to categorize each transaction as a “Type”:
+   - income, bill, debt, holding (plus optional: other) 
+5) Also allow setting an entire account as a default Type:
+   - Example: Savings account -> Holdings
+   - This default type should apply to transactions unless a transaction override is set.
+
+DO NOT:
+- Change existing content/layout outside of enhancing the Auto-Sync area.
+- Remove current summary cards, Sync Now button, or tabs.
+
+
+UI REQUIREMENTS:
+A) Make the Auto-Sync summary cards clickable:
+- Institutions card click -> modal listing institutions and which accounts belong to each.
+- Accounts card click -> modal listing all linked accounts (same as list view).
+- Income (30d) card click -> modal showing which transactions were counted as Income in the selected date range, grouped by account, with totals.
+- Last Sync card click -> modal showing sync details (timestamp + which accounts synced, if available; otherwise show timestamp and “last sync applies to all linked accounts”).
+
+B) Add “Linked Accounts” list under Auto-Sync section:
+- Table columns:
+  - Account Name
+  - Institution
+  - Mask/last4
+  - Account category/subtype (if available)
+  - Balance current/available (if available)
+  - Default Type (editable dropdown: income/bill/debt/holding/none)
+  - Actions: “View transactions”
+- List should respect the selected time range dropdown (only affects transaction views and totals, not account list).
+
+C) Transactions modal (for an account):
+- Reuse existing Transaction History modal UI from Account Summaries.
+- Add a Type dropdown/button for each transaction row:
+  - income, bill, debt, holding, other 
+- Show effective type:
+  - transaction override type if set
+  - else use account default type if set
+  - else none
+
+
+
+
