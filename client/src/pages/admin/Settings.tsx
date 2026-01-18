@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CreditCard, Plus, Trash2, RefreshCw, Loader2, DollarSign, Wallet, Building2, Save, ExternalLink } from "lucide-react";
+import { CreditCard, Plus, Trash2, RefreshCw, Loader2, DollarSign, Wallet, Building2, Save, ExternalLink, Zap, Mail } from "lucide-react";
 import { usePlaidLink } from "react-plaid-link";
 import { 
   useAdminPlaidItems, 
@@ -320,6 +320,159 @@ function PaymentSettingsCard() {
   );
 }
 
+interface AutomationSettings {
+  id: string | null;
+  signupEmailWebhookUrl: string | null;
+  automationToken: string | null;
+}
+
+function AutomationSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<AutomationSettings>({
+    id: null,
+    signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
+    automationToken: "",
+  });
+
+  const { data: settings, isLoading } = useQuery<AutomationSettings>({
+    queryKey: ["admin", "automation-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/automation-settings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch automation settings");
+      return response.json();
+    },
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setFormData({
+        id: settings.id,
+        signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
+        automationToken: settings.automationToken || "",
+      });
+    }
+  }, [settings]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (data: Partial<AutomationSettings>) => {
+      const response = await fetch("/api/admin/automation-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error("Failed to save automation settings");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "automation-settings"] });
+      toast({ title: "Settings Saved", description: "Automation settings have been updated." });
+      setIsEditing(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      signupEmailWebhookUrl: formData.signupEmailWebhookUrl || null,
+      automationToken: formData.automationToken || null,
+    });
+  };
+
+  const handleCancel = () => {
+    if (settings) {
+      setFormData({
+        id: settings.id,
+        signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
+        automationToken: settings.automationToken || "",
+      });
+    }
+    setIsEditing(false);
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="border-gray-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5" /> Automations</CardTitle>
+        </CardHeader>
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-gray-200 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-yellow-500" /> Automations</CardTitle>
+          <CardDescription>Configure webhooks and automated workflows (n8n, Zapier, etc.)</CardDescription>
+        </div>
+        {isEditing ? (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleCancel} disabled={saveMutation.isPending}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-automation-settings">
+              {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+              Save
+            </Button>
+          </div>
+        ) : (
+          <Button variant="outline" onClick={() => setIsEditing(true)} data-testid="button-edit-automation-settings">Edit</Button>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-4 p-4 bg-purple-50/50 rounded-lg border border-purple-100">
+          <div className="flex items-center gap-2">
+            <Mail className="h-5 w-5 text-purple-600" />
+            <h4 className="font-semibold text-gray-900">Client Signup Email Webhook</h4>
+          </div>
+          <p className="text-sm text-gray-600">
+            When you click "Send Signup Email" on a client's page, a POST request will be sent to this URL with the client's details.
+          </p>
+          {isEditing ? (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-sm text-gray-600">n8n Signup Email Webhook URL</Label>
+                <Input
+                  placeholder="https://n8n.example.com/webhook/client-signup"
+                  value={formData.signupEmailWebhookUrl || ""}
+                  onChange={(e) => setFormData({ ...formData, signupEmailWebhookUrl: e.target.value })}
+                  data-testid="input-signup-webhook-url"
+                />
+              </div>
+              <div>
+                <Label className="text-sm text-gray-600">Automation Token (optional, sent as X-Automation-Token header)</Label>
+                <Input
+                  placeholder="your-secret-token"
+                  type="password"
+                  value={formData.automationToken || ""}
+                  onChange={(e) => setFormData({ ...formData, automationToken: e.target.value })}
+                  data-testid="input-automation-token"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1 text-sm">
+              <p className="text-gray-600">
+                Webhook URL: <span className="font-medium text-gray-900 break-all">{settings?.signupEmailWebhookUrl || "Not configured"}</span>
+              </p>
+              <p className="text-gray-600">
+                Token: <span className="font-medium text-gray-900">{settings?.automationToken ? "••••••••" : "Not set"}</span>
+              </p>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminSettings() {
   const { data: plaidItems, isLoading, refetch } = useAdminPlaidItems();
   const syncTransactions = useSyncPlaidTransactions();
@@ -500,6 +653,8 @@ export default function AdminSettings() {
         </Card>
 
         <PaymentSettingsCard />
+
+        <AutomationSettingsCard />
 
         <Card className="border-gray-200 shadow-sm">
            <CardHeader>
