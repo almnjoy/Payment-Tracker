@@ -9,14 +9,20 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 - **Invite-Only Registration**: Clients receive magic numbers (e.g., "ABCD-1234") to create accounts
 - **PDF Quick-View**: Inline PDF preview modal for documents with fallback error handling
 - **Documents Organization**: Documents grouped by client with Invoices/Other sub-folders
-- **Finance Entries**: Admin can assign bills/expenses to clients; clients view read-only
-- **Client Billing Items**: Per-client charges (rent/other) with frequency tracking (one_time, weekly, monthly, yearly)
+- **Client Billing Items**: Per-client charges (rent/other) with frequency tracking; visible in client dashboard
+- **Payment Verification System**: Client payments submitted as "pending", admin verifies with Posted/Confirmed/Rejected statuses
+- **Payment Settings**: Admin configures Cash App, Venmo, Bank Transfer instructions for clients
 - **Lease Status Management**: Status dropdown (active, paused, inactive, behind) with color-coded badges
 - **Admin Impersonation**: Admins can view client portal using `?asClientId={clientId}` query parameter
-- **Derived Income**: Finance Tracker shows monthly rent income from client billing items
+- **Active Agreement**: Mark one document as active agreement per client; shown on client dashboard
 - **Period-Based Recurrence System**: Global time frame selector (weekly, bi-weekly, monthly, yearly) applies multipliers to calculate accurate totals
 - **Plaid Transaction Types**: Transactions can be categorized by finance type (income, bill, debt, holding, other) with override support
-- **Recurring Groups**: Related Plaid transactions can be grouped with shared labels and recurrence patterns
+
+## Payment Status Flow
+1. Client submits payment via Payments page → status: **pending**
+2. Admin views in Overview > Payment Verification or Client Detail > Payment History
+3. Admin selects status from dropdown: **Posted**, **Confirmed**, or **Rejected**
+4. Stats update: Total Collected = confirmed payments only, Outstanding = posted/pending/rejected
 
 ## Tech Stack
 - **Frontend**: React with Vite, TailwindCSS, shadcn/ui components
@@ -95,6 +101,7 @@ Run `npx tsx server/seed.ts` to populate test data:
 - GET/POST `/api/admin/leases` - List/create leases
 - GET/POST `/api/admin/invoices` - List/create invoices
 - GET/POST `/api/admin/payments` - List/create payments
+- PATCH `/api/admin/payments/:paymentId/status` - Update payment status (posted/confirmed/rejected)
 - GET/POST `/api/admin/documents` - List/upload documents
 - GET/POST `/api/admin/invite-codes` - List/create invite codes
 - GET `/api/admin/stats` - Dashboard statistics
