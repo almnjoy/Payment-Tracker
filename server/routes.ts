@@ -22,6 +22,8 @@ import {
   clients,
   invoices,
   invoiceSettings,
+  documents,
+  usersProfile,
   generatePlaidItemId,
   generatePlaidAccountRowId,
   generatePlaidTransactionRowId,
@@ -262,6 +264,112 @@ export async function registerRoutes(
         });
       } catch (error) {
         console.error("Error claiming invite:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+      }
+    },
+  );
+
+  // Verify Client ID with email (no auth required - validates email match)
+  app.post("/api/client-signup/verify", async (req: Request, res: Response) => {
+    try {
+      const { clientId, email } = req.body;
+
+      if (!clientId) {
+        return res.status(400).json({ valid: false, reason: "Client ID is required" });
+      }
+
+      // Normalize clientId format (CL-XXXXXX or CL XXXXXX or just XXXXXX)
+      let normalizedId = clientId.toUpperCase().replace(/\s+/g, '-');
+      if (!normalizedId.startsWith('CL-')) {
+        normalizedId = 'CL-' + normalizedId.replace(/^CL-?/, '');
+      }
+
+      const client = await storage.getClient(normalizedId);
+
+      if (!client) {
+        return res.json({ valid: false, reason: "Invalid Client ID" });
+      }
+
+      // Check if email matches (if provided)
+      if (email && client.email && client.email.toLowerCase() !== email.toLowerCase()) {
+        return res.json({ valid: false, reason: "Email does not match the client record" });
+      }
+
+      res.json({
+        valid: true,
+        clientId: client.clientId,
+        clientDisplayName: client.displayName,
+        requiresEmail: !email, // If no email provided, client needs to enter their email
+      });
+    } catch (error) {
+      console.error("Error verifying client ID:", error);
+      res.status(500).json({ valid: false, reason: "Server error" });
+    }
+  });
+
+  // Claim Client ID (requires auth, validates email match)
+  app.post(
+    "/api/client-signup/claim",
+    isAuthenticated,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const userClaims = (req.user as any)?.claims;
+        const userEmail = userClaims?.email;
+        const { clientId } = req.body;
+
+        if (!userId || !clientId) {
+          return res.status(400).json({ success: false, message: "Missing required fields" });
+        }
+
+        // Normalize clientId format
+        let normalizedId = clientId.toUpperCase().replace(/\s+/g, '-');
+        if (!normalizedId.startsWith('CL-')) {
+          normalizedId = 'CL-' + normalizedId.replace(/^CL-?/, '');
+        }
+
+        // Get the client record
+        const client = await storage.getClient(normalizedId);
+
+        if (!client) {
+          return res.status(400).json({ success: false, message: "Invalid Client ID" });
+        }
+
+        // Validate email matches
+        if (!userEmail || !client.email || client.email.toLowerCase() !== userEmail.toLowerCase()) {
+          return res.status(400).json({
+            success: false,
+            message: "Your email does not match the client record. Please sign in with the correct email.",
+          });
+        }
+
+        // Check if this client is already linked to another user
+        const existingProfiles = await db
+          .select()
+          .from(usersProfile)
+          .where(eq(usersProfile.clientId, normalizedId));
+
+        if (existingProfiles.length > 0 && existingProfiles[0].userId !== userId) {
+          return res.status(400).json({
+            success: false,
+            message: "This client account is already linked to another user.",
+          });
+        }
+
+        // Create/update user profile
+        await storage.upsertUserProfile({
+          userId,
+          role: "client",
+          clientId: normalizedId,
+          status: "active",
+        });
+
+        res.json({
+          success: true,
+          redirectTo: "/client/dashboard",
+        });
+      } catch (error) {
+        console.error("Error claiming client ID:", error);
         res.status(500).json({ success: false, message: "Server error" });
       }
     },
@@ -566,10 +674,23 @@ export async function registerRoutes(
           return res.status(400).json({ message: "No file uploaded" });
         }
         
-        // Upload to object storage
-        const key = `invoice-logos/${userId}-${Date.now()}-${file.originalname}`;
-        await objectStorageService.upload(key, file.buffer, file.mimetype);
-        const publicUrl = await objectStorageService.getPublicUrl(key);
+        // Upload to object storage (public directory for logos)
+        const publicPaths = objectStorageService.getPublicObjectSearchPaths();
+        const publicPath = publicPaths[0]; // e.g., "/bucket-name/public"
+        const pathParts = publicPath.split('/').filter(Boolean);
+        const bucketName = pathParts[0];
+        const storageKey = `logos/${userId}-${Date.now()}-${file.originalname}`;
+        
+        const bucket = objectStorageClient.bucket(bucketName);
+        const blob = bucket.file(`public/${storageKey}`);
+        
+        await blob.save(file.buffer, {
+          contentType: file.mimetype,
+          metadata: { originalName: file.originalname },
+        });
+        
+        // The public URL will be served through /api/assets endpoint
+        const publicUrl = `/api/assets/${storageKey}`;
         
         // Update settings with logo URL
         const settingsId = `IS-${userId}`;
@@ -1052,6 +1173,74 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error downloading document:", error);
         res.status(500).json({ message: "Failed to download document" });
+      }
+    },
+  );
+
+  // Toggle active agreement status for a document
+  app.patch(
+    "/api/admin/documents/:documentId/active-agreement",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { documentId } = req.params;
+        const { isActive } = req.body;
+
+        const document = await storage.getDocument(documentId);
+        if (!document) {
+          return res.status(404).json({ message: "Document not found" });
+        }
+
+        if (isActive) {
+          // First, unmark any existing active agreement for this client
+          await db
+            .update(documents)
+            .set({ isActiveAgreement: false, updatedAt: new Date() })
+            .where(
+              and(
+                eq(documents.clientId, document.clientId),
+                eq(documents.isActiveAgreement, true)
+              )
+            );
+        }
+
+        // Now set this document's active agreement status
+        const [updated] = await db
+          .update(documents)
+          .set({ isActiveAgreement: !!isActive, updatedAt: new Date() })
+          .where(eq(documents.documentId, documentId))
+          .returning();
+
+        res.json(updated);
+      } catch (error) {
+        console.error("Error updating active agreement:", error);
+        res.status(500).json({ message: "Failed to update active agreement" });
+      }
+    },
+  );
+
+  // Get active agreement for a client
+  app.get(
+    "/api/admin/clients/:clientId/active-agreement",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { clientId } = req.params;
+        const [activeDoc] = await db
+          .select()
+          .from(documents)
+          .where(
+            and(
+              eq(documents.clientId, clientId),
+              eq(documents.isActiveAgreement, true)
+            )
+          );
+        res.json(activeDoc || null);
+      } catch (error) {
+        console.error("Error fetching active agreement:", error);
+        res.status(500).json({ message: "Failed to fetch active agreement" });
       }
     },
   );

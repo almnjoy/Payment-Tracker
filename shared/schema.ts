@@ -268,8 +268,9 @@ export const documents = pgTable("documents", {
   leaseId: varchar("lease_id"),
   invoiceId: varchar("invoice_id"),
   title: text("title").notNull(),
-  docType: text("doc_type").notNull().default("other"),
+  docType: text("doc_type").notNull().default("other"), // general, agreement, invoice, other
   visibility: text("visibility").notNull().default("client_and_admin"),
+  isActiveAgreement: boolean("is_active_agreement").notNull().default(false), // Only one can be true per client
   storageBucket: text("storage_bucket").notNull(),
   storageKey: text("storage_key").notNull(),
   contentType: text("content_type"),
