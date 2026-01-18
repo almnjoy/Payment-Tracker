@@ -58,7 +58,11 @@ export default function AdminDashboard() {
     );
   }
 
-  const recentPayments = payments?.slice(0, 10) || [];
+  // Filter to only show payments from active/behind clients (exclude paused/inactive)
+  const activeClientIds = new Set(
+    clients?.filter(c => c.status === "active" || c.status === "behind").map(c => c.clientId) || []
+  );
+  const recentPayments = payments?.filter(p => activeClientIds.has(p.clientId)).slice(0, 10) || [];
 
   return (
     <Layout role="admin">

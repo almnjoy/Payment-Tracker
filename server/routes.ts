@@ -1651,18 +1651,28 @@ export async function registerRoutes(
         const clients = await storage.getAllClients();
         const payments = await storage.getAllPayments();
 
-        // Total Collected = confirmed payments only
-        const totalCollectedCents = payments
+        // Get client IDs for active/behind clients only (exclude paused/inactive)
+        const activeClientIds = new Set(
+          clients
+            .filter(c => c.status === "active" || c.status === "behind")
+            .map(c => c.clientId)
+        );
+
+        // Filter payments to only include those from active/behind clients
+        const activePayments = payments.filter(p => activeClientIds.has(p.clientId));
+
+        // Total Collected = confirmed payments from active/behind clients only
+        const totalCollectedCents = activePayments
           .filter((p) => p.status === "confirmed")
           .reduce((sum, p) => sum + p.amountCents, 0);
 
-        // Outstanding = posted/rejected/pending payments
-        const outstandingCents = payments
+        // Outstanding = posted/rejected/pending payments from active/behind clients
+        const outstandingCents = activePayments
           .filter((p) => ["posted", "rejected", "pending"].includes(p.status))
           .reduce((sum, p) => sum + p.amountCents, 0);
 
-        // Count payments needing verification (pending/posted)
-        const pendingVerificationCount = payments.filter(
+        // Count payments needing verification from active/behind clients
+        const pendingVerificationCount = activePayments.filter(
           (p) => ["pending", "posted"].includes(p.status),
         ).length;
 
