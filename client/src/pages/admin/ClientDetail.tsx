@@ -163,6 +163,22 @@ export default function ClientDetail() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
+
+  const handlePaymentStatusChange = async (paymentId: string, status: string) => {
+    try {
+      const res = await fetch(`/api/admin/payments/${paymentId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update payment status");
+      toast({ title: "Success", description: "Payment status updated" });
+      refetchClient();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
   
   const handleViewClientPortal = () => {
     navigate(`/client/dashboard?asClientId=${clientId}`);
@@ -576,14 +592,42 @@ export default function ClientDetail() {
                       {payments.map(payment => (
                         <div key={payment.paymentId} className="flex items-center justify-between border-b border-gray-100 pb-4 last:border-0 last:pb-0">
                            <div>
-                              <p className="font-medium text-gray-900">Invoice {payment.invoiceId || 'Payment'}</p>
-                              <p className="text-sm text-gray-500">{formatDate(payment.paidAt || payment.createdAt) || 'N/A'}</p>
+                              <p className="font-medium text-gray-900">{payment.method || 'Payment'}</p>
+                              <p className="text-sm text-gray-500">
+                                {formatDate(payment.paidAt || payment.createdAt) || 'N/A'}
+                                {payment.notes && ` • ${payment.notes}`}
+                              </p>
                            </div>
-                           <div className="text-right">
+                           <div className="flex items-center gap-3">
                               <p className="font-bold text-gray-900">{formatCents(payment.amountCents)}</p>
-                              <Badge variant="outline" className="text-green-700 bg-green-50 border-green-200 text-xs capitalize">
-                                {payment.status}
-                              </Badge>
+                              <Select
+                                value={payment.status}
+                                onValueChange={(value) => handlePaymentStatusChange(payment.paymentId, value)}
+                              >
+                                <SelectTrigger className="w-[120px] h-8 text-xs" data-testid={`status-select-${payment.paymentId}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="posted">
+                                    <span className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                                      Posted
+                                    </span>
+                                  </SelectItem>
+                                  <SelectItem value="confirmed">
+                                    <span className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-green-500" />
+                                      Confirmed
+                                    </span>
+                                  </SelectItem>
+                                  <SelectItem value="rejected">
+                                    <span className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-red-500" />
+                                      Rejected
+                                    </span>
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
                            </div>
                         </div>
                       ))}

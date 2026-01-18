@@ -67,8 +67,8 @@ export default function ClientPayments() {
       queryClient.invalidateQueries({ queryKey: ["client-payments"] });
       queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
       toast({ 
-        title: "Payment Reported", 
-        description: "Your payment has been logged and is pending confirmation." 
+        title: "Payment Submitted", 
+        description: "Your payment has been logged and is pending verification." 
       });
       setPaymentDialogOpen(false);
       setSelectedMethod(null);
@@ -100,13 +100,16 @@ export default function ClientPayments() {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case "confirmed":
       case "paid":
       case "completed":
-        return <Badge className="bg-green-50 text-green-700 border-green-200">Paid</Badge>;
-      case "reported":
+        return <Badge className="bg-green-50 text-green-700 border-green-200">Confirmed</Badge>;
+      case "pending":
         return <Badge className="bg-amber-50 text-amber-700 border-amber-200">Pending</Badge>;
-      case "verified":
-        return <Badge className="bg-blue-50 text-blue-700 border-blue-200">Verified</Badge>;
+      case "posted":
+        return <Badge className="bg-blue-50 text-blue-700 border-blue-200">Posted</Badge>;
+      case "rejected":
+        return <Badge className="bg-red-50 text-red-700 border-red-200">Rejected</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -450,9 +453,13 @@ export default function ClientPayments() {
                   >
                     <div className="flex items-center gap-4">
                       <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                        payment.status === 'reported' ? 'bg-amber-100 text-amber-600' : 'bg-green-100 text-green-600'
+                        payment.status === 'pending' || payment.status === 'posted' 
+                          ? 'bg-amber-100 text-amber-600' 
+                          : payment.status === 'rejected' 
+                            ? 'bg-red-100 text-red-600'
+                            : 'bg-green-100 text-green-600'
                       }`}>
-                        {payment.status === 'reported' ? <Clock size={20} /> : <CheckCircle size={20} />}
+                        {payment.status === 'pending' || payment.status === 'posted' ? <Clock size={20} /> : <CheckCircle size={20} />}
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">

@@ -1138,6 +1138,36 @@ export async function registerRoutes(
     },
   );
 
+  // Update payment status (for payment verification)
+  app.patch(
+    "/api/admin/payments/:paymentId/status",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { paymentId } = req.params;
+        const { status } = req.body;
+
+        const validStatuses = ["pending", "posted", "confirmed", "rejected"];
+        if (!validStatuses.includes(status)) {
+          return res.status(400).json({ 
+            message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
+          });
+        }
+
+        const payment = await storage.updatePaymentStatus(paymentId, status);
+        if (!payment) {
+          return res.status(404).json({ message: "Payment not found" });
+        }
+
+        res.json(payment);
+      } catch (error) {
+        console.error("Error updating payment status:", error);
+        res.status(500).json({ message: "Failed to update payment status" });
+      }
+    },
+  );
+
   // ============================================
   // ADMIN: DOCUMENTS
   // ============================================
@@ -1619,26 +1649,28 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const clients = await storage.getAllClients();
-        const invoices = await storage.getAllInvoices();
         const payments = await storage.getAllPayments();
 
+        // Total Collected = confirmed payments only
         const totalCollectedCents = payments
-          .filter((p) => p.status === "paid")
+          .filter((p) => p.status === "confirmed")
           .reduce((sum, p) => sum + p.amountCents, 0);
 
-        const outstandingCents = invoices
-          .filter((inv) => ["open", "sent", "overdue"].includes(inv.status))
-          .reduce((sum, inv) => sum + inv.amountCents, 0);
+        // Outstanding = posted/rejected/pending payments
+        const outstandingCents = payments
+          .filter((p) => ["posted", "rejected", "pending"].includes(p.status))
+          .reduce((sum, p) => sum + p.amountCents, 0);
 
-        const overdueCount = invoices.filter(
-          (inv) => inv.status === "overdue",
+        // Count payments needing verification (pending/posted)
+        const pendingVerificationCount = payments.filter(
+          (p) => ["pending", "posted"].includes(p.status),
         ).length;
 
         res.json({
           totalCollectedCents,
           outstandingCents,
-          overdueCount,
-          activeClients: clients.length,
+          pendingVerificationCount,
+          activeClients: clients.filter(c => c.status === "active").length,
         });
       } catch (error) {
         console.error("Error fetching stats:", error);
@@ -1778,7 +1810,7 @@ export async function registerRoutes(
           amountCents,
           method,
           notes: note || null,
-          status: "reported",
+          status: "pending",
           paidAt: new Date(),
         });
         
@@ -1961,7 +1993,7 @@ export async function registerRoutes(
     },
   );
 
-  // Get finance entries for client (read-only - entries assigned to their clientId)
+  // Get billing items for client (bills/expenses assigned to their clientId)
   app.get(
     "/api/client/finance-entries",
     isAuthenticated,
@@ -1974,11 +2006,23 @@ export async function registerRoutes(
           return res.status(403).json({ message: "No client profile linked" });
         }
 
-        const entries = await db
+        // Query client billing items (created by admin for this client)
+        const items = await db
           .select()
-          .from(financeEntries)
-          .where(eq(financeEntries.clientId, profile.clientId))
-          .orderBy(desc(financeEntries.date));
+          .from(clientBillingItems)
+          .where(eq(clientBillingItems.clientId, profile.clientId))
+          .orderBy(desc(clientBillingItems.dueDate));
+
+        // Transform to match expected format for client dashboard
+        const entries = items.map(item => ({
+          entryId: item.id,
+          title: item.title,
+          amountCents: item.amountCents,
+          date: item.dueDate,
+          categoryGroup: item.type,
+          recurrence: item.frequency,
+          notes: item.notes,
+        }));
 
         res.json(entries);
       } catch (error) {

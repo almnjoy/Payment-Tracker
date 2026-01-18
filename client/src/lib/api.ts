@@ -109,7 +109,7 @@ export interface ExternalAccount {
 export interface AdminStats {
   totalCollectedCents: number;
   outstandingCents: number;
-  overdueCount: number;
+  pendingVerificationCount: number;
   activeClients: number;
 }
 
