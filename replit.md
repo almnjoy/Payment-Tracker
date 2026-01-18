@@ -6,6 +6,7 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 ## Key Features
 - **Admin Portal**: Manage clients, leases, invoices, payments, documents, and invite codes
 - **Client Portal**: View dashboard, invoices, payments, and documents
+- **Standalone Invoice Generator**: Create invoices with Bill To fields (name, email, address) without requiring a client. Invoices are independent PDF documents that don't affect client balances, documents, or finance tracking.
 - **Invite-Only Registration**: Clients receive magic numbers (e.g., "ABCD-1234") to create accounts
 - **PDF Quick-View**: Inline PDF preview modal for documents with fallback error handling
 - **Documents Organization**: Documents grouped by client with Invoices/Other sub-folders
