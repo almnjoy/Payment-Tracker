@@ -981,6 +981,50 @@ export async function registerRoutes(
   );
 
   // ============================================
+  // ADMIN: AUTOMATION SETTINGS
+  // ============================================
+  app.get(
+    "/api/admin/automation-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const settings = await storage.getAutomationSettings();
+        if (!settings) {
+          return res.json({
+            id: null,
+            signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
+            automationToken: null,
+          });
+        }
+        res.json(settings);
+      } catch (error) {
+        console.error("Error fetching automation settings:", error);
+        res.status(500).json({ message: "Failed to fetch automation settings" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/admin/automation-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const settings = await storage.upsertAutomationSettings({
+          adminUserId: userId!,
+          ...req.body,
+        });
+        res.json(settings);
+      } catch (error) {
+        console.error("Error updating automation settings:", error);
+        res.status(500).json({ message: "Failed to update automation settings" });
+      }
+    },
+  );
+
+  // ============================================
   // ADMIN: DOCUMENT UPDATE (Active Agreement Toggle)
   // ============================================
 
