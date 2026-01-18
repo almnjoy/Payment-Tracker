@@ -16,6 +16,7 @@ import {
   plaidAccounts,
   plaidTransactions,
   plaidCursors,
+  plaidRecurringGroups,
   financeEntries,
   clientBillingItems,
   clients,
@@ -24,9 +25,17 @@ import {
   generatePlaidTransactionRowId,
   generateFinanceEntryId,
   generateClientBillingItemId,
+  generateRecurringGroupId,
   insertFinanceEntrySchema,
   insertClientBillingItemSchema,
 } from "@shared/schema";
+import {
+  getRecurrenceMultiplier,
+  isOneTimeInRange,
+  getPeriodDays,
+  type TimePeriod,
+  type RecurrenceType,
+} from "@shared/recurrence";
 import { eq, and, gte, lte, desc, sql, inArray, ilike, or } from "drizzle-orm";
 
 // Extend Express Request to include user info
@@ -2072,7 +2081,7 @@ export async function registerRoutes(
     },
   );
 
-  // I) Get Plaid-derived financial totals - ONLY counts user-assigned types
+  // I) Get Plaid-derived financial totals - With recurrence-based period calculations
   app.get(
     "/api/admin/plaid/finance-totals",
     isAuthenticated,
@@ -2080,9 +2089,14 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
-        const { days = "30" } = req.query;
-
-        const daysNum = parseInt(days as string) || 30;
+        const { period = "monthly" } = req.query;
+        
+        const validPeriods = ["weekly", "biweekly", "monthly", "yearly"];
+        const selectedPeriod = validPeriods.includes(period as string) 
+          ? (period as TimePeriod) 
+          : "monthly";
+        
+        const daysNum = getPeriodDays(selectedPeriod);
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - daysNum);
 
@@ -2101,7 +2115,7 @@ export async function registerRoutes(
             debts: 0,
             holdings: 0,
             other: 0,
-            date_range: daysNum,
+            period: selectedPeriod,
           });
         }
 
@@ -2114,6 +2128,17 @@ export async function registerRoutes(
         const accountDefaultMap = new Map<string, string | null>();
         accounts.forEach((a) => {
           accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
+        });
+
+        // Get recurring groups for this admin
+        const groups = await db
+          .select()
+          .from(plaidRecurringGroups)
+          .where(eq(plaidRecurringGroups.adminUserId, userId!));
+        
+        const groupMap = new Map<string, typeof groups[0]>();
+        groups.forEach((g) => {
+          groupMap.set(g.groupId, g);
         });
 
         // Get transactions in date range (start <= date <= today)
@@ -2132,41 +2157,38 @@ export async function registerRoutes(
             ),
           );
 
-        // Calculate effective type for each transaction (override > account default > null)
+        // Calculate effective type and recurrence for each transaction
         // ONLY count transactions with an explicitly assigned type
-        const typedTransactions = transactions.map((t) => ({
-          ...t,
-          effectiveType: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
-        })).filter((t) => t.effectiveType !== null);
+        const typedTransactions = transactions.map((t) => {
+          const group = t.recurringGroupId ? groupMap.get(t.recurringGroupId) : null;
+          return {
+            ...t,
+            effectiveType: t.overrideFinanceType || (group?.financeType) || accountDefaultMap.get(t.plaidAccountId) || null,
+            effectiveRecurrence: (t.overrideRecurrence || group?.recurrence || "one_time") as RecurrenceType,
+          };
+        }).filter((t) => t.effectiveType !== null);
 
-        // Sum by category - use absolute value for amounts
-        const income = typedTransactions
-          .filter((t) => t.effectiveType === "income")
-          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
-
-        const bills = typedTransactions
-          .filter((t) => t.effectiveType === "bill")
-          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
-
-        const debts = typedTransactions
-          .filter((t) => t.effectiveType === "debt")
-          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
-
-        const holdings = typedTransactions
-          .filter((t) => t.effectiveType === "holding")
-          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
-
-        const other = typedTransactions
-          .filter((t) => t.effectiveType === "other")
-          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
+        // Sum by category with recurrence multipliers
+        const calculateTotal = (type: string) => {
+          return typedTransactions
+            .filter((t) => t.effectiveType === type)
+            .reduce((sum, t) => {
+              const recurrence = t.effectiveRecurrence;
+              if (recurrence === "one_time") {
+                return sum + Math.abs(t.amountCents);
+              }
+              const multiplier = getRecurrenceMultiplier(recurrence, selectedPeriod);
+              return sum + Math.abs(t.amountCents) * multiplier;
+            }, 0);
+        };
 
         res.json({
-          income,
-          bills,
-          debts,
-          holdings,
-          other,
-          date_range: daysNum,
+          income: Math.round(calculateTotal("income")),
+          bills: Math.round(calculateTotal("bill")),
+          debts: Math.round(calculateTotal("debt")),
+          holdings: Math.round(calculateTotal("holding")),
+          other: Math.round(calculateTotal("other")),
+          period: selectedPeriod,
         });
       } catch (error) {
         console.error("Error fetching finance totals:", error);
@@ -2537,6 +2559,376 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error fetching all accounts:", error);
         res.status(500).json({ message: "Failed to fetch accounts" });
+      }
+    },
+  );
+
+  // ============================================
+  // PLAID TRANSACTION RECURRENCE & GROUPING
+  // ============================================
+
+  // Update Plaid transaction recurrence
+  app.patch(
+    "/api/admin/plaid/transactions/:transactionId/recurrence",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { transactionId } = req.params;
+        const { recurrence } = req.body;
+
+        const validRecurrences = ["one_time", "weekly", "biweekly", "monthly", "yearly", null];
+        if (!validRecurrences.includes(recurrence)) {
+          return res.status(400).json({ message: "Invalid recurrence value" });
+        }
+
+        await db
+          .update(plaidTransactions)
+          .set({ 
+            overrideRecurrence: recurrence,
+            updatedAt: new Date() 
+          })
+          .where(eq(plaidTransactions.transactionId, transactionId));
+
+        res.json({ success: true, overrideRecurrence: recurrence });
+      } catch (error) {
+        console.error("Error updating transaction recurrence:", error);
+        res.status(500).json({ message: "Failed to update transaction recurrence" });
+      }
+    },
+  );
+
+  // Get all recurring groups for admin
+  app.get(
+    "/api/admin/plaid/recurring-groups",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+
+        const groups = await db
+          .select()
+          .from(plaidRecurringGroups)
+          .where(eq(plaidRecurringGroups.adminUserId, userId!))
+          .orderBy(desc(plaidRecurringGroups.createdAt));
+
+        res.json(groups);
+      } catch (error) {
+        console.error("Error fetching recurring groups:", error);
+        res.status(500).json({ message: "Failed to fetch recurring groups" });
+      }
+    },
+  );
+
+  // Create recurring group
+  app.post(
+    "/api/admin/plaid/recurring-groups",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { label, recurrence, financeType, transactionIds } = req.body;
+
+        if (!label || !recurrence) {
+          return res.status(400).json({ message: "Label and recurrence are required" });
+        }
+
+        const groupId = generateRecurringGroupId();
+
+        await db.insert(plaidRecurringGroups).values({
+          groupId,
+          adminUserId: userId!,
+          label,
+          recurrence,
+          financeType: financeType || null,
+          isActive: true,
+        });
+
+        // Link transactions to the group if provided
+        if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
+          for (const txnId of transactionIds) {
+            await db
+              .update(plaidTransactions)
+              .set({ recurringGroupId: groupId, updatedAt: new Date() })
+              .where(eq(plaidTransactions.transactionId, txnId));
+          }
+        }
+
+        const group = await db
+          .select()
+          .from(plaidRecurringGroups)
+          .where(eq(plaidRecurringGroups.groupId, groupId))
+          .limit(1);
+
+        res.status(201).json(group[0]);
+      } catch (error) {
+        console.error("Error creating recurring group:", error);
+        res.status(500).json({ message: "Failed to create recurring group" });
+      }
+    },
+  );
+
+  // Update recurring group
+  app.patch(
+    "/api/admin/plaid/recurring-groups/:groupId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { groupId } = req.params;
+        const { label, recurrence, financeType, isActive } = req.body;
+
+        const updates: any = { updatedAt: new Date() };
+        if (label !== undefined) updates.label = label;
+        if (recurrence !== undefined) updates.recurrence = recurrence;
+        if (financeType !== undefined) updates.financeType = financeType;
+        if (isActive !== undefined) updates.isActive = isActive;
+
+        await db
+          .update(plaidRecurringGroups)
+          .set(updates)
+          .where(
+            and(
+              eq(plaidRecurringGroups.groupId, groupId),
+              eq(plaidRecurringGroups.adminUserId, userId!),
+            ),
+          );
+
+        const group = await db
+          .select()
+          .from(plaidRecurringGroups)
+          .where(eq(plaidRecurringGroups.groupId, groupId))
+          .limit(1);
+
+        res.json(group[0]);
+      } catch (error) {
+        console.error("Error updating recurring group:", error);
+        res.status(500).json({ message: "Failed to update recurring group" });
+      }
+    },
+  );
+
+  // Add/remove transactions from a group
+  app.post(
+    "/api/admin/plaid/recurring-groups/:groupId/transactions",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { groupId } = req.params;
+        const { transactionIds, action } = req.body;
+
+        if (!transactionIds || !Array.isArray(transactionIds)) {
+          return res.status(400).json({ message: "transactionIds array is required" });
+        }
+
+        if (action === "remove") {
+          for (const txnId of transactionIds) {
+            await db
+              .update(plaidTransactions)
+              .set({ recurringGroupId: null, updatedAt: new Date() })
+              .where(eq(plaidTransactions.transactionId, txnId));
+          }
+        } else {
+          for (const txnId of transactionIds) {
+            await db
+              .update(plaidTransactions)
+              .set({ recurringGroupId: groupId, updatedAt: new Date() })
+              .where(eq(plaidTransactions.transactionId, txnId));
+          }
+        }
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error("Error updating group transactions:", error);
+        res.status(500).json({ message: "Failed to update group transactions" });
+      }
+    },
+  );
+
+  // Detect recurring patterns in Plaid transactions
+  app.get(
+    "/api/admin/plaid/detect-recurring",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+
+        const items = await db
+          .select()
+          .from(plaidItems)
+          .where(eq(plaidItems.adminUserId, userId!));
+
+        const itemIds = items.map((i) => i.itemId);
+
+        if (itemIds.length === 0) {
+          return res.json({ suggestions: [] });
+        }
+
+        // Get all transactions from last 90 days for pattern detection
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 90);
+
+        const transactions = await db
+          .select()
+          .from(plaidTransactions)
+          .where(
+            and(
+              gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+              inArray(plaidTransactions.itemId, itemIds),
+            ),
+          )
+          .orderBy(desc(plaidTransactions.date));
+
+        // Group by merchant and amount for pattern detection
+        const patternMap = new Map<string, { dates: string[]; amount: number; name: string; merchantName: string | null }>();
+
+        for (const txn of transactions) {
+          const key = `${txn.merchantName || txn.name}_${Math.abs(txn.amountCents)}`;
+          const existing = patternMap.get(key);
+          if (existing) {
+            existing.dates.push(txn.date);
+          } else {
+            patternMap.set(key, {
+              dates: [txn.date],
+              amount: txn.amountCents,
+              name: txn.name,
+              merchantName: txn.merchantName,
+            });
+          }
+        }
+
+        // Analyze patterns
+        const suggestions: Array<{
+          merchantName: string;
+          name: string;
+          amountCents: number;
+          occurrences: number;
+          detectedRecurrence: string;
+          confidence: "low" | "medium" | "high";
+          avgDaysBetween: number;
+        }> = [];
+
+        for (const [key, data] of patternMap) {
+          if (data.dates.length < 2) continue;
+
+          // Calculate average days between occurrences
+          const sortedDates = data.dates
+            .map((d) => new Date(d).getTime())
+            .sort((a, b) => a - b);
+          
+          let totalDays = 0;
+          for (let i = 1; i < sortedDates.length; i++) {
+            totalDays += (sortedDates[i] - sortedDates[i - 1]) / (1000 * 60 * 60 * 24);
+          }
+          const avgDays = totalDays / (sortedDates.length - 1);
+
+          let detectedRecurrence = "one_time";
+          let confidence: "low" | "medium" | "high" = "low";
+
+          if (avgDays >= 5 && avgDays <= 9) {
+            detectedRecurrence = "weekly";
+            confidence = avgDays >= 6 && avgDays <= 8 ? "high" : "medium";
+          } else if (avgDays >= 12 && avgDays <= 16) {
+            detectedRecurrence = "biweekly";
+            confidence = avgDays >= 13 && avgDays <= 15 ? "high" : "medium";
+          } else if (avgDays >= 27 && avgDays <= 33) {
+            detectedRecurrence = "monthly";
+            confidence = avgDays >= 29 && avgDays <= 31 ? "high" : "medium";
+          } else if (avgDays >= 350 && avgDays <= 380) {
+            detectedRecurrence = "yearly";
+            confidence = avgDays >= 360 && avgDays <= 370 ? "high" : "medium";
+          }
+
+          if (detectedRecurrence !== "one_time" && data.dates.length >= 2) {
+            suggestions.push({
+              merchantName: data.merchantName || data.name,
+              name: data.name,
+              amountCents: data.amount,
+              occurrences: data.dates.length,
+              detectedRecurrence,
+              confidence,
+              avgDaysBetween: Math.round(avgDays),
+            });
+          }
+        }
+
+        // Sort by confidence and occurrences
+        suggestions.sort((a, b) => {
+          const confOrder = { high: 0, medium: 1, low: 2 };
+          if (confOrder[a.confidence] !== confOrder[b.confidence]) {
+            return confOrder[a.confidence] - confOrder[b.confidence];
+          }
+          return b.occurrences - a.occurrences;
+        });
+
+        res.json({ suggestions: suggestions.slice(0, 20) });
+      } catch (error) {
+        console.error("Error detecting recurring patterns:", error);
+        res.status(500).json({ message: "Failed to detect recurring patterns" });
+      }
+    },
+  );
+
+  // ============================================
+  // FINANCE ENTRY EDITING
+  // ============================================
+
+  // Update finance entry
+  app.patch(
+    "/api/admin/finance-entries/:entryId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { entryId } = req.params;
+        const { title, amountCents, date, recurrence, categoryGroup, notes, clientId } = req.body;
+
+        // Verify ownership
+        const existing = await db
+          .select()
+          .from(financeEntries)
+          .where(
+            and(
+              eq(financeEntries.entryId, entryId),
+              eq(financeEntries.adminUserId, userId!),
+            ),
+          )
+          .limit(1);
+
+        if (existing.length === 0) {
+          return res.status(404).json({ message: "Entry not found" });
+        }
+
+        const updates: any = { updatedAt: new Date() };
+        if (title !== undefined) updates.title = title;
+        if (amountCents !== undefined) updates.amountCents = amountCents;
+        if (date !== undefined) updates.date = date;
+        if (recurrence !== undefined) updates.recurrence = recurrence;
+        if (categoryGroup !== undefined) updates.categoryGroup = categoryGroup;
+        if (notes !== undefined) updates.notes = notes;
+        if (clientId !== undefined) updates.clientId = clientId;
+
+        await db
+          .update(financeEntries)
+          .set(updates)
+          .where(eq(financeEntries.entryId, entryId));
+
+        const entry = await db
+          .select()
+          .from(financeEntries)
+          .where(eq(financeEntries.entryId, entryId))
+          .limit(1);
+
+        res.json(entry[0]);
+      } catch (error) {
+        console.error("Error updating finance entry:", error);
+        res.status(500).json({ message: "Failed to update finance entry" });
       }
     },
   );
