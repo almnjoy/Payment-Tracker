@@ -1687,6 +1687,7 @@ export async function registerRoutes(
             subtype: plaidAccounts.subtype,
             currentBalanceCents: plaidAccounts.currentBalanceCents,
             availableBalanceCents: plaidAccounts.availableBalanceCents,
+            defaultFinanceType: plaidAccounts.defaultFinanceType,
           })
           .from(plaidAccounts)
           .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
@@ -1758,11 +1759,13 @@ export async function registerRoutes(
           .where(and(...conditions))
           .orderBy(desc(plaidTransactions.date));
 
+        const accountDefault = account[0].defaultFinanceType;
         res.json({
           account: {
             ...account[0],
             institution_name: item[0]?.institutionName,
             last_sync_at: cursor[0]?.lastSyncAt,
+            default_finance_type: accountDefault,
           },
           transactions: transactions.map((t) => ({
             transaction_id: t.transactionId,
@@ -1772,6 +1775,8 @@ export async function registerRoutes(
             amount_cents: t.amountCents,
             pending: t.pending,
             category_primary: t.categoryPrimary,
+            override_finance_type: t.overrideFinanceType,
+            effective_finance_type: t.overrideFinanceType || accountDefault || null,
           })),
         });
       } catch (error) {
@@ -1831,6 +1836,7 @@ export async function registerRoutes(
             currentBalanceCents: plaidAccounts.currentBalanceCents,
             availableBalanceCents: plaidAccounts.availableBalanceCents,
             institutionName: plaidItems.institutionName,
+            defaultFinanceType: plaidAccounts.defaultFinanceType,
           })
           .from(plaidAccounts)
           .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
@@ -1870,6 +1876,11 @@ export async function registerRoutes(
           .orderBy(desc(plaidTransactions.date))
           .limit(500);
 
+        // Build a map of account defaults for transaction effective type calculation
+        const accountDefaultMap = new Map(
+          accounts.map(a => [a.plaidAccountId, a.defaultFinanceType])
+        );
+
         res.json({
           accounts: accounts.map((a) => ({
             account_id: a.accountId,
@@ -1881,6 +1892,7 @@ export async function registerRoutes(
             current_balance_cents: a.currentBalanceCents,
             available_balance_cents: a.availableBalanceCents,
             institution_name: a.institutionName,
+            default_finance_type: a.defaultFinanceType,
           })),
           transactions: transactions.map((t) => ({
             transaction_id: t.transactionId,
@@ -1891,11 +1903,123 @@ export async function registerRoutes(
             amount_cents: t.amountCents,
             pending: t.pending,
             category_primary: t.categoryPrimary,
+            override_finance_type: t.overrideFinanceType,
+            effective_finance_type: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
           })),
         });
       } catch (error) {
         console.error("Error fetching bulk account transactions:", error);
         res.status(500).json({ message: "Failed to fetch transactions" });
+      }
+    },
+  );
+
+  // G3) Update account default finance type
+  const updateAccountTypeSchema = z.object({
+    defaultFinanceType: z.enum(["income", "bill", "debt", "holding", "other"]).nullable(),
+  });
+
+  app.patch(
+    "/api/admin/plaid/accounts/:accountId/default-type",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { accountId } = req.params;
+        const parseResult = updateAccountTypeSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          return res.status(400).json({ 
+            message: "Validation error", 
+            errors: parseResult.error.flatten().fieldErrors 
+          });
+        }
+
+        const { defaultFinanceType } = parseResult.data;
+        const userId = getUserId(req);
+
+        // Verify admin owns this account
+        const account = await db
+          .select({ accountId: plaidAccounts.accountId })
+          .from(plaidAccounts)
+          .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+          .where(
+            and(
+              eq(plaidAccounts.accountId, accountId),
+              eq(plaidItems.adminUserId, userId!),
+            ),
+          );
+
+        if (account.length === 0) {
+          return res.status(404).json({ message: "Account not found" });
+        }
+
+        await db
+          .update(plaidAccounts)
+          .set({ 
+            defaultFinanceType, 
+            updatedAt: new Date() 
+          })
+          .where(eq(plaidAccounts.accountId, accountId));
+
+        res.json({ success: true, defaultFinanceType });
+      } catch (error) {
+        console.error("Error updating account default type:", error);
+        res.status(500).json({ message: "Failed to update account" });
+      }
+    },
+  );
+
+  // G4) Update transaction override finance type
+  const updateTransactionTypeSchema = z.object({
+    overrideFinanceType: z.enum(["income", "bill", "debt", "holding", "other"]).nullable(),
+  });
+
+  app.patch(
+    "/api/admin/plaid/transactions/:transactionId/type",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { transactionId } = req.params;
+        const parseResult = updateTransactionTypeSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          return res.status(400).json({ 
+            message: "Validation error", 
+            errors: parseResult.error.flatten().fieldErrors 
+          });
+        }
+
+        const { overrideFinanceType } = parseResult.data;
+        const userId = getUserId(req);
+
+        // Verify admin owns this transaction
+        const transaction = await db
+          .select({ transactionId: plaidTransactions.transactionId })
+          .from(plaidTransactions)
+          .innerJoin(plaidItems, eq(plaidTransactions.itemId, plaidItems.itemId))
+          .where(
+            and(
+              eq(plaidTransactions.transactionId, transactionId),
+              eq(plaidItems.adminUserId, userId!),
+            ),
+          );
+
+        if (transaction.length === 0) {
+          return res.status(404).json({ message: "Transaction not found" });
+        }
+
+        await db
+          .update(plaidTransactions)
+          .set({ 
+            overrideFinanceType, 
+            updatedAt: new Date() 
+          })
+          .where(eq(plaidTransactions.transactionId, transactionId));
+
+        res.json({ success: true, overrideFinanceType });
+      } catch (error) {
+        console.error("Error updating transaction type:", error);
+        res.status(500).json({ message: "Failed to update transaction" });
       }
     },
   );
@@ -2271,6 +2395,10 @@ export async function registerRoutes(
             name: plaidAccounts.name,
             mask: plaidAccounts.mask,
             type: plaidAccounts.type,
+            subtype: plaidAccounts.subtype,
+            currentBalanceCents: plaidAccounts.currentBalanceCents,
+            availableBalanceCents: plaidAccounts.availableBalanceCents,
+            defaultFinanceType: plaidAccounts.defaultFinanceType,
             institutionName: plaidItems.institutionName,
           })
           .from(plaidAccounts)

@@ -438,6 +438,10 @@ export interface PlaidAccountOption {
   name: string;
   mask: string | null;
   type: string | null;
+  subtype: string | null;
+  currentBalanceCents: number | null;
+  availableBalanceCents: number | null;
+  defaultFinanceType: string | null;
   institutionName: string | null;
 }
 
@@ -573,6 +577,8 @@ export function useAdminPlaidAllAccounts() {
   });
 }
 
+export type FinanceType = "income" | "bill" | "debt" | "holding" | "other" | null;
+
 export interface BulkTransactionsResponse {
   accounts: {
     account_id: string;
@@ -584,6 +590,7 @@ export interface BulkTransactionsResponse {
     current_balance_cents: number | null;
     available_balance_cents: number | null;
     institution_name: string | null;
+    default_finance_type: FinanceType;
   }[];
   transactions: {
     transaction_id: string;
@@ -594,6 +601,8 @@ export interface BulkTransactionsResponse {
     amount_cents: number;
     pending: boolean;
     category_primary: string | null;
+    override_finance_type: FinanceType;
+    effective_finance_type: FinanceType;
   }[];
 }
 
@@ -613,6 +622,32 @@ export function useAdminPlaidBulkTransactions(
       }),
     }),
     enabled: plaidAccountIds.length > 0,
+  });
+}
+
+export function useUpdateAccountDefaultType() {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; defaultFinanceType: FinanceType }, Error, { accountId: string; defaultFinanceType: FinanceType }>({
+    mutationFn: ({ accountId, defaultFinanceType }) => fetchApi(`/api/admin/plaid/accounts/${accountId}/default-type`, {
+      method: "PATCH",
+      body: JSON.stringify({ defaultFinanceType }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useUpdateTransactionType() {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; overrideFinanceType: FinanceType }, Error, { transactionId: string; overrideFinanceType: FinanceType }>({
+    mutationFn: ({ transactionId, overrideFinanceType }) => fetchApi(`/api/admin/plaid/transactions/${transactionId}/type`, {
+      method: "PATCH",
+      body: JSON.stringify({ overrideFinanceType }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
   });
 }
 
