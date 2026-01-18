@@ -220,8 +220,10 @@ export function useToggleActiveAgreement() {
   const queryClient = useQueryClient();
   return useMutation<Document, Error, { documentId: string; isActive: boolean }>({
     mutationFn: async ({ documentId, isActive }) => {
-      const response = await apiRequest("PATCH", `/api/admin/documents/${documentId}/active-agreement`, { isActive });
-      return response.json();
+      return fetchApi<Document>(`/api/admin/documents/${documentId}/active-agreement`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive }),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "clients"] });

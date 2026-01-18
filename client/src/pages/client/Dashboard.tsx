@@ -2,7 +2,9 @@ import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, Calendar, FileText, ArrowRight, Loader2, Receipt, Eye, ArrowLeft } from "lucide-react";
+import { DollarSign, Calendar, FileText, ArrowRight, Loader2, Receipt, Eye, ArrowLeft, CheckCircle, Download } from "lucide-react";
+import { PDFViewerModal } from "@/components/PDFViewerModal";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { useClientDashboard, useClientFinanceEntries, formatCents, formatDate } from "@/lib/api";
 import { useLocation } from "wouter";
@@ -12,6 +14,7 @@ export default function ClientDashboard() {
   const searchParams = new URLSearchParams(window.location.search);
   const asClientId = searchParams.get("asClientId") || undefined;
   const isImpersonating = !!asClientId;
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
   
   const { data, isLoading, error } = useClientDashboard(asClientId);
   const { data: financeEntries } = useClientFinanceEntries(asClientId);
@@ -36,7 +39,7 @@ export default function ClientDashboard() {
     );
   }
 
-  const { amountDueCents, nextDueDate, lastPayment, activeLease, client } = data;
+  const { amountDueCents, nextDueDate, lastPayment, activeLease, activeAgreement, client } = data;
 
   return (
     <Layout role="client">
@@ -107,20 +110,59 @@ export default function ClientDashboard() {
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="md:col-span-2">
-             <Card className="shadow-sm hover:shadow-md transition-shadow bg-gradient-to-br from-blue-50 to-white border-blue-100">
+             <Card className={`shadow-sm hover:shadow-md transition-shadow ${activeAgreement ? 'bg-gradient-to-br from-green-50 to-white border-green-200' : 'bg-gradient-to-br from-blue-50 to-white border-blue-100'}`}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-blue-700">
+                <CardTitle className={`text-sm font-medium ${activeAgreement ? 'text-green-700' : 'text-blue-700'}`}>
                   Active Agreement
                 </CardTitle>
-                <FileText className="h-4 w-4 text-blue-500" />
+                {activeAgreement ? (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                ) : (
+                  <FileText className="h-4 w-4 text-blue-500" />
+                )}
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold text-gray-900" data-testid="text-active-lease">
-                  {activeLease ? activeLease.description || `Lease ${activeLease.leaseId}` : 'No active lease'}
-                </div>
-                {activeLease && (
-                  <div className="flex items-center mt-2 text-sm text-blue-600 font-medium cursor-pointer hover:underline">
-                    Monthly: {formatCents(activeLease.rentAmountCents)} <ArrowRight className="h-3 w-3 ml-1" />
+                {activeAgreement ? (
+                  <>
+                    <div className="text-xl font-bold text-gray-900" data-testid="text-active-agreement">
+                      {activeAgreement.title}
+                    </div>
+                    <div className="flex items-center gap-2 mt-3">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="border-green-300 text-green-700 hover:bg-green-100"
+                        onClick={() => setPdfModalOpen(true)}
+                        data-testid="button-view-agreement"
+                      >
+                        <Eye className="h-4 w-4 mr-2" /> View
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="border-green-300 text-green-700 hover:bg-green-100"
+                        onClick={() => {
+                          const params = asClientId ? `?asClientId=${asClientId}` : '';
+                          window.open(`/api/client/documents/${activeAgreement.documentId}/download${params}`, '_blank');
+                        }}
+                        data-testid="button-download-agreement"
+                      >
+                        <Download className="h-4 w-4 mr-2" /> Download
+                      </Button>
+                    </div>
+                  </>
+                ) : activeLease ? (
+                  <>
+                    <div className="text-xl font-bold text-gray-900" data-testid="text-active-lease">
+                      {activeLease.description || `Lease ${activeLease.leaseId}`}
+                    </div>
+                    <div className="flex items-center mt-2 text-sm text-blue-600 font-medium cursor-pointer hover:underline">
+                      Monthly: {formatCents(activeLease.rentAmountCents)} <ArrowRight className="h-3 w-3 ml-1" />
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xl font-bold text-gray-900" data-testid="text-active-lease">
+                    No active agreement
                   </div>
                 )}
               </CardContent>

@@ -1585,6 +1585,7 @@ export async function registerRoutes(
         );
         const lastPayment = payments.length > 0 ? payments[0] : null;
         const activeLease = leases.find((l) => l.status === "active");
+        const activeAgreement = documents.find((d: any) => d.isActiveAgreement === true);
 
         res.json({
           client,
@@ -1592,6 +1593,7 @@ export async function registerRoutes(
           nextDueDate: openInvoices.length > 0 ? openInvoices[0].dueDate : null,
           lastPayment,
           activeLease,
+          activeAgreement,
           recentDocuments: documents.slice(0, 5),
           openInvoicesCount: openInvoices.length,
         });
