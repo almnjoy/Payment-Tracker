@@ -2116,7 +2116,8 @@ export async function registerRoutes(
           accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
         });
 
-        // Get transactions in date range
+        // Get transactions in date range (start <= date <= today)
+        const endDate = new Date().toISOString().split("T")[0];
         const transactions = await db
           .select()
           .from(plaidTransactions)
@@ -2126,6 +2127,7 @@ export async function registerRoutes(
                 plaidTransactions.date,
                 startDate.toISOString().split("T")[0],
               ),
+              lte(plaidTransactions.date, endDate),
               inArray(plaidTransactions.itemId, itemIds),
             ),
           );
@@ -2240,7 +2242,8 @@ export async function registerRoutes(
           });
         });
 
-        // Get transactions in date range
+        // Get transactions in date range (start <= date <= today)
+        const endDate = new Date().toISOString().split("T")[0];
         const transactions = await db
           .select()
           .from(plaidTransactions)
@@ -2250,6 +2253,7 @@ export async function registerRoutes(
                 plaidTransactions.date,
                 startDate.toISOString().split("T")[0],
               ),
+              lte(plaidTransactions.date, endDate),
               inArray(plaidTransactions.itemId, itemIds),
             ),
           )
