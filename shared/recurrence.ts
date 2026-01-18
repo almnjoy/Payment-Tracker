@@ -1,19 +1,13 @@
 export type RecurrenceType = "one_time" | "weekly" | "biweekly" | "monthly" | "yearly";
 export type TimePeriod = "weekly" | "biweekly" | "monthly" | "yearly";
 
-const WEEKS_PER_PERIOD: Record<TimePeriod, number> = {
-  weekly: 1,
-  biweekly: 2,
-  monthly: 4.33,
-  yearly: 52,
-};
-
-const RECURRENCE_WEEKS: Record<RecurrenceType, number> = {
-  one_time: 0,
-  weekly: 1,
-  biweekly: 2,
-  monthly: 4.33,
-  yearly: 52,
+// Exact deterministic multipliers - no averaging or approximation
+const MULTIPLIER_TABLE: Record<RecurrenceType, Record<TimePeriod, number>> = {
+  one_time: { weekly: 1, biweekly: 1, monthly: 1, yearly: 1 },
+  weekly: { weekly: 1, biweekly: 2, monthly: 4, yearly: 52 },
+  biweekly: { weekly: 0.5, biweekly: 1, monthly: 2, yearly: 26 },
+  monthly: { weekly: 0.25, biweekly: 0.5, monthly: 1, yearly: 12 },
+  yearly: { weekly: 1/52, biweekly: 1/26, monthly: 1/12, yearly: 1 },
 };
 
 export function getRecurrenceMultiplier(
@@ -24,10 +18,7 @@ export function getRecurrenceMultiplier(
     return 1;
   }
   
-  const entryWeeks = RECURRENCE_WEEKS[entryRecurrence];
-  const periodWeeks = WEEKS_PER_PERIOD[selectedPeriod];
-  
-  return periodWeeks / entryWeeks;
+  return MULTIPLIER_TABLE[entryRecurrence]?.[selectedPeriod] ?? 1;
 }
 
 export function getMultiplierLabel(
@@ -44,26 +35,24 @@ export function getMultiplierLabel(
     return null;
   }
   
-  const recurrenceLabels: Record<RecurrenceType, string> = {
-    one_time: "One-time",
-    weekly: "Weekly",
-    biweekly: "Bi-Weekly",
-    monthly: "Monthly",
-    yearly: "Yearly",
-  };
-  
   const periodLabels: Record<TimePeriod, string> = {
     weekly: "weekly",
-    biweekly: "bi-weekly",
+    biweekly: "biweekly",
     monthly: "monthly",
     yearly: "yearly",
   };
   
-  const formattedMultiplier = multiplier < 1 
-    ? multiplier.toFixed(2).replace(/\.?0+$/, '')
-    : multiplier.toFixed(1).replace(/\.0$/, '');
+  // Format multiplier: round to 2 decimals only at display time
+  let formattedMultiplier: string;
+  if (multiplier < 1) {
+    formattedMultiplier = multiplier.toFixed(2).replace(/\.?0+$/, '');
+  } else if (Number.isInteger(multiplier)) {
+    formattedMultiplier = multiplier.toString();
+  } else {
+    formattedMultiplier = multiplier.toFixed(2).replace(/\.?0+$/, '');
+  }
   
-  return `${recurrenceLabels[entryRecurrence]} entry counted as ${formattedMultiplier}x for ${periodLabels[selectedPeriod]} total`;
+  return `${formattedMultiplier}x for ${periodLabels[selectedPeriod]}`;
 }
 
 export function isOneTimeInRange(

@@ -2301,6 +2301,7 @@ export async function registerRoutes(
               amount_cents: t.amountCents,
               pending: t.pending,
               effective_type: t.effectiveType,
+              override_recurrence: t.overrideRecurrence || null,
             };
           });
 

@@ -65,21 +65,15 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType | "one_time"; label: string }[
 function getRecurrenceMultiplier(entryRecurrence: string | null, selectedPeriod: TimePeriod): number {
   if (!entryRecurrence || entryRecurrence === "one_time") return 1;
   
-  const weeksPerPeriod: Record<TimePeriod, number> = {
-    weekly: 1,
-    biweekly: 2,
-    monthly: 4.33,
-    yearly: 52,
+  // Exact deterministic multipliers - no averaging
+  const multiplierTable: Record<string, Record<TimePeriod, number>> = {
+    weekly: { weekly: 1, biweekly: 2, monthly: 4, yearly: 52 },
+    biweekly: { weekly: 0.5, biweekly: 1, monthly: 2, yearly: 26 },
+    monthly: { weekly: 0.25, biweekly: 0.5, monthly: 1, yearly: 12 },
+    yearly: { weekly: 1/52, biweekly: 1/26, monthly: 1/12, yearly: 1 },
   };
   
-  const recurrenceWeeks: Record<string, number> = {
-    weekly: 1,
-    biweekly: 2,
-    monthly: 4.33,
-    yearly: 52,
-  };
-  
-  return weeksPerPeriod[selectedPeriod] / (recurrenceWeeks[entryRecurrence] || 1);
+  return multiplierTable[entryRecurrence]?.[selectedPeriod] ?? 1;
 }
 
 function getMultiplierLabel(entryRecurrence: string | null, selectedPeriod: TimePeriod): string | null {
@@ -88,18 +82,31 @@ function getMultiplierLabel(entryRecurrence: string | null, selectedPeriod: Time
   const multiplier = getRecurrenceMultiplier(entryRecurrence, selectedPeriod);
   if (multiplier === 1) return null;
   
-  const formatted = multiplier < 1 
-    ? multiplier.toFixed(2).replace(/\.?0+$/, '')
-    : multiplier.toFixed(1).replace(/\.0$/, '');
+  // Format multiplier: show fractions nicely, round to 2 decimals at display only
+  let formatted: string;
+  if (multiplier < 1) {
+    formatted = multiplier.toFixed(2).replace(/\.?0+$/, '');
+  } else if (Number.isInteger(multiplier)) {
+    formatted = multiplier.toString();
+  } else {
+    formatted = multiplier.toFixed(2).replace(/\.?0+$/, '');
+  }
     
   const recLabels: Record<string, string> = {
     weekly: "Weekly",
-    biweekly: "Bi-Weekly",
+    biweekly: "Bi-weekly",
     monthly: "Monthly",
     yearly: "Yearly",
   };
   
-  return `${recLabels[entryRecurrence] || entryRecurrence} entry counted as ${formatted}x for ${selectedPeriod} total`;
+  const periodLabels: Record<TimePeriod, string> = {
+    weekly: "weekly",
+    biweekly: "biweekly",
+    monthly: "monthly",
+    yearly: "yearly",
+  };
+  
+  return `${formatted}x for ${periodLabels[selectedPeriod]}`;
 }
 
 export default function FinanceTracker() {
@@ -254,19 +261,25 @@ export default function FinanceTracker() {
     return client?.displayName || "Unknown Client";
   };
 
-  const getPlaidTotalForTab = () => {
-    if (!financeTotals.data) return 0;
-    switch (activeTab) {
-      case "income": return financeTotals.data.income;
-      case "bills": return financeTotals.data.bills;
-      case "debts": return financeTotals.data.debts;
-      case "holdings": return financeTotals.data.holdings;
-      case "other": return financeTotals.data.other;
-      default: return 0;
-    }
-  };
-
-  const plaidTotal = getPlaidTotalForTab();
+  // Calculate Plaid total from typed transactions with proper recurrence multipliers
+  // One-time transactions only count once (no scaling), recurring transactions get multiplied
+  const plaidTotal = useMemo(() => {
+    if (!typedTransactions.data?.transactions) return 0;
+    
+    return typedTransactions.data.transactions.reduce((sum, tx) => {
+      const txRecurrence = tx.override_recurrence || null;
+      const baseAmount = Math.abs(tx.amount_cents);
+      
+      // For one-time transactions, include them as-is (no scaling)
+      if (!txRecurrence || txRecurrence === "one_time") {
+        return sum + baseAmount;
+      }
+      
+      // For recurring transactions, apply the multiplier
+      const multiplier = getRecurrenceMultiplier(txRecurrence, selectedPeriod);
+      return sum + Math.round(baseAmount * multiplier);
+    }, 0);
+  }, [typedTransactions.data?.transactions, selectedPeriod]);
 
   // Group accounts by institution for the institutions modal
   const accountsByInstitution = useMemo(() => {
@@ -439,13 +452,29 @@ export default function FinanceTracker() {
         </div>
 
         <Tabs defaultValue="income" onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="bg-white border border-gray-200 p-1 rounded-xl h-auto shadow-sm">
-            <TabsTrigger value="income" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-income">Income</TabsTrigger>
-            <TabsTrigger value="bills" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-bills">Bills</TabsTrigger>
-            <TabsTrigger value="debts" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-debts">Debts</TabsTrigger>
-            <TabsTrigger value="holdings" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-holdings">Holdings</TabsTrigger>
-            <TabsTrigger value="other" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-other">Other</TabsTrigger>
-          </TabsList>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <TabsList className="bg-white border border-gray-200 p-1 rounded-xl h-auto shadow-sm">
+              <TabsTrigger value="income" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-income">Income</TabsTrigger>
+              <TabsTrigger value="bills" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-bills">Bills</TabsTrigger>
+              <TabsTrigger value="debts" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-debts">Debts</TabsTrigger>
+              <TabsTrigger value="holdings" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-holdings">Holdings</TabsTrigger>
+              <TabsTrigger value="other" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-other">Other</TabsTrigger>
+            </TabsList>
+            
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5 shadow-sm">
+              <span className="text-sm text-gray-600 font-medium">View:</span>
+              <Select value={selectedPeriod} onValueChange={(v) => setSelectedPeriod(v as TimePeriod)}>
+                <SelectTrigger className="w-[120px] h-8 border-0 shadow-none focus:ring-0" data-testid="select-period-global">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERIOD_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           
           {activeTab === "income" && monthlyBillingTotal > 0 && (
             <Card className="shadow-sm border-gray-200 border-l-4 border-l-green-500">
@@ -602,31 +631,74 @@ export default function FinanceTracker() {
                     <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                   </div>
                 ) : typedTransactions.data && typedTransactions.data.transactions.length > 0 ? (
-                  <ScrollArea className="h-[300px]">
+                  <ScrollArea className="h-[400px]">
                     <div className="space-y-2">
-                      {typedTransactions.data.transactions.map((tx) => (
-                        <div 
-                          key={tx.transaction_id} 
-                          className="flex items-center justify-between p-3 bg-blue-50/50 rounded-lg border border-blue-100"
-                          data-testid={`plaid-entry-${tx.transaction_id}`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-medium text-gray-900 truncate">{tx.merchant_name || tx.name}</h4>
-                              {tx.pending && (
-                                <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">Pending</span>
-                              )}
+                      {typedTransactions.data.transactions.map((tx) => {
+                        const txRecurrence = tx.override_recurrence || null;
+                        const multiplier = getRecurrenceMultiplier(txRecurrence, selectedPeriod);
+                        const multiplierLabel = getMultiplierLabel(txRecurrence, selectedPeriod);
+                        const baseAmount = Math.abs(tx.amount_cents);
+                        const effectiveAmount = Math.round(baseAmount * multiplier);
+                        const isOneTime = !txRecurrence || txRecurrence === "one_time";
+                        
+                        return (
+                          <div 
+                            key={tx.transaction_id} 
+                            className="flex items-center justify-between p-3 bg-blue-50/50 rounded-lg border border-blue-100"
+                            data-testid={`plaid-entry-${tx.transaction_id}`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-medium text-gray-900 truncate">{tx.merchant_name || tx.name}</h4>
+                                {tx.pending && (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">Pending</span>
+                                )}
+                                {!isOneTime && (
+                                  <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                                    {RECURRENCE_OPTIONS.find(r => r.value === txRecurrence)?.label || txRecurrence}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <p className="text-sm text-gray-500 truncate">
+                                  {formatDate(tx.date)} • {tx.account_name}
+                                </p>
+                                {multiplierLabel && (
+                                  <span className="text-xs text-purple-600 font-medium">{multiplierLabel}</span>
+                                )}
+                              </div>
                             </div>
-                            <p className="text-sm text-gray-500 truncate">
-                              {formatDate(tx.date)} • {tx.account_name}
-                              {tx.institution_name && ` • ${tx.institution_name}`}
-                            </p>
+                            <div className="flex items-center gap-3">
+                              <Select 
+                                value={txRecurrence || "one_time"} 
+                                onValueChange={(v) => {
+                                  updateTransactionRecurrence.mutate({
+                                    transactionId: tx.transaction_id,
+                                    recurrence: v === "one_time" ? null : v as RecurrenceType
+                                  });
+                                }}
+                              >
+                                <SelectTrigger className="w-[100px] h-8 text-xs" data-testid={`select-frequency-${tx.transaction_id}`}>
+                                  <SelectValue placeholder="Freq" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {RECURRENCE_OPTIONS.map((opt) => (
+                                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <div className="text-right min-w-[80px]">
+                                {multiplier !== 1 && (
+                                  <p className="text-xs text-gray-400 line-through">{formatCents(baseAmount)}</p>
+                                )}
+                                <span className={`font-bold text-lg ${tx.amount_cents < 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                                  {formatCents(effectiveAmount)}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          <span className={`font-bold text-lg ${tx.amount_cents < 0 ? 'text-green-600' : 'text-gray-900'}`}>
-                            {formatCents(Math.abs(tx.amount_cents))}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </ScrollArea>
                 ) : (
@@ -649,16 +721,6 @@ export default function FinanceTracker() {
                 </CardTitle>
               </div>
               <div className="flex items-center gap-3">
-                <Select value={selectedPeriod} onValueChange={(v) => setSelectedPeriod(v as TimePeriod)}>
-                  <SelectTrigger className="w-[140px] h-9" data-testid="select-period">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PERIOD_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
                 <Button 
                   variant="outline" 
                   size="sm"

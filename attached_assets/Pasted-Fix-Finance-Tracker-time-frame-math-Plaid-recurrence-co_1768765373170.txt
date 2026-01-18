@@ -1,0 +1,62 @@
+Fix Finance Tracker time-frame math + Plaid recurrence controls + move the time selector.
+
+CURRENT BUG (must fix):
+- Time frame = Bi-weekly
+- Manual entry with recurrence = monthly and base amount = $500 shows computed amount = $230.95.
+- The UI label says “0.5x for biweekly” but 0.5 * 500 should be $250.00, not $230.95.
+=> The scaling formula is wrong. Remove any day-count or 30.4-day averaging. Use deterministic multipliers.
+
+CORRECT RECURRENCE MULTIPLIERS (use exact factors):
+Let the selected view be: weekly | biweekly | monthly | yearly.
+
+Define conversion as “value per selected view period”.
+
+If entry recurrence is:
+- one-time: include ONLY if entry date is within selected date range; do NOT scale.
+- weekly:
+  - weekly: x1
+  - biweekly: x2
+  - monthly: x4
+  - yearly: x52
+- biweekly:
+  - weekly: x0.5
+  - biweekly: x1
+  - monthly: x2
+  - yearly: x26
+- monthly:
+  - weekly: x0.25
+  - biweekly: x0.5
+  - monthly: x1
+  - yearly: x12
+- yearly:
+  - weekly: x(1/52)
+  - biweekly: x(1/26)
+  - monthly: x(1/12)
+  - yearly: x1
+
+Round to 2 decimals only at display time, not during intermediate calculations.
+
+PLAID ENTRIES RECURRENCE (missing feature):
+- For each Plaid entry row (in the modal and in the Plaid Entries list), add a “Frequency” dropdown:
+  one-time | weekly | biweekly | monthly | yearly
+- Default behavior:
+  - Plaid entries are treated as ONE-TIME unless the user sets a frequency.
+  - If frequency is not set, they should NOT be scaled into biweekly/monthly/yearly totals. They only count if within the date range.
+- Once user sets frequency, apply the same multipliers above.
+
+IMPORTANT:
+- A monthly Plaid charge of $5,850 should NOT automatically count as $5,850 in a biweekly view unless the user explicitly sets it as monthly (then it should be $2,925.00 for biweekly).
+- If user sets it as monthly, show label “0.5x for biweekly” and computed amount should be exactly 5850 * 0.5 = 2925.00.
+
+UI CHANGE (time selector location):
+- Move the global time-frame selector (Weekly / Bi-weekly / Monthly / Yearly) to the top of the page near the tabs (Income/Bills/Debts/Holdings/Other).
+- Remove it from being inline near the Plaid section.
+- Keep the date-range selector (30d/180d etc.) where it already makes sense, but the frequency selector must be global at top.
+
+ACCEPTANCE TESTS:
+1) Manual monthly $500 in Bi-weekly view shows computed $250.00 exactly.
+2) Plaid entries show a frequency dropdown (default one-time or unset).
+3) A Plaid $5,850 entry in Bi-weekly view:
+   - if frequency unset/one-time: show $5,850 as a one-time amount only (no scaling), and only if within date range
+   - if frequency set to monthly: show computed $2,925.00 and label “0.5x for biweekly”.
+4) Time-frame selector is at top of page, not inline in the Plaid section.
