@@ -199,13 +199,17 @@ export const invoiceLineItemSchema = z.object({
 export type InvoiceLineItem = z.infer<typeof invoiceLineItemSchema>;
 
 // ============================================
-// INVOICES (Bills owed)
+// INVOICES (Standalone PDF generator - NOT linked to clients/billing)
 // ============================================
 export const invoices = pgTable("invoices", {
   invoiceId: varchar("invoice_id").primaryKey(),
   invoiceNumber: varchar("invoice_number").notNull(), // e.g., "INV-000001"
-  clientId: varchar("client_id").notNull(),
+  clientId: varchar("client_id"), // Optional - for backwards compatibility only
   leaseId: varchar("lease_id"),
+  // Bill To fields (standalone invoice recipient)
+  billToName: text("bill_to_name"), // Company or person name
+  billToEmail: text("bill_to_email"),
+  billToAddress: text("bill_to_address"),
   title: text("title").notNull(),
   issueDate: date("issue_date").notNull(),
   dueDate: date("due_date").notNull(),

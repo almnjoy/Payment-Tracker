@@ -1,0 +1,72 @@
+Refactor the Invoice Generator feature to be completely standalone and NOT linked to Clients, Documents, or any billing/amount-due logic.
+
+GOAL:
+Invoices is only a PDF generator + saved invoice list. It should not affect or depend on:
+- Clients
+- Client portal
+- Client documents
+- Amount due / finance tracker
+- Payments
+- Active agreements
+
+KEEP:
+- Existing invoice creation UI, fields, line item editor, calculations, and PDF generation behavior.
+- Existing “Invoices” list page layout (table with invoice #, issue date, due date, total, status, actions).
+
+CHANGE (IMPORTANT):
+
+1) Data model: Standalone invoices
+- Update the invoice record so it does NOT require clientId and does not join to clients.
+- In the invoice table/list, replace “Client” column with:
+  - “Bill To” (free text field)
+  - This can be a company/person name typed manually in the invoice editor
+- Invoice record should store:
+  - invoiceNumber
+  - billToName (string)
+  - billToEmail (optional string)
+  - billToAddress (optional string)
+  - issueDate
+  - dueDate
+  - terms (optional)
+  - lineItems (description, qty, rate, discount, amount)
+  - subtotal, tax, total
+  - status (draft/sent/paid optional)
+  - pdfUrl or pdfStorageId (stored file reference) if generated
+- Do NOT store or reference clientId anywhere.
+
+2) Remove automatic linking behavior
+- When an invoice is generated:
+  - It is saved ONLY in the Invoices list.
+  - It does NOT create a Document record.
+  - It does NOT appear in Client Documents.
+  - It does NOT affect Amount Due.
+  - It does NOT create payments or ledger entries.
+
+3) Admin controlled export ONLY
+- Keep actions:
+  - View (preview PDF)
+  - Download PDF
+  - Edit invoice
+- Delete Invoice 
+- If any current code automatically pushes invoice PDFs into documents, remove that.
+
+4) UI adjustments
+- In the invoice creation/edit screen:
+  - Replace any client selector with “Bill To” fields:
+    - Bill To Name (required)
+    - Bill To Email (optional)
+    - Bill To Address (optional)
+  - Everything else stays the same.
+
+5) Backwards compatibility cleanup
+- If existing invoices already have clientId:
+  - Migrate by copying client name/email into billTo fields
+  - Then stop using clientId in UI and logic
+  - Existing records should still render correctly in the invoice list
+
+ACCEPTANCE TESTS:
+- I can create an invoice without selecting a client.
+- The invoice saves and shows up in the invoices list.
+- Download/preview works.
+- No invoice appears anywhere in Documents automatically.
+- No invoice updates client balances, dashboards, or finance tracker totals.

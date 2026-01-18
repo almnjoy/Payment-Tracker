@@ -569,17 +569,16 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Invoice not found" });
         }
         
-        // Generate PDF and create document when status changes to sent/paid
+        // Generate PDF when status changes to sent/paid (standalone, no document record)
         if (wasNotSentOrPaid && isBecomingSentOrPaid) {
           try {
-            // Get client and settings for PDF generation
-            const client = await storage.getClient(invoice.clientId);
+            // Get settings for PDF generation
             const [settings] = await db
               .select()
               .from(invoiceSettings)
               .where(eq(invoiceSettings.adminUserId, userId!));
             
-            // Generate PDF buffer
+            // Generate PDF buffer using billTo fields (not client)
             const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
               const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
               const chunks: Buffer[] = [];
@@ -641,20 +640,22 @@ export async function registerRoutes(
               doc.text(invoice.dueDate, valueX, yPos);
               yPos += 18;
               
-              // Client info
+              // Bill To info (standalone - not linked to client)
               yPos = 180;
-              if (client) {
-                doc.fontSize(10).font('Helvetica-Bold').text(client.displayName || 'Client', margin, yPos);
-                yPos += 16;
-                doc.font('Helvetica');
-                if (client.address) {
-                  doc.text(client.address, margin, yPos);
+              const billToName = invoice.billToName || 'Bill To';
+              doc.fontSize(10).font('Helvetica-Bold').text(billToName, margin, yPos);
+              yPos += 16;
+              doc.font('Helvetica');
+              if (invoice.billToAddress) {
+                const addressLines = invoice.billToAddress.split('\n');
+                addressLines.forEach(line => {
+                  doc.text(line, margin, yPos);
                   yPos += 14;
-                }
-                if (client.email) {
-                  doc.text(client.email, margin, yPos);
-                  yPos += 14;
-                }
+                });
+              }
+              if (invoice.billToEmail) {
+                doc.text(invoice.billToEmail, margin, yPos);
+                yPos += 14;
               }
               
               // Line items table
@@ -715,29 +716,15 @@ export async function registerRoutes(
               doc.end();
             });
             
-            // Upload PDF to object storage
+            // Upload PDF to object storage (no document record - standalone invoice)
             const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
             if (bucketId) {
-              const storageKey = `invoices/${invoice.clientId}/${invoice.invoiceNumber}.pdf`;
+              const storageKey = `invoices/${invoice.invoiceNumber}.pdf`;
               const bucket = objectStorageClient.bucket(bucketId);
               const file = bucket.file(storageKey);
               await file.save(pdfBuffer, { contentType: 'application/pdf' });
               
-              // Create document record
-              await storage.createDocument({
-                clientId: invoice.clientId,
-                invoiceId: invoice.invoiceId,
-                title: `${invoice.invoiceNumber}.pdf`,
-                docType: "invoice",
-                visibility: "client_and_admin",
-                contentType: "application/pdf",
-                fileSizeBytes: pdfBuffer.length,
-                storageBucket: bucketId,
-                storageKey,
-                uploadedByUserId: userId!,
-              });
-              
-              // Update invoice with PDF storage key
+              // Update invoice with PDF storage key (no document record created)
               await storage.updateInvoice(invoiceId, { pdfStorageKey: storageKey });
             }
           } catch (pdfError) {
