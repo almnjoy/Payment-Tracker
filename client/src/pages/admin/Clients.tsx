@@ -22,7 +22,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Search, Plus, Filter, ArrowRight, Loader2 } from "lucide-react";
+import { Search, Plus, Filter, ArrowRight, Loader2, Trash2, MoreHorizontal } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
   useAdminClients,
@@ -36,14 +38,40 @@ export default function AdminClients() {
   const { data: clients, isLoading, refetch } = useAdminClients();
   const createClient = useCreateClient();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState<any>(null);
   const [newClient, setNewClient] = useState({
     displayName: "",
     email: "",
     phone: "",
     address: "",
+  });
+
+  const deleteClientMutation = useMutation({
+    mutationFn: async (clientId: string) => {
+      const response = await fetch(`/api/admin/clients/${clientId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to delete client");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-clients"] });
+      toast({ title: "Client Deleted", description: "The client and all related data has been permanently deleted." });
+      setDeleteConfirmOpen(false);
+      setClientToDelete(null);
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
   });
 
   const handleRowClick = (clientId: string) => {
@@ -266,7 +294,35 @@ export default function AdminClients() {
                       {formatDate(client.lastPaymentAt)}
                     </TableCell>
                     <TableCell>
-                      <ArrowRight size={16} className="text-gray-400" />
+                      <div className="flex items-center gap-1">
+                        <ArrowRight size={16} className="text-gray-400" />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-gray-400 hover:text-gray-600"
+                              data-testid={`button-more-${client.clientId}`}
+                            >
+                              <MoreHorizontal size={16} />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClientToDelete(client);
+                                setDeleteConfirmOpen(true);
+                              }}
+                              className="text-red-600 focus:text-red-600"
+                              data-testid={`menu-delete-${client.clientId}`}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Delete Client
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -281,6 +337,30 @@ export default function AdminClients() {
           )}
         </Card>
       </div>
+
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Client</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{clientToDelete?.displayName}"? This will permanently remove the client and all related data including invoices, payments, documents, and leases. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => clientToDelete && deleteClientMutation.mutate(clientToDelete.clientId)}
+              disabled={deleteClientMutation.isPending}
+              data-testid="button-confirm-delete-client"
+            >
+              {deleteClientMutation.isPending ? "Deleting..." : "Delete Client"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

@@ -72,6 +72,8 @@ export default function AdminInvoices() {
   const [isPdfOpen, setIsPdfOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   const [formData, setFormData] = useState({
     billToName: "",
@@ -123,6 +125,22 @@ export default function AdminInvoices() {
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to update invoice.", variant: "destructive" });
+    },
+  });
+
+  const deleteInvoiceMutation = useMutation({
+    mutationFn: async (invoiceId: string) => {
+      const response = await apiRequest("DELETE", `/api/admin/invoices/${invoiceId}`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/invoices"] });
+      toast({ title: "Invoice Deleted", description: "The invoice has been permanently deleted." });
+      setDeleteConfirmOpen(false);
+      setInvoiceToDelete(null);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete invoice.", variant: "destructive" });
     },
   });
 
@@ -360,6 +378,18 @@ export default function AdminInvoices() {
                             data-testid={`button-download-${invoice.invoiceId}`}
                           >
                             <Download className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setInvoiceToDelete(invoice);
+                              setDeleteConfirmOpen(true);
+                            }}
+                            data-testid={`button-delete-${invoice.invoiceId}`}
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -652,6 +682,30 @@ export default function AdminInvoices() {
               />
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Invoice</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete invoice {invoiceToDelete?.invoiceNumber}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => invoiceToDelete && deleteInvoiceMutation.mutate(invoiceToDelete.invoiceId)}
+              disabled={deleteInvoiceMutation.isPending}
+              data-testid="button-confirm-delete"
+            >
+              {deleteInvoiceMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Layout>

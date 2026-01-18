@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Upload, Search, Loader2, Download, Eye, ChevronDown, ChevronRight, FolderOpen, User, FileArchive, Star, MoreHorizontal } from "lucide-react";
+import { FileText, Upload, Search, Loader2, Download, Eye, ChevronDown, ChevronRight, FolderOpen, User, FileArchive, Star, MoreHorizontal, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAdminDocuments, useAdminClients, useUploadDocument, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +52,8 @@ export default function AdminDocuments() {
   
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
   
   const { data: documents, isLoading, refetch } = useAdminDocuments();
   const { data: clients } = useAdminClients();
@@ -73,6 +75,29 @@ export default function AdminDocuments() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-documents"] });
+    },
+  });
+
+  const deleteDocumentMutation = useMutation({
+    mutationFn: async (documentId: string) => {
+      const response = await fetch(`/api/admin/documents/${documentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to delete document");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-documents"] });
+      toast({ title: "Document Deleted", description: "The document has been permanently deleted." });
+      setDeleteConfirmOpen(false);
+      setDocumentToDelete(null);
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
@@ -315,6 +340,17 @@ export default function AdminDocuments() {
                 Set as Active Agreement
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem 
+              onClick={() => {
+                setDocumentToDelete(doc);
+                setDeleteConfirmOpen(true);
+              }}
+              className="text-red-600 focus:text-red-600"
+              data-testid={`menu-delete-${doc.documentId}`}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Document
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -584,6 +620,30 @@ export default function AdminDocuments() {
           downloadUrl={`/api/admin/documents/${selectedDocument.documentId}/download`}
         />
       )}
+
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Document</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{documentToDelete?.title}"? This will permanently remove the file and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => documentToDelete && deleteDocumentMutation.mutate(documentToDelete.documentId)}
+              disabled={deleteDocumentMutation.isPending}
+              data-testid="button-confirm-delete-doc"
+            >
+              {deleteDocumentMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

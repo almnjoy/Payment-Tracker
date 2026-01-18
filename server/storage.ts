@@ -11,6 +11,7 @@ import {
   externalAccounts,
   paymentSettings,
   automationSettings,
+  clientBillingItems,
   generateClientId,
   generateLeaseId,
   generateInvoiceId,
@@ -50,6 +51,7 @@ export interface IStorage {
   getAllClients(): Promise<Client[]>;
   createClient(data: InsertClient): Promise<Client>;
   updateClient(clientId: string, data: Partial<InsertClient>): Promise<Client | undefined>;
+  deleteClient(clientId: string): Promise<boolean>;
 
   // Leases
   getLease(leaseId: string): Promise<Lease | undefined>;
@@ -68,6 +70,7 @@ export interface IStorage {
   getAllInvoices(): Promise<Invoice[]>;
   createInvoice(data: InsertInvoice): Promise<Invoice>;
   updateInvoice(invoiceId: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  deleteInvoice(invoiceId: string): Promise<boolean>;
 
   // Payments
   getPayment(paymentId: string): Promise<Payment | undefined>;
@@ -156,6 +159,20 @@ export class DatabaseStorage implements IStorage {
       .where(eq(clients.clientId, clientId))
       .returning();
     return client;
+  }
+
+  async deleteClient(clientId: string): Promise<boolean> {
+    // Delete all related data in order (foreign key constraints)
+    await db.delete(clientBillingItems).where(eq(clientBillingItems.clientId, clientId));
+    await db.delete(documents).where(eq(documents.clientId, clientId));
+    await db.delete(payments).where(eq(payments.clientId, clientId));
+    await db.delete(invoices).where(eq(invoices.clientId, clientId));
+    await db.delete(leases).where(eq(leases.clientId, clientId));
+    await db.delete(inviteCodes).where(eq(inviteCodes.clientId, clientId));
+    
+    // Finally delete the client
+    const result = await db.delete(clients).where(eq(clients.clientId, clientId)).returning();
+    return result.length > 0;
   }
 
   // ============================================
@@ -260,6 +277,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(invoices.invoiceId, invoiceId))
       .returning();
     return invoice;
+  }
+
+  async deleteInvoice(invoiceId: string): Promise<boolean> {
+    const result = await db.delete(invoices).where(eq(invoices.invoiceId, invoiceId)).returning();
+    return result.length > 0;
   }
 
   // ============================================

@@ -464,6 +464,61 @@ export async function registerRoutes(
     },
   );
 
+  app.delete(
+    "/api/admin/clients/:clientId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { clientId } = req.params;
+        
+        // Get documents to delete from object storage
+        const docs = await storage.getDocumentsByClient(clientId);
+        
+        // Delete document files from object storage
+        for (const doc of docs) {
+          if (doc.storageBucket && doc.storageKey) {
+            try {
+              const bucket = objectStorageClient.bucket(doc.storageBucket);
+              await bucket.file(doc.storageKey).delete();
+            } catch (err) {
+              console.warn(`Failed to delete file ${doc.storageKey}:`, err);
+            }
+          }
+        }
+
+        // Get invoices to delete their PDFs from object storage
+        const invoicesForClient = await storage.getInvoicesByClient(clientId);
+        const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+        
+        if (bucketId) {
+          for (const invoice of invoicesForClient) {
+            if (invoice.pdfStorageKey) {
+              try {
+                const bucket = objectStorageClient.bucket(bucketId);
+                await bucket.file(invoice.pdfStorageKey).delete();
+              } catch (err) {
+                console.warn(`Failed to delete invoice PDF ${invoice.pdfStorageKey}:`, err);
+              }
+            }
+          }
+        }
+        
+        // Delete client and all related database records
+        const deleted = await storage.deleteClient(clientId);
+        
+        if (!deleted) {
+          return res.status(404).json({ message: "Client not found" });
+        }
+        
+        res.json({ success: true, message: "Client and all related data deleted" });
+      } catch (error) {
+        console.error("Error deleting client:", error);
+        res.status(500).json({ message: "Failed to delete client" });
+      }
+    },
+  );
+
   // ============================================
   // ADMIN: LEASES
   // ============================================
@@ -756,6 +811,48 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error fetching invoice:", error);
         res.status(500).json({ message: "Failed to fetch invoice" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/invoices/:invoiceId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { invoiceId } = req.params;
+        
+        // Get invoice to find PDF storage key
+        const invoice = await storage.getInvoice(invoiceId);
+        if (!invoice) {
+          return res.status(404).json({ message: "Invoice not found" });
+        }
+        
+        // Delete PDF from object storage if exists
+        if (invoice.pdfStorageKey) {
+          try {
+            const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+            if (bucketId) {
+              const bucket = objectStorageClient.bucket(bucketId);
+              await bucket.file(invoice.pdfStorageKey).delete();
+            }
+          } catch (err) {
+            console.warn(`Failed to delete PDF ${invoice.pdfStorageKey}:`, err);
+          }
+        }
+        
+        // Delete from database
+        const deleted = await storage.deleteInvoice(invoiceId);
+        
+        if (!deleted) {
+          return res.status(500).json({ message: "Failed to delete invoice" });
+        }
+        
+        res.json({ success: true, message: "Invoice deleted" });
+      } catch (error) {
+        console.error("Error deleting invoice:", error);
+        res.status(500).json({ message: "Failed to delete invoice" });
       }
     },
   );
@@ -1151,6 +1248,45 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error updating document:", error);
         res.status(500).json({ message: "Failed to update document" });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/admin/documents/:documentId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { documentId } = req.params;
+        
+        // Get document to find storage path
+        const doc = await storage.getDocument(documentId);
+        if (!doc) {
+          return res.status(404).json({ message: "Document not found" });
+        }
+        
+        // Delete from object storage
+        if (doc.storageBucket && doc.storageKey) {
+          try {
+            const bucket = objectStorageClient.bucket(doc.storageBucket);
+            await bucket.file(doc.storageKey).delete();
+          } catch (err) {
+            console.warn(`Failed to delete file ${doc.storageKey}:`, err);
+          }
+        }
+        
+        // Delete from database
+        const deleted = await storage.deleteDocument(documentId);
+        
+        if (!deleted) {
+          return res.status(500).json({ message: "Failed to delete document" });
+        }
+        
+        res.json({ success: true, message: "Document deleted" });
+      } catch (error) {
+        console.error("Error deleting document:", error);
+        res.status(500).json({ message: "Failed to delete document" });
       }
     },
   );
