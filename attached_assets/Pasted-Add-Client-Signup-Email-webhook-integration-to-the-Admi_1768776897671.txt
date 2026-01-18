@@ -1,0 +1,61 @@
+Add “Client Signup Email” webhook integration to the Admin portal using n8n.
+
+Webhook test URL (default):
+https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email
+
+GOAL:
+On Admin > Client Details page, add a button “Send Signup Email”.
+When clicked, POST clientName, clientEmail, clientId, and portalUrl to the configured webhook URL.
+Show success/failure toast to the admin.
+
+REQUIREMENTS:
+
+1) Admin Setting for webhook URL (editable in UI)
+- Add a Settings section (Admin > Settings) called “Automations”.
+- Add a text input field:
+  - Label: “n8n Signup Email Webhook URL”
+  - Save value persistently (DB preferred, fallback local storage ok).
+  - Default value set to the provided test URL above.
+- This setting should be used by the “Send Signup Email” button.
+
+2) Client Details button
+- On Admin Client Details page add a button:
+  - “Send Signup Email”
+  - disabled if client email is missing
+  - show loading spinner while sending
+- On click:
+  - Read webhook URL from settings
+  - POST JSON payload:
+
+{
+  "clientName": "<client display name>",
+  "clientEmail": "<client email>",
+  "clientId": "<clientId code like CL_502073>",
+  "portalUrl": "<client portal signup/login URL>"
+}
+
+- portalUrl should come from an app config value, like:
+  - `${window.location.origin}/portal/signup`
+  - or whatever your actual client portal entry route is.
+- Add a header for basic protection (optional but recommended):
+  - X-Automation-Token: AUTOMATION_WEBHOOK_TOKEN
+  - Store token in env var, and allow an optional field in Automations settings for it too.
+
+3) Error handling and UI feedback
+- If webhook URL is empty or invalid, show a toast “Webhook URL not configured”.
+- If request fails, show toast with short error message.
+- If successful (HTTP 200), show toast “Signup email sent to <email>”.
+
+4) Do not block other actions
+- If webhook fails, do NOT change client record or any other state.
+- This is a pure side-effect automation call.
+
+ACCEPTANCE TEST:
+- Admin updates the webhook URL in Settings and saves it.
+- Admin opens CL_502073, clicks “Send Signup Email”.
+- A POST is sent to n8n with correct JSON and receives 200.
+- Admin sees success toast.
+
+IMPLEMENTATION NOTES:
+- Use a single helper function sendSignupEmailWebhook(client) used by the button.
+- Keep code clean and minimal. Do not redesign the UI.

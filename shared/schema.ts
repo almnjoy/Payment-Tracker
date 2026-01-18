@@ -187,6 +187,26 @@ export const insertPaymentSettingsSchema = createInsertSchema(paymentSettings).o
 export type InsertPaymentSettings = z.infer<typeof insertPaymentSettingsSchema>;
 export type PaymentSettings = typeof paymentSettings.$inferSelect;
 
+// ============================================
+// AUTOMATION SETTINGS (Webhooks, integrations)
+// ============================================
+export const automationSettings = pgTable("automation_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  adminUserId: varchar("admin_user_id").notNull(),
+  signupEmailWebhookUrl: text("signup_email_webhook_url").default("https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email"),
+  automationToken: text("automation_token"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAutomationSettingsSchema = createInsertSchema(automationSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertAutomationSettings = z.infer<typeof insertAutomationSettingsSchema>;
+export type AutomationSettings = typeof automationSettings.$inferSelect;
+
 // Line item schema for invoice line items (stored as JSONB)
 export const invoiceLineItemSchema = z.object({
   id: z.string(),
