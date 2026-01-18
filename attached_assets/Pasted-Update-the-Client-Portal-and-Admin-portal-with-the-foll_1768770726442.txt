@@ -1,0 +1,130 @@
+Update the Client Portal and Admin portal with the following changes ONLY. Keep existing UI/layout and styling.
+
+1) CLIENT PORTAL - Profile page edits + security tiles + notifications toggle
+GOAL:
+Clients can edit their own profile fields.
+
+REQUIREMENTS:
+- Profile page fields remain the same and in the same layout.
+- Make Name and Email required.
+- All other fields optional (phone, address, etc).
+
+FUNCTIONALITY:
+- Add “Edit” mode (or make fields editable with Save/Cancel).
+- Save updates to the client’s linked profile record in the database.
+- Validate:
+  - name not empty
+  - email not empty and valid format
+- Add back Security actions:
+  1) Reset Password: link to the Replit auth reset password route/page (do not build custom password logic).
+
+- Add Notifications toggle:
+  - Radio or switch: Enabled / Disabled
+  - Persist this setting on the client profile (notificationsEnabled boolean)
+  - For now, no emails are sent; this is a placeholder for later n8n/API.
+
+ACCEPTANCE:
+- Client can edit name/phone/address and save.
+- Email and Name required.
+- Notifications toggle saves and persists after refresh.
+- Reset Password navigate correctly. 
+
+2) ADMIN PORTAL - Active Agreement selection on Documents
+PROBLEM:
+Admin currently cannot mark a document as “Active Agreement” for a client.
+
+REQUIREMENTS:
+- On Admin Documents upload/edit UI add:
+  - Dropdown: Document Type (general | agreement | invoice | other)
+  - Checkbox: “Mark as Active Agreement”
+  - Client association selector (if not already present)
+
+ACTIVE AGREEMENT LOGIC:
+- Active Agreement is only meaningful when type == agreement.
+- Enforce only ONE active agreement per client:
+  - If admin marks a new doc as Active Agreement for the same client, automatically unmark the previous one.
+- On client portal Dashboard:
+  - “Active Agreement” tile must show the active agreement document and link to preview.
+  - If none, show “No active lease/agreement”.
+
+ACCEPTANCE:
+- Admin can mark a doc as Active Agreement.
+- Client sees it on Dashboard and can open it.
+- Marking a different agreement as active replaces the prior one.
+
+3) PAYMENTS - Add payment options + logging (client + admin visibility)
+GOAL:
+Even without Stripe, allow clients to report payments and log them, and optionally redirect them to external payment apps.
+
+CLIENT PAYMENTS PAGE REQUIREMENTS:
+A) Payment Methods section (tiles/cards)
+- Cash App
+- Venmo
+- Bank Transfer
+- Stripe (placeholder)
+- Other
+
+Each method should support storing ADMIN payment details (admin-configured): 
+- cashAppHandle and/or cashAppLink
+- venmoHandle and/or venmoLink
+- bankInstructions (text block)
+- stripePlaceholderMessage
+
+B) Payment Submission form (always required regardless of method)
+- amount (required, numeric > 0)
+- note (optional)
+- method selected (required)
+
+On submit:
+- Create a Payment record linked to the clientId with fields:
+  - id
+  - clientId
+  - amount
+  - method (cashapp|venmo|bank|stripe|other)
+  - note
+  - status = "reported" (or "pending_verification")
+  - createdAt
+- Show success screen with:
+  - “Payment logged” confirmation
+  - For Cash App/Venmo: button “Open Cash App / Open Venmo” linking to the configured handle/link
+  - For Bank: show bank instructions
+  - For Stripe: show “Coming soon”
+- Payment should immediately appear in:
+  - Client portal Payments history list
+  - Admin portal Client Payments history list
+
+AMOUNT DUE LOGIC:
+- When a payment is submitted, reduce client amount due based on unpaid balance (simple approach):
+  - amountDue = max(0, amountDue - paymentAmount)
+- If you already have a better billing ledger model, apply the payment to the current outstanding balance consistently.
+
+ADMIN PAYMENTS VISIBILITY:
+- Updates from clients will appear in the admin page "Admin Overview" 
+  - Client name
+  - Amount
+  - Method
+  - Note
+  - Date/time
+  - Status
+- On Admin Client Details page show a Payments section:
+  - Payment history for that client
+  - Current amount due and last payment
+
+ADMIN-CONFIGURED PAYMENT DETAILS:
+- Add a simple Admin “Payment Settings” section (or part of Settings) where admin can set:
+  - Cash App handle/link
+  - Venmo handle/link
+  - Bank instructions
+These values are shown to all clients on Payments page.
+
+ACCEPTANCE:
+- Client selects Cash App, enters amount, submits -> payment record created.
+- Client sees it in Payments history.
+- Admin sees it in Payments list + on client details.
+- Client is shown a link/button to open Cash App/Venmo with your handle.
+- Amount due and “Last Payment” tile on client Dashboard update.
+
+DO NOT:
+- Implement real Stripe processing yet
+- Remove existing navigation or layout
+- Break existing client portal linking 

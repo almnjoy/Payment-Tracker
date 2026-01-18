@@ -9,6 +9,7 @@ import {
   payments,
   documents,
   externalAccounts,
+  paymentSettings,
   generateClientId,
   generateLeaseId,
   generateInvoiceId,
@@ -32,6 +33,8 @@ import {
   type InsertDocument,
   type ExternalAccount,
   type InsertExternalAccount,
+  type PaymentSettings,
+  type InsertPaymentSettings,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -82,6 +85,15 @@ export interface IStorage {
   getAllExternalAccounts(): Promise<ExternalAccount[]>;
   createExternalAccount(data: InsertExternalAccount): Promise<ExternalAccount>;
   deleteExternalAccount(accountId: string): Promise<boolean>;
+  
+  // Payment Settings
+  getPaymentSettings(): Promise<PaymentSettings | undefined>;
+  upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings>;
+  
+  // Documents - additional methods
+  updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined>;
+  clearActiveAgreementForClient(clientId: string): Promise<void>;
+  getActiveAgreementForClient(clientId: string): Promise<Document | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -337,6 +349,56 @@ export class DatabaseStorage implements IStorage {
   async deleteExternalAccount(accountId: string): Promise<boolean> {
     const result = await db.delete(externalAccounts).where(eq(externalAccounts.accountId, accountId)).returning();
     return result.length > 0;
+  }
+
+  // ============================================
+  // PAYMENT SETTINGS
+  // ============================================
+  async getPaymentSettings(): Promise<PaymentSettings | undefined> {
+    const [settings] = await db.select().from(paymentSettings).where(eq(paymentSettings.id, "default"));
+    return settings;
+  }
+
+  async upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings> {
+    const [settings] = await db
+      .insert(paymentSettings)
+      .values({ ...data, id: "default" })
+      .onConflictDoUpdate({
+        target: paymentSettings.id,
+        set: {
+          ...data,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return settings;
+  }
+
+  // ============================================
+  // DOCUMENTS - Additional Methods
+  // ============================================
+  async updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined> {
+    const [doc] = await db
+      .update(documents)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(documents.documentId, documentId))
+      .returning();
+    return doc;
+  }
+
+  async clearActiveAgreementForClient(clientId: string): Promise<void> {
+    await db
+      .update(documents)
+      .set({ isActiveAgreement: false, updatedAt: new Date() })
+      .where(and(eq(documents.clientId, clientId), eq(documents.isActiveAgreement, true)));
+  }
+
+  async getActiveAgreementForClient(clientId: string): Promise<Document | undefined> {
+    const [doc] = await db
+      .select()
+      .from(documents)
+      .where(and(eq(documents.clientId, clientId), eq(documents.isActiveAgreement, true)));
+    return doc;
   }
 }
 

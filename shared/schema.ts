@@ -50,6 +50,7 @@ export const clients = pgTable("clients", {
   address: text("address"),
   notes: text("notes"),
   status: text("status").notNull().default("active"), // active, paused, inactive, behind
+  notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -161,6 +162,30 @@ export const insertInvoiceSettingsSchema = createInsertSchema(invoiceSettings).o
 });
 export type InsertInvoiceSettings = z.infer<typeof insertInvoiceSettingsSchema>;
 export type InvoiceSettings = typeof invoiceSettings.$inferSelect;
+
+// ============================================
+// PAYMENT SETTINGS (Admin-configured payment methods)
+// ============================================
+export const paymentSettings = pgTable("payment_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  adminUserId: varchar("admin_user_id").notNull(),
+  cashAppHandle: text("cash_app_handle"),
+  cashAppLink: text("cash_app_link"),
+  venmoHandle: text("venmo_handle"),
+  venmoLink: text("venmo_link"),
+  bankInstructions: text("bank_instructions"),
+  stripePlaceholderMessage: text("stripe_placeholder_message").default("Stripe payments coming soon!"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPaymentSettingsSchema = createInsertSchema(paymentSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPaymentSettings = z.infer<typeof insertPaymentSettingsSchema>;
+export type PaymentSettings = typeof paymentSettings.$inferSelect;
 
 // Line item schema for invoice line items (stored as JSONB)
 export const invoiceLineItemSchema = z.object({

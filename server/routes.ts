@@ -22,6 +22,7 @@ import {
   clients,
   invoices,
   invoiceSettings,
+  paymentSettings,
   documents,
   usersProfile,
   generatePlaidItemId,
@@ -30,6 +31,7 @@ import {
   generateFinanceEntryId,
   generateClientBillingItemId,
   generateRecurringGroupId,
+  generatePaymentId,
   formatInvoiceNumber,
   insertFinanceEntrySchema,
   insertClientBillingItemSchema,
@@ -746,6 +748,94 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error getting next invoice number:", error);
         res.status(500).json({ message: "Failed to get next invoice number" });
+      }
+    },
+  );
+
+  // ============================================
+  // ADMIN: PAYMENT SETTINGS
+  // ============================================
+
+  app.get(
+    "/api/admin/payment-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const settings = await storage.getPaymentSettings();
+        
+        if (!settings) {
+          return res.json({
+            id: null,
+            cashAppHandle: null,
+            cashAppLink: null,
+            venmoHandle: null,
+            venmoLink: null,
+            bankInstructions: null,
+            stripePlaceholderMessage: "Stripe payments coming soon!",
+          });
+        }
+        res.json(settings);
+      } catch (error) {
+        console.error("Error fetching payment settings:", error);
+        res.status(500).json({ message: "Failed to fetch payment settings" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/admin/payment-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const settings = await storage.upsertPaymentSettings({
+          adminUserId: userId!,
+          ...req.body,
+        });
+        res.json(settings);
+      } catch (error) {
+        console.error("Error updating payment settings:", error);
+        res.status(500).json({ message: "Failed to update payment settings" });
+      }
+    },
+  );
+
+  // ============================================
+  // ADMIN: DOCUMENT UPDATE (Active Agreement Toggle)
+  // ============================================
+
+  app.patch(
+    "/api/admin/documents/:documentId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { documentId } = req.params;
+        const { isActiveAgreement, docType, ...otherData } = req.body;
+        
+        const doc = await storage.getDocument(documentId);
+        if (!doc) {
+          return res.status(404).json({ message: "Document not found" });
+        }
+        
+        // If marking as active agreement, first clear any existing active agreements for this client
+        if (isActiveAgreement === true) {
+          await storage.clearActiveAgreementForClient(doc.clientId);
+        }
+        
+        // Update the document
+        const updated = await storage.updateDocument(documentId, {
+          ...(docType !== undefined && { docType }),
+          ...(isActiveAgreement !== undefined && { isActiveAgreement }),
+          ...otherData,
+        });
+        
+        res.json(updated);
+      } catch (error) {
+        console.error("Error updating document:", error);
+        res.status(500).json({ message: "Failed to update document" });
       }
     },
   );
@@ -1650,6 +1740,144 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error fetching client payments:", error);
         res.status(500).json({ message: "Failed to fetch payments" });
+      }
+    },
+  );
+
+  // Client submit payment (report payment for logging)
+  app.post(
+    "/api/client/payments",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const profile = (req as any).userProfile;
+        
+        if (!profile.clientId) {
+          return res.status(403).json({ message: "No client profile linked" });
+        }
+        
+        const { amountCents, method, note } = req.body;
+        
+        if (!amountCents || amountCents <= 0) {
+          return res.status(400).json({ message: "Invalid payment amount" });
+        }
+        
+        if (!method) {
+          return res.status(400).json({ message: "Payment method is required" });
+        }
+        
+        const payment = await storage.createPayment({
+          clientId: profile.clientId,
+          amountCents,
+          method,
+          notes: note || null,
+          status: "reported",
+          paidAt: new Date(),
+        });
+        
+        res.status(201).json(payment);
+      } catch (error) {
+        console.error("Error creating client payment:", error);
+        res.status(500).json({ message: "Failed to create payment" });
+      }
+    },
+  );
+
+  // ============================================
+  // CLIENT: PROFILE UPDATE
+  // ============================================
+
+  app.get(
+    "/api/client/profile",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const profile = (req as any).userProfile;
+        
+        if (!profile.clientId) {
+          return res.status(403).json({ message: "No client profile linked" });
+        }
+        
+        const client = await storage.getClient(profile.clientId);
+        res.json(client);
+      } catch (error) {
+        console.error("Error fetching client profile:", error);
+        res.status(500).json({ message: "Failed to fetch profile" });
+      }
+    },
+  );
+
+  app.put(
+    "/api/client/profile",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const profile = (req as any).userProfile;
+        
+        if (!profile.clientId) {
+          return res.status(403).json({ message: "No client profile linked" });
+        }
+        
+        const { displayName, email, phone, address, notificationsEnabled } = req.body;
+        
+        // Validate required fields
+        if (!displayName || !displayName.trim()) {
+          return res.status(400).json({ message: "Name is required" });
+        }
+        
+        if (!email || !email.trim()) {
+          return res.status(400).json({ message: "Email is required" });
+        }
+        
+        // Basic email validation
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({ message: "Invalid email format" });
+        }
+        
+        const updated = await storage.updateClient(profile.clientId, {
+          displayName: displayName.trim(),
+          email: email.trim().toLowerCase(),
+          phone: phone?.trim() || null,
+          address: address?.trim() || null,
+          notificationsEnabled: notificationsEnabled ?? true,
+        });
+        
+        res.json(updated);
+      } catch (error) {
+        console.error("Error updating client profile:", error);
+        res.status(500).json({ message: "Failed to update profile" });
+      }
+    },
+  );
+
+  // ============================================
+  // CLIENT: PAYMENT SETTINGS (Public - read only for clients)
+  // ============================================
+
+  app.get(
+    "/api/client/payment-settings",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const settings = await storage.getPaymentSettings();
+        
+        // Return sanitized settings (no admin userId)
+        res.json({
+          cashAppHandle: settings?.cashAppHandle || null,
+          cashAppLink: settings?.cashAppLink || null,
+          venmoHandle: settings?.venmoHandle || null,
+          venmoLink: settings?.venmoLink || null,
+          bankInstructions: settings?.bankInstructions || null,
+          stripePlaceholderMessage: settings?.stripePlaceholderMessage || "Stripe payments coming soon!",
+        });
+      } catch (error) {
+        console.error("Error fetching payment settings for client:", error);
+        res.status(500).json({ message: "Failed to fetch payment settings" });
       }
     },
   );
