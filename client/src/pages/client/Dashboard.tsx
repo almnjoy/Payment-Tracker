@@ -264,6 +264,16 @@ export default function ClientDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {activeAgreement && (
+        <PDFViewerModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          documentId={activeAgreement.documentId}
+          title={activeAgreement.title}
+          downloadUrl={`/api/client/documents/${activeAgreement.documentId}/download${asClientId ? `?asClientId=${asClientId}` : ''}`}
+        />
+      )}
     </Layout>
   );
 }

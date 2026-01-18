@@ -117,6 +117,7 @@ export interface ClientDashboard {
   nextDueDate: string | null;
   lastPayment: Payment | null;
   activeLease: Lease | null;
+  activeAgreement: Document | null;
   recentDocuments: Document[];
   openInvoicesCount: number;
 }
