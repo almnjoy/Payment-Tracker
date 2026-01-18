@@ -17,6 +17,7 @@ import {
   useAdminFinanceEntries, 
   useCreateFinanceEntry,
   useDeleteFinanceEntry,
+  useUpdateFinanceEntry,
   useAdminPlaidAllAccounts,
   useSyncPlaidTransactions,
   useAllBillingItems,
@@ -26,9 +27,12 @@ import {
   useAdminPlaidTypedTransactions,
   useUpdateAccountDefaultType,
   useUpdateTransactionType,
+  useUpdateTransactionRecurrence,
   formatCents,
   formatDate,
-  FinanceType
+  FinanceType,
+  TimePeriod,
+  RecurrenceType
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -43,10 +47,67 @@ const FINANCE_TYPES: { value: FinanceTypeValue | "none"; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
+const PERIOD_OPTIONS: { value: TimePeriod; label: string }[] = [
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Bi-Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+const RECURRENCE_OPTIONS: { value: RecurrenceType | "one_time"; label: string }[] = [
+  { value: "one_time", label: "One-time" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Bi-Weekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+function getRecurrenceMultiplier(entryRecurrence: string | null, selectedPeriod: TimePeriod): number {
+  if (!entryRecurrence || entryRecurrence === "one_time") return 1;
+  
+  const weeksPerPeriod: Record<TimePeriod, number> = {
+    weekly: 1,
+    biweekly: 2,
+    monthly: 4.33,
+    yearly: 52,
+  };
+  
+  const recurrenceWeeks: Record<string, number> = {
+    weekly: 1,
+    biweekly: 2,
+    monthly: 4.33,
+    yearly: 52,
+  };
+  
+  return weeksPerPeriod[selectedPeriod] / (recurrenceWeeks[entryRecurrence] || 1);
+}
+
+function getMultiplierLabel(entryRecurrence: string | null, selectedPeriod: TimePeriod): string | null {
+  if (!entryRecurrence || entryRecurrence === "one_time") return null;
+  
+  const multiplier = getRecurrenceMultiplier(entryRecurrence, selectedPeriod);
+  if (multiplier === 1) return null;
+  
+  const formatted = multiplier < 1 
+    ? multiplier.toFixed(2).replace(/\.?0+$/, '')
+    : multiplier.toFixed(1).replace(/\.0$/, '');
+    
+  const recLabels: Record<string, string> = {
+    weekly: "Weekly",
+    biweekly: "Bi-Weekly",
+    monthly: "Monthly",
+    yearly: "Yearly",
+  };
+  
+  return `${recLabels[entryRecurrence] || entryRecurrence} entry counted as ${formatted}x for ${selectedPeriod} total`;
+}
+
 export default function FinanceTracker() {
   const [activeTab, setActiveTab] = useState("income");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [dateRange, setDateRange] = useState("30");
+  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>("monthly");
+  const [editingEntry, setEditingEntry] = useState<any | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
     entryType: "manual",
     title: "",
@@ -68,20 +129,23 @@ export default function FinanceTracker() {
   
   const { toast } = useToast();
   const syncStatus = useAdminPlaidSyncStatus();
-  const financeTotals = useAdminPlaidFinanceTotals(parseInt(dateRange));
+  const financeTotals = useAdminPlaidFinanceTotals(selectedPeriod);
   const entries = useAdminFinanceEntries(activeTab);
   const plaidAccounts = useAdminPlaidAllAccounts();
   const accountSummaries = useAdminPlaidAccountSummaries();
   const createEntry = useCreateFinanceEntry();
   const deleteEntry = useDeleteFinanceEntry();
+  const updateEntry = useUpdateFinanceEntry();
   const syncTransactions = useSyncPlaidTransactions();
   const billingItems = useAllBillingItems();
   const clients = useAdminClients();
   const updateAccountType = useUpdateAccountDefaultType();
   const updateTransactionType = useUpdateTransactionType();
+  const updateTransactionRecurrence = useUpdateTransactionRecurrence();
   
-  // Date range for transactions
-  const dateRangeMs = parseInt(dateRange) * 24 * 60 * 60 * 1000;
+  // Period-based date range for transactions
+  const periodDays = { weekly: 7, biweekly: 14, monthly: 30, yearly: 365 };
+  const dateRangeMs = periodDays[selectedPeriod] * 24 * 60 * 60 * 1000;
   const endDate = new Date().toISOString().split("T")[0];
   const startDate = new Date(Date.now() - dateRangeMs).toISOString().split("T")[0];
   
@@ -91,7 +155,7 @@ export default function FinanceTracker() {
   );
   
   // Typed Plaid transactions for the current tab
-  const typedTransactions = useAdminPlaidTypedTransactions(activeTab, parseInt(dateRange));
+  const typedTransactions = useAdminPlaidTypedTransactions(activeTab, selectedPeriod);
 
   const handleCreateEntry = async () => {
     if (!formData.title || !formData.amountCents) {
@@ -412,7 +476,7 @@ export default function FinanceTracker() {
                 </div>
                 <div className="space-y-1 text-sm text-gray-500">
                   <p>Manual entries: {formatCents(manualTotal)}</p>
-                  <p>From Plaid ({dateRange}d): {formatCents(plaidTotal)}</p>
+                  <p>From Plaid ({selectedPeriod}): {formatCents(plaidTotal)}</p>
                   {activeTab === "income" && (
                     <p className="text-green-600 font-medium">Client rent (monthly): {formatCents(monthlyBillingTotal)}</p>
                   )}
@@ -480,7 +544,7 @@ export default function FinanceTracker() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <LinkIcon className="h-5 w-5 text-[#007BFF]" />
-                Plaid Entries ({dateRange}d)
+                Plaid Entries ({selectedPeriod})
               </CardTitle>
               <span className="text-sm text-gray-500">
                 {typedTransactions.data?.transactions.length || 0} transactions assigned to {activeTab}
@@ -540,15 +604,14 @@ export default function FinanceTracker() {
                 </CardTitle>
               </div>
               <div className="flex items-center gap-3">
-                <Select value={dateRange} onValueChange={setDateRange}>
-                  <SelectTrigger className="w-[140px] h-9" data-testid="select-date-range">
+                <Select value={selectedPeriod} onValueChange={(v) => setSelectedPeriod(v as TimePeriod)}>
+                  <SelectTrigger className="w-[140px] h-9" data-testid="select-period">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="30">Last 30 days</SelectItem>
-                    <SelectItem value="90">Last 90 days</SelectItem>
-                    <SelectItem value="180">Last 6 months</SelectItem>
-                    <SelectItem value="365">Last 12 months</SelectItem>
+                    {PERIOD_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button 
@@ -632,7 +695,7 @@ export default function FinanceTracker() {
                           {formatCents(plaidTotal)}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} ({dateRange}d)
+                          {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} ({selectedPeriod})
                         </p>
                       </div>
                       <ChevronRight className="h-4 w-4 text-gray-400" />
@@ -835,7 +898,7 @@ export default function FinanceTracker() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <DollarSign className="h-5 w-5 text-purple-600" />
-              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Summary ({dateRange} days)
+              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Summary ({selectedPeriod})
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -844,7 +907,7 @@ export default function FinanceTracker() {
               <p className="text-3xl font-bold text-gray-900">{formatCents(plaidTotal)}</p>
             </div>
             <p className="text-sm text-gray-600">
-              This total is calculated from transactions categorized as "{activeTab}" across all linked accounts for the last {dateRange} days.
+              This total is calculated from transactions categorized as "{activeTab}" across all linked accounts for the selected period ({selectedPeriod}).
             </p>
             <p className="text-sm text-gray-500">
               To see detailed transactions, click "View Transactions" on any account in the table above.

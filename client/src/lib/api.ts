@@ -389,13 +389,37 @@ export interface PlaidSyncStatus {
   last_sync_at: string | null;
 }
 
+export type TimePeriod = "weekly" | "biweekly" | "monthly" | "yearly";
+export type RecurrenceType = "one_time" | "weekly" | "biweekly" | "monthly" | "yearly";
+
 export interface PlaidFinanceTotals {
   income: number;
   bills: number;
   debts: number;
   holdings: number;
   other: number;
-  date_range: number;
+  period: TimePeriod;
+}
+
+export interface PlaidRecurringGroup {
+  groupId: string;
+  adminUserId: string;
+  label: string;
+  recurrence: string;
+  financeType: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurringSuggestion {
+  merchantName: string;
+  name: string;
+  amountCents: number;
+  occurrences: number;
+  detectedRecurrence: string;
+  confidence: "low" | "medium" | "high";
+  avgDaysBetween: number;
 }
 
 export interface TypedPlaidTransaction {
@@ -553,10 +577,10 @@ export function useAdminPlaidSyncStatus() {
   });
 }
 
-export function useAdminPlaidFinanceTotals(days: number = 30) {
+export function useAdminPlaidFinanceTotals(period: TimePeriod = "monthly") {
   return useQuery<PlaidFinanceTotals>({
-    queryKey: ["admin", "plaid", "finance-totals", days],
-    queryFn: () => fetchApi(`/api/admin/plaid/finance-totals?days=${days}`),
+    queryKey: ["admin", "plaid", "finance-totals", period],
+    queryFn: () => fetchApi(`/api/admin/plaid/finance-totals?period=${period}`),
   });
 }
 
@@ -567,9 +591,11 @@ export function useAdminPlaidSpendingSummary(days: number = 30) {
   });
 }
 
-export function useAdminPlaidTypedTransactions(category: string, days: number = 30) {
+export function useAdminPlaidTypedTransactions(category: string, period: TimePeriod = "monthly") {
+  const periodDays = { weekly: 7, biweekly: 14, monthly: 30, yearly: 365 };
+  const days = periodDays[period];
   return useQuery<{ transactions: TypedPlaidTransaction[] }>({
-    queryKey: ["admin", "plaid", "typed-transactions", category, days],
+    queryKey: ["admin", "plaid", "typed-transactions", category, period],
     queryFn: () => fetchApi(`/api/admin/plaid/typed-transactions?category=${category}&days=${days}`),
     enabled: !!category,
   });
@@ -718,6 +744,73 @@ export function useDeleteFinanceEntry() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "finance-entries"] });
     },
+  });
+}
+
+export function useUpdateFinanceEntry() {
+  const queryClient = useQueryClient();
+  return useMutation<FinanceEntry, Error, { entryId: string } & Partial<FinanceEntry>>({
+    mutationFn: ({ entryId, ...data }) => fetchApi(`/api/admin/finance-entries/${entryId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "finance-entries"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid", "finance-totals"] });
+    },
+  });
+}
+
+export function useUpdateTransactionRecurrence() {
+  const queryClient = useQueryClient();
+  return useMutation<{ success: boolean; overrideRecurrence: RecurrenceType | null }, Error, { transactionId: string; recurrence: RecurrenceType | null }>({
+    mutationFn: ({ transactionId, recurrence }) => fetchApi(`/api/admin/plaid/transactions/${transactionId}/recurrence`, {
+      method: "PATCH",
+      body: JSON.stringify({ recurrence }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useAdminRecurringGroups() {
+  return useQuery<PlaidRecurringGroup[]>({
+    queryKey: ["admin", "plaid", "recurring-groups"],
+    queryFn: () => fetchApi("/api/admin/plaid/recurring-groups"),
+  });
+}
+
+export function useCreateRecurringGroup() {
+  const queryClient = useQueryClient();
+  return useMutation<PlaidRecurringGroup, Error, { label: string; recurrence: string; financeType?: string | null; transactionIds?: string[] }>({
+    mutationFn: (data) => fetchApi("/api/admin/plaid/recurring-groups", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useUpdateRecurringGroup() {
+  const queryClient = useQueryClient();
+  return useMutation<PlaidRecurringGroup, Error, { groupId: string; label?: string; recurrence?: string; financeType?: string | null; isActive?: boolean }>({
+    mutationFn: ({ groupId, ...data }) => fetchApi(`/api/admin/plaid/recurring-groups/${groupId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "plaid"] });
+    },
+  });
+}
+
+export function useDetectRecurringPatterns() {
+  return useQuery<{ suggestions: RecurringSuggestion[] }>({
+    queryKey: ["admin", "plaid", "detect-recurring"],
+    queryFn: () => fetchApi("/api/admin/plaid/detect-recurring"),
   });
 }
 

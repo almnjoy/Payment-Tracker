@@ -14,6 +14,9 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 - **Lease Status Management**: Status dropdown (active, paused, inactive, behind) with color-coded badges
 - **Admin Impersonation**: Admins can view client portal using `?asClientId={clientId}` query parameter
 - **Derived Income**: Finance Tracker shows monthly rent income from client billing items
+- **Period-Based Recurrence System**: Global time frame selector (weekly, bi-weekly, monthly, yearly) applies multipliers to calculate accurate totals
+- **Plaid Transaction Types**: Transactions can be categorized by finance type (income, bill, debt, holding, other) with override support
+- **Recurring Groups**: Related Plaid transactions can be grouped with shared labels and recurrence patterns
 
 ## Tech Stack
 - **Frontend**: React with Vite, TailwindCSS, shadcn/ui components

@@ -2813,13 +2813,13 @@ export async function registerRoutes(
           avgDaysBetween: number;
         }> = [];
 
-        for (const [key, data] of patternMap) {
+        for (const [key, data] of Array.from(patternMap.entries())) {
           if (data.dates.length < 2) continue;
 
           // Calculate average days between occurrences
           const sortedDates = data.dates
-            .map((d) => new Date(d).getTime())
-            .sort((a, b) => a - b);
+            .map((d: string) => new Date(d).getTime())
+            .sort((a: number, b: number) => a - b);
           
           let totalDays = 0;
           for (let i = 1; i < sortedDates.length; i++) {
