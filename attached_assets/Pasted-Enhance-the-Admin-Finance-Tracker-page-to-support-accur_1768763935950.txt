@@ -1,0 +1,117 @@
+Enhance the Admin “Finance Tracker” page to support accurate time-based totals, recurrence logic, and editing.
+
+CORE GOAL:
+Totals must be accurate for the selected time frame (Weekly, Bi-Weekly, Monthly, Yearly) and must respect how often each entry actually occurs.
+
+CURRENT STATE (keep working behavior):
+- Manual entries exist with recurrence (one-time, weekly, monthly).
+- Plaid entries can be assigned a Type (Income, Bill, Debt, Holding, Other).
+- Totals currently add values correctly but ignore recurrence math.
+- UI already shows date ranges (ex: 30d / 180d).
+
+NEW TIME LOGIC (CRITICAL):
+
+1) Global Time Frame Selector
+- Add a time-frame selector for totals:
+  - Weekly
+  - Bi-Weekly
+  - Monthly
+  - Yearly
+- Totals must be recalculated based on this selection.
+
+2) Manual Entry Time Logic
+Each manual entry has:
+- amount
+- recurrence: one-time | weekly | bi-weekly | monthly | yearly
+- created/entry date
+
+Rules:
+- One-time entries:
+  - Only included if the entry date falls within the selected time window.
+  - If outside the window, do NOT include in totals.
+  - Show a small note on the entry:
+    “Outside selected time period (one-time entry)”
+- Recurring entries:
+  - Weekly:
+    - Weekly view: count once
+    - Bi-Weekly view: count twice
+    - Monthly view: count ~4 weeks
+    - Yearly view: count 52 weeks
+  - Bi-Weekly:
+    - Weekly view: count 0.5
+    - Bi-Weekly view: count once
+    - Monthly view: count 2
+    - Yearly view: count 26
+  - Monthly:
+    - Weekly view: count 0.25
+    - Bi-Weekly view: count 0.5
+    - Monthly view: count once
+    - Yearly view: count 12
+  - Yearly:
+    - Weekly view: count 1/52
+    - Bi-Weekly view: count 1/26
+    - Monthly view: count 1/12
+    - Yearly view: count once
+
+Totals should show correct fractional math (ex: half a monthly bill).
+
+3) Plaid Entry Recurrence Detection (ASSISTIVE, NOT REQUIRED)
+- For Plaid entries:
+  - Attempt simple pattern recognition:
+    - Same merchant
+    - Same amount
+    - Appears roughly every 7, 14, or 30 days
+  - If detected, display a badge:
+    “Detected: Monthly” / “Detected: Weekly”
+- This detection:
+  - Does NOT affect totals automatically
+  - Is only a suggestion
+
+4) Plaid Entry Recurrence Override (USER CONTROLLED)
+- For any Plaid entry assigned a Type:
+  - Allow user to set recurrence:
+    - one-time
+    - weekly
+    - bi-weekly
+    - monthly
+    - yearly
+- Totals must use the user-selected recurrence, NOT the detected one.
+- If recurrence is not set, treat Plaid entry as one-time.
+
+5) Linking Related Plaid Entries
+- Allow grouping multiple Plaid entries together:
+  - Example: multiple Gusto payments
+- Grouped entries:
+  - Share a recurrence setting
+  - Share a logical label (ex: “Gusto Payroll”)
+  - Still show individual transactions in history
+- Totals should calculate from the grouped recurrence logic.
+
+6) Manual Entry Editing
+- Allow editing manual entries:
+  - amount
+  - recurrence (add bi-weekly option)
+  - date
+  - category/type
+- Link 
+- Edits must immediately update totals.
+
+UI REQUIREMENTS:
+- Clearly show recurrence next to each entry (Manual + Plaid).
+- Show small helper text when fractional math is applied:
+  “Monthly bill counted as 0.5 for bi-weekly total”
+- Keep layout clean; reuse existing cards and lists.
+
+DO NOT:
+- Auto-classify Plaid entries without user confirmation
+- Break existing totals display format
+- Remove source breakdown text (Manual / Plaid / Client Rent)
+
+ACCEPTANCE TESTS:
+1) Selecting Bi-Weekly:
+   - Weekly entries count twice
+   - Monthly entries count as half
+2) One-time entries outside range do not count and show a note.
+3) Plaid recurring payments can be detected but must be user-confirmed.
+4) Editing recurrence updates totals immediately.
+5) Grouped Plaid entries behave as one logical recurring bill.

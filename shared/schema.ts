@@ -368,6 +368,8 @@ export const plaidTransactions = pgTable(
     pending: boolean("pending").notNull().default(false),
     categoryPrimary: text("category_primary"),
     overrideFinanceType: text("override_finance_type"), // income, bill, debt, holding, other, or null (uses account default if null)
+    overrideRecurrence: text("override_recurrence"), // one_time, weekly, biweekly, monthly, yearly, or null (defaults to one_time)
+    recurringGroupId: varchar("recurring_group_id"), // Links to plaid_recurring_groups
     rawJson: jsonb("raw_json"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
@@ -379,6 +381,9 @@ export const plaidTransactions = pgTable(
     ),
     plaidAccountIdIdx: index("plaid_transactions_plaid_account_id_idx").on(
       table.plaidAccountId,
+    ),
+    recurringGroupIdIdx: index("plaid_transactions_recurring_group_id_idx").on(
+      table.recurringGroupId,
     ),
   }),
 );
@@ -404,6 +409,43 @@ export const plaidCursors = pgTable("plaid_cursors", {
   lastSyncAt: timestamp("last_sync_at"),
 });
 export type PlaidCursor = typeof plaidCursors.$inferSelect;
+
+// ============================================
+// PLAID RECURRING GROUPS (Groups related Plaid transactions)
+// ============================================
+export const plaidRecurringGroups = pgTable(
+  "plaid_recurring_groups",
+  {
+    groupId: varchar("group_id").primaryKey(),
+    adminUserId: varchar("admin_user_id").notNull(),
+    label: text("label").notNull(), // e.g., "Gusto Payroll"
+    recurrence: text("recurrence").notNull().default("monthly"), // one_time, weekly, biweekly, monthly, yearly
+    financeType: text("finance_type"), // income, bill, debt, holding, other
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    adminUserIdIdx: index("plaid_recurring_groups_admin_user_id_idx").on(table.adminUserId),
+  }),
+);
+
+export const insertPlaidRecurringGroupSchema = createInsertSchema(plaidRecurringGroups).omit({
+  groupId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertPlaidRecurringGroup = z.infer<typeof insertPlaidRecurringGroupSchema>;
+export type PlaidRecurringGroup = typeof plaidRecurringGroups.$inferSelect;
+
+export function generateRecurringGroupId(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = "RG-";
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
 // ============================================
 // CLIENT BILLING ITEMS (Per-client charges)
