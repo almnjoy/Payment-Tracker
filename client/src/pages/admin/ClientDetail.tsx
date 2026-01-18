@@ -238,9 +238,18 @@ export default function ClientDetail() {
   const documents = client.documents || [];
   const invoices = client.invoices || [];
   
-  const outstandingBalance = invoices
-    .filter(inv => inv.status !== 'paid')
-    .reduce((sum, inv) => sum + (inv.amountCents || 0), 0);
+  // Calculate balance from billing items minus confirmed payments
+  // Positive balance = client has overpaid, Negative balance = client owes money
+  const billingItemsTotal = (billingItems || [])
+    .filter(item => item.status === 'active')
+    .reduce((sum, item) => sum + (item.amountCents || 0), 0);
+  
+  const confirmedPaymentsTotal = payments
+    .filter(p => p.status === 'confirmed')
+    .reduce((sum, p) => sum + (p.amountCents || 0), 0);
+  
+  // Negative = client owes, Positive = overpaid
+  const currentBalance = confirmedPaymentsTotal - billingItemsTotal;
 
   const clientBillingItemsList = billingItems || [];
 
@@ -643,15 +652,15 @@ export default function ClientDetail() {
           </div>
 
           <div className="space-y-6">
-             <Card className={`border-t-4 ${outstandingBalance > 0 ? 'border-t-red-500' : 'border-t-green-500'}`}>
+             <Card className={`border-t-4 ${currentBalance < 0 ? 'border-t-red-500' : 'border-t-green-500'}`}>
                 <CardHeader>
                    <CardTitle className="text-sm font-medium text-gray-500">Current Balance</CardTitle>
                 </CardHeader>
                 <CardContent>
-                   <div className="text-3xl font-bold text-gray-900">
-                     {formatCents(outstandingBalance)}
+                   <div className={`text-3xl font-bold ${currentBalance < 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                     {formatCents(currentBalance)}
                    </div>
-                   {outstandingBalance > 0 ? (
+                   {currentBalance < 0 ? (
                       <p className="text-sm text-red-600 mt-2 font-medium">
                         Outstanding balance
                       </p>

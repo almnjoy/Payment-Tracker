@@ -551,10 +551,201 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { invoiceId } = req.params;
+        const userId = getUserId(req);
+        
+        // Get current invoice to check if status is changing
+        const currentInvoice = await storage.getInvoice(invoiceId);
+        if (!currentInvoice) {
+          return res.status(404).json({ message: "Invoice not found" });
+        }
+        
+        const newStatus = req.body.status;
+        const wasNotSentOrPaid = currentInvoice.status !== "sent" && currentInvoice.status !== "paid";
+        const isBecomingSentOrPaid = newStatus === "sent" || newStatus === "paid";
+        
+        // Update the invoice
         const invoice = await storage.updateInvoice(invoiceId, req.body);
         if (!invoice) {
           return res.status(404).json({ message: "Invoice not found" });
         }
+        
+        // Generate PDF and create document when status changes to sent/paid
+        if (wasNotSentOrPaid && isBecomingSentOrPaid) {
+          try {
+            // Get client and settings for PDF generation
+            const client = await storage.getClient(invoice.clientId);
+            const [settings] = await db
+              .select()
+              .from(invoiceSettings)
+              .where(eq(invoiceSettings.adminUserId, userId!));
+            
+            // Generate PDF buffer
+            const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+              const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+              const chunks: Buffer[] = [];
+              
+              doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+              doc.on('end', () => resolve(Buffer.concat(chunks)));
+              doc.on('error', reject);
+              
+              const pageWidth = 612;
+              const margin = 50;
+              const contentWidth = pageWidth - (margin * 2);
+              
+              // Header - INVOICE title
+              doc.fontSize(28).font('Helvetica-Bold').text('INVOICE', margin, margin, { align: 'right' });
+              doc.fontSize(12).font('Helvetica').text(`# ${invoice.invoiceNumber}`, { align: 'right' });
+              
+              // Balance due box
+              doc.moveDown(0.5);
+              doc.fontSize(10).text('Balance Due', { align: 'right' });
+              doc.fontSize(18).font('Helvetica-Bold').text(
+                `$${(invoice.balanceDueCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+                { align: 'right' }
+              );
+              
+              // Business info (left side)
+              let yPos = margin;
+              if (settings?.businessName) {
+                doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+                yPos += 20;
+              }
+              if (settings?.businessAddress) {
+                doc.fontSize(10).font('Helvetica');
+                const addressLines = settings.businessAddress.split('\n');
+                addressLines.forEach(line => {
+                  doc.text(line, margin, yPos);
+                  yPos += 14;
+                });
+              }
+              if (settings?.businessEmail) {
+                doc.text(settings.businessEmail, margin, yPos);
+                yPos += 14;
+              }
+              
+              // Invoice details section
+              yPos = 180;
+              const labelX = 350;
+              const valueX = 450;
+              
+              doc.fontSize(10).font('Helvetica');
+              doc.text('Invoice Date:', labelX, yPos);
+              doc.text(invoice.issueDate || '-', valueX, yPos);
+              yPos += 18;
+              
+              doc.text('Terms:', labelX, yPos);
+              doc.text(invoice.terms || 'Due on Receipt', valueX, yPos);
+              yPos += 18;
+              
+              doc.text('Due Date:', labelX, yPos);
+              doc.text(invoice.dueDate, valueX, yPos);
+              yPos += 18;
+              
+              // Client info
+              yPos = 180;
+              if (client) {
+                doc.fontSize(10).font('Helvetica-Bold').text(client.displayName || 'Client', margin, yPos);
+                yPos += 16;
+                doc.font('Helvetica');
+                if (client.address) {
+                  doc.text(client.address, margin, yPos);
+                  yPos += 14;
+                }
+                if (client.email) {
+                  doc.text(client.email, margin, yPos);
+                  yPos += 14;
+                }
+              }
+              
+              // Line items table
+              yPos = 280;
+              const colX = [margin, margin + 30, margin + 250, margin + 300, margin + 370, margin + 440];
+              
+              // Table header
+              doc.fontSize(9).font('Helvetica-Bold');
+              doc.rect(margin, yPos - 5, contentWidth, 20).fill('#f5f5f5');
+              doc.fillColor('#333');
+              doc.text('#', colX[0], yPos);
+              doc.text('Description', colX[1], yPos);
+              doc.text('Qty', colX[2], yPos);
+              doc.text('Rate', colX[3], yPos);
+              doc.text('Discount', colX[4], yPos);
+              doc.text('Amount', colX[5], yPos);
+              
+              yPos += 25;
+              
+              // Table rows
+              doc.font('Helvetica').fontSize(9);
+              const lineItems = (invoice.lineItems || []) as InvoiceLineItem[];
+              lineItems.forEach((item, index) => {
+                doc.fillColor('#333');
+                doc.text((index + 1).toString(), colX[0], yPos);
+                doc.text(item.description, colX[1], yPos, { width: 200 });
+                doc.text(item.quantity.toFixed(2), colX[2], yPos);
+                doc.text(`$${(item.rate / 100).toFixed(2)}`, colX[3], yPos);
+                doc.text(item.discountPercent > 0 ? `${item.discountPercent}%` : '-', colX[4], yPos);
+                doc.text(`$${(item.amount / 100).toFixed(2)}`, colX[5], yPos);
+                yPos += 30;
+              });
+              
+              // Totals
+              yPos += 20;
+              const totalsX = 380;
+              const totalsValueX = 480;
+              
+              doc.font('Helvetica').fontSize(10);
+              doc.text('Sub Total', totalsX, yPos);
+              doc.text(`$${(invoice.subtotalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+              yPos += 20;
+              
+              doc.font('Helvetica-Bold');
+              doc.text('Total', totalsX, yPos);
+              doc.text(`$${(invoice.totalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+              yPos += 20;
+              
+              doc.text('Balance Due', totalsX, yPos);
+              doc.text(`$${(invoice.balanceDueCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+              
+              // Footer
+              yPos = 650;
+              doc.font('Helvetica').fontSize(10);
+              const footerText = invoice.footerText || settings?.defaultFooterText || 'Thanks for your business.';
+              doc.text(footerText, margin, yPos);
+              
+              doc.end();
+            });
+            
+            // Upload PDF to object storage
+            const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
+            if (bucketId) {
+              const storageKey = `invoices/${invoice.clientId}/${invoice.invoiceNumber}.pdf`;
+              const bucket = objectStorageClient.bucket(bucketId);
+              const file = bucket.file(storageKey);
+              await file.save(pdfBuffer, { contentType: 'application/pdf' });
+              
+              // Create document record
+              await storage.createDocument({
+                clientId: invoice.clientId,
+                invoiceId: invoice.invoiceId,
+                title: `${invoice.invoiceNumber}.pdf`,
+                docType: "invoice",
+                visibility: "client_and_admin",
+                contentType: "application/pdf",
+                fileSizeBytes: pdfBuffer.length,
+                storageBucket: bucketId,
+                storageKey,
+                uploadedByUserId: userId!,
+              });
+              
+              // Update invoice with PDF storage key
+              await storage.updateInvoice(invoiceId, { pdfStorageKey: storageKey });
+            }
+          } catch (pdfError) {
+            console.error("Error generating invoice PDF:", pdfError);
+            // Don't fail the status update, just log the PDF error
+          }
+        }
+        
         res.json(invoice);
       } catch (error) {
         console.error("Error updating invoice:", error);
