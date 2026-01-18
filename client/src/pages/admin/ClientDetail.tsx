@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2, Eye, ExternalLink, Copy, CheckCircle } from "lucide-react";
+import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2, Eye, ExternalLink, Copy, CheckCircle, Mail } from "lucide-react";
 import { Link, useRoute, useLocation } from "wouter";
 import { useAdminClient, useClientBillingItems, useCreateBillingItem, useDeleteBillingItem, useUpdateClientStatus, useUploadDocument, useToggleActiveAgreement, formatCents, formatDate } from "@/lib/api";
 import { Switch } from "@/components/ui/switch";
@@ -38,6 +38,7 @@ export default function ClientDetail() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [copied, setCopied] = useState(false);
+  const [sendingSignupEmail, setSendingSignupEmail] = useState(false);
   
   const [billingFormData, setBillingFormData] = useState({
     type: "rent",
@@ -56,6 +57,36 @@ export default function ClientDetail() {
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       toast({ title: "Error", description: "Failed to copy to clipboard", variant: "destructive" });
+    }
+  };
+
+  const handleSendSignupEmail = async () => {
+    if (!clientData?.email) {
+      toast({ title: "Error", description: "Client email is required to send signup email", variant: "destructive" });
+      return;
+    }
+
+    setSendingSignupEmail(true);
+    try {
+      const response = await fetch("/api/admin/send-signup-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ clientId }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || `Request failed with status ${response.status}`);
+      }
+
+      toast({ title: "Success", description: data.message || `Signup email sent to ${clientData.email}` });
+    } catch (error: any) {
+      console.error("Signup email error:", error);
+      toast({ title: "Failed to send signup email", description: error.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSendingSignupEmail(false);
     }
   };
   
@@ -292,6 +323,16 @@ export default function ClientDetail() {
             </div>
           </div>
           <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              className="gap-2" 
+              onClick={handleSendSignupEmail}
+              disabled={!client.email || sendingSignupEmail}
+              data-testid="button-send-signup-email"
+            >
+              {sendingSignupEmail ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
+              Send Signup Email
+            </Button>
             <Button variant="outline" className="gap-2" onClick={handleViewClientPortal} data-testid="button-view-portal">
               <ExternalLink size={16} /> View Client Portal
             </Button>

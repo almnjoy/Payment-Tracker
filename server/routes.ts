@@ -994,10 +994,15 @@ export async function registerRoutes(
           return res.json({
             id: null,
             signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
-            automationToken: null,
+            hasAutomationToken: false,
           });
         }
-        res.json(settings);
+        // Don't expose the actual token - just indicate if it's set
+        res.json({
+          id: settings.id,
+          signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
+          hasAutomationToken: !!settings.automationToken,
+        });
       } catch (error) {
         console.error("Error fetching automation settings:", error);
         res.status(500).json({ message: "Failed to fetch automation settings" });
@@ -1012,14 +1017,96 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const { signupEmailWebhookUrl, automationToken } = req.body;
+        
         const settings = await storage.upsertAutomationSettings({
           adminUserId: userId!,
-          ...req.body,
+          signupEmailWebhookUrl: signupEmailWebhookUrl ?? null,
+          automationToken: automationToken ?? null,
         });
-        res.json(settings);
+        
+        // Don't expose the actual token in response - just indicate if it's set
+        res.json({
+          id: settings.id,
+          signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
+          hasAutomationToken: !!settings.automationToken,
+        });
       } catch (error) {
         console.error("Error updating automation settings:", error);
         res.status(500).json({ message: "Failed to update automation settings" });
+      }
+    },
+  );
+
+  // Send Signup Email Webhook (server-side proxy to avoid CORS and token exposure)
+  app.post(
+    "/api/admin/send-signup-email",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { clientId } = req.body;
+        
+        if (!clientId) {
+          return res.status(400).json({ message: "clientId is required" });
+        }
+
+        // Get client data
+        const client = await storage.getClient(clientId);
+        if (!client) {
+          return res.status(404).json({ message: "Client not found" });
+        }
+
+        if (!client.email) {
+          return res.status(400).json({ message: "Client email is required to send signup email" });
+        }
+
+        // Get automation settings
+        const settings = await storage.getAutomationSettings();
+        const webhookUrl = settings?.signupEmailWebhookUrl;
+        
+        if (!webhookUrl) {
+          return res.status(400).json({ message: "Signup email webhook URL not configured. Please configure it in Settings > Automations" });
+        }
+
+        // Build payload
+        const baseUrl = process.env.REPLIT_DEV_DOMAIN 
+          ? `https://${process.env.REPLIT_DEV_DOMAIN}` 
+          : process.env.REPLIT_DOMAINS 
+            ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}` 
+            : "http://localhost:5000";
+        
+        const portalUrl = `${baseUrl}/auth/register`;
+        const payload = {
+          clientName: client.displayName,
+          clientEmail: client.email,
+          clientId: clientId,
+          portalUrl: portalUrl,
+        };
+
+        // Build headers
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (settings?.automationToken) {
+          headers["X-Automation-Token"] = settings.automationToken;
+        }
+
+        // Send webhook request
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          console.error("Webhook failed:", response.status, await response.text());
+          return res.status(502).json({ message: `Webhook returned ${response.status}` });
+        }
+
+        console.log(`Signup email webhook sent for client ${clientId} to ${client.email}`);
+        res.json({ success: true, message: `Signup email sent to ${client.email}` });
+      } catch (error: any) {
+        console.error("Error sending signup email webhook:", error);
+        res.status(500).json({ message: error.message || "Failed to send signup email" });
       }
     },
   );

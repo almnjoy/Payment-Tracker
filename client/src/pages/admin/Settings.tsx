@@ -323,17 +323,16 @@ function PaymentSettingsCard() {
 interface AutomationSettings {
   id: string | null;
   signupEmailWebhookUrl: string | null;
-  automationToken: string | null;
+  hasAutomationToken: boolean;
 }
 
 function AutomationSettingsCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<AutomationSettings>({
-    id: null,
+  const [formData, setFormData] = useState({
     signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
-    automationToken: "",
+    automationToken: "", // For new token entry only - never populated from server
   });
 
   const { data: settings, isLoading } = useQuery<AutomationSettings>({
@@ -347,16 +346,16 @@ function AutomationSettingsCard() {
 
   useEffect(() => {
     if (settings) {
-      setFormData({
-        id: settings.id,
+      setFormData(prev => ({
+        ...prev,
         signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
-        automationToken: settings.automationToken || "",
-      });
+        // Don't populate automationToken from server - it's never returned
+      }));
     }
   }, [settings]);
 
   const saveMutation = useMutation({
-    mutationFn: async (data: Partial<AutomationSettings>) => {
+    mutationFn: async (data: { signupEmailWebhookUrl: string | null; automationToken: string | null }) => {
       const response = await fetch("/api/admin/automation-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -370,6 +369,8 @@ function AutomationSettingsCard() {
       queryClient.invalidateQueries({ queryKey: ["admin", "automation-settings"] });
       toast({ title: "Settings Saved", description: "Automation settings have been updated." });
       setIsEditing(false);
+      // Clear the token field after save
+      setFormData(prev => ({ ...prev, automationToken: "" }));
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -386,9 +387,8 @@ function AutomationSettingsCard() {
   const handleCancel = () => {
     if (settings) {
       setFormData({
-        id: settings.id,
         signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
-        automationToken: settings.automationToken || "",
+        automationToken: "", // Reset token field
       });
     }
     setIsEditing(false);
@@ -463,7 +463,7 @@ function AutomationSettingsCard() {
                 Webhook URL: <span className="font-medium text-gray-900 break-all">{settings?.signupEmailWebhookUrl || "Not configured"}</span>
               </p>
               <p className="text-gray-600">
-                Token: <span className="font-medium text-gray-900">{settings?.automationToken ? "••••••••" : "Not set"}</span>
+                Token: <span className="font-medium text-gray-900">{settings?.hasAutomationToken ? "••••••••" : "Not set"}</span>
               </p>
             </div>
           )}

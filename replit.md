@@ -18,6 +18,7 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 - **Active Agreement**: Mark one document as active agreement per client; shown on client dashboard
 - **Period-Based Recurrence System**: Global time frame selector (weekly, bi-weekly, monthly, yearly) applies multipliers to calculate accurate totals
 - **Plaid Transaction Types**: Transactions can be categorized by finance type (income, bill, debt, holding, other) with override support
+- **Client Signup Email Webhook**: Admin can send signup emails to clients via n8n/Zapier webhook integration (Settings > Automations)
 
 ## Payment Status Flow
 1. Client submits payment via Payments page → status: **pending**
@@ -63,6 +64,7 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 11. **plaid_transactions** - Transactions synced from Plaid
 12. **plaid_cursors** - Sync cursors for transactions
 13. **client_billing_items** - Per-client charges (rent/other) with frequency tracking
+14. **automation_settings** - Webhook URLs and tokens for automation integrations
 
 ## Authentication Flow
 1. Users authenticate via Replit Auth (/api/login)
@@ -106,6 +108,8 @@ Run `npx tsx server/seed.ts` to populate test data:
 - GET/POST `/api/admin/documents` - List/upload documents
 - GET/POST `/api/admin/invite-codes` - List/create invite codes
 - GET `/api/admin/stats` - Dashboard statistics
+- GET/PUT `/api/admin/automation-settings` - Manage automation settings (webhooks)
+- POST `/api/admin/send-signup-email` - Send signup email via configured webhook
 
 ### Plaid Integration (Admin Only)
 - POST `/api/admin/plaid/link-token` - Create Plaid Link token
