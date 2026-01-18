@@ -20,15 +20,22 @@ import {
   financeEntries,
   clientBillingItems,
   clients,
+  invoices,
+  invoiceSettings,
   generatePlaidItemId,
   generatePlaidAccountRowId,
   generatePlaidTransactionRowId,
   generateFinanceEntryId,
   generateClientBillingItemId,
   generateRecurringGroupId,
+  formatInvoiceNumber,
   insertFinanceEntrySchema,
   insertClientBillingItemSchema,
+  insertInvoiceSettingsSchema,
+  type InvoiceLineItem,
+  type InvoiceSettings,
 } from "@shared/schema";
+import PDFDocument from "pdfkit";
 import {
   getRecurrenceMultiplier,
   isOneTimeInRange,
@@ -442,6 +449,430 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error updating invoice:", error);
         res.status(500).json({ message: "Failed to update invoice" });
+      }
+    },
+  );
+
+  app.get(
+    "/api/admin/invoices/:invoiceId",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { invoiceId } = req.params;
+        const invoice = await storage.getInvoice(invoiceId);
+        if (!invoice) {
+          return res.status(404).json({ message: "Invoice not found" });
+        }
+        res.json(invoice);
+      } catch (error) {
+        console.error("Error fetching invoice:", error);
+        res.status(500).json({ message: "Failed to fetch invoice" });
+      }
+    },
+  );
+
+  // ============================================
+  // ADMIN: INVOICE SETTINGS
+  // ============================================
+
+  app.get(
+    "/api/admin/invoice-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const [settings] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.adminUserId, userId!));
+        
+        if (!settings) {
+          // Return default settings if none exist
+          return res.json({
+            id: null,
+            businessLogo: null,
+            businessName: "",
+            businessAddress: "",
+            businessEmail: "",
+            defaultTerms: "Due on Receipt",
+            defaultFooterText: "Thanks for your business.",
+            invoicePrefix: "INV-",
+            nextInvoiceNumber: 1,
+          });
+        }
+        res.json(settings);
+      } catch (error) {
+        console.error("Error fetching invoice settings:", error);
+        res.status(500).json({ message: "Failed to fetch invoice settings" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/invoice-settings",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const settingsId = `IS-${userId}`;
+        
+        const [existing] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.id, settingsId));
+        
+        if (existing) {
+          // Update existing
+          const [updated] = await db
+            .update(invoiceSettings)
+            .set({ ...req.body, updatedAt: new Date() })
+            .where(eq(invoiceSettings.id, settingsId))
+            .returning();
+          return res.json(updated);
+        }
+        
+        // Create new
+        const [created] = await db
+          .insert(invoiceSettings)
+          .values({
+            id: settingsId,
+            adminUserId: userId!,
+            ...req.body,
+          })
+          .returning();
+        res.status(201).json(created);
+      } catch (error) {
+        console.error("Error saving invoice settings:", error);
+        res.status(500).json({ message: "Failed to save invoice settings" });
+      }
+    },
+  );
+
+  // Logo upload for invoice settings
+  app.post(
+    "/api/admin/invoice-settings/logo",
+    isAuthenticated,
+    isAdmin,
+    upload.single("logo"),
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const file = req.file;
+        
+        if (!file) {
+          return res.status(400).json({ message: "No file uploaded" });
+        }
+        
+        // Upload to object storage
+        const key = `invoice-logos/${userId}-${Date.now()}-${file.originalname}`;
+        await objectStorageService.upload(key, file.buffer, file.mimetype);
+        const publicUrl = await objectStorageService.getPublicUrl(key);
+        
+        // Update settings with logo URL
+        const settingsId = `IS-${userId}`;
+        const [existing] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.id, settingsId));
+        
+        if (existing) {
+          await db
+            .update(invoiceSettings)
+            .set({ businessLogo: publicUrl, updatedAt: new Date() })
+            .where(eq(invoiceSettings.id, settingsId));
+        } else {
+          await db
+            .insert(invoiceSettings)
+            .values({
+              id: settingsId,
+              adminUserId: userId!,
+              businessLogo: publicUrl,
+            });
+        }
+        
+        res.json({ url: publicUrl });
+      } catch (error) {
+        console.error("Error uploading logo:", error);
+        res.status(500).json({ message: "Failed to upload logo" });
+      }
+    },
+  );
+
+  // Get next invoice number
+  app.get(
+    "/api/admin/invoice-settings/next-number",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const [settings] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.adminUserId, userId!));
+        
+        const prefix = settings?.invoicePrefix || "INV-";
+        const nextNum = settings?.nextInvoiceNumber || 1;
+        
+        res.json({
+          prefix,
+          nextNumber: nextNum,
+          formatted: formatInvoiceNumber(prefix, nextNum),
+        });
+      } catch (error) {
+        console.error("Error getting next invoice number:", error);
+        res.status(500).json({ message: "Failed to get next invoice number" });
+      }
+    },
+  );
+
+  // Generate PDF for invoice
+  app.get(
+    "/api/admin/invoices/:invoiceId/pdf",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { invoiceId } = req.params;
+        const userId = getUserId(req);
+        
+        // Get invoice
+        const invoice = await storage.getInvoice(invoiceId);
+        if (!invoice) {
+          return res.status(404).json({ message: "Invoice not found" });
+        }
+        
+        // Get client
+        const client = await storage.getClient(invoice.clientId);
+        
+        // Get settings
+        const [settings] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.adminUserId, userId!));
+        
+        // Create PDF
+        const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+        const chunks: Buffer[] = [];
+        
+        doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+        doc.on('end', async () => {
+          const pdfBuffer = Buffer.concat(chunks);
+          
+          // Return the PDF
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `inline; filename="${invoice.invoiceNumber}.pdf"`);
+          res.send(pdfBuffer);
+        });
+        
+        // ============================================
+        // PDF CONTENT
+        // ============================================
+        
+        const pageWidth = 612;
+        const margin = 50;
+        const contentWidth = pageWidth - (margin * 2);
+        
+        // Header - INVOICE title
+        doc.fontSize(28).font('Helvetica-Bold').text('INVOICE', margin, margin, { align: 'right' });
+        doc.fontSize(12).font('Helvetica').text(`# ${invoice.invoiceNumber}`, { align: 'right' });
+        
+        // Balance due box
+        doc.moveDown(0.5);
+        doc.fontSize(10).text('Balance Due', { align: 'right' });
+        doc.fontSize(18).font('Helvetica-Bold').text(
+          `$${(invoice.balanceDueCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+          { align: 'right' }
+        );
+        
+        // Business info (left side)
+        let yPos = margin;
+        if (settings?.businessName) {
+          doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+          yPos += 20;
+        }
+        if (settings?.businessAddress) {
+          doc.fontSize(10).font('Helvetica');
+          const addressLines = settings.businessAddress.split('\n');
+          addressLines.forEach(line => {
+            doc.text(line, margin, yPos);
+            yPos += 14;
+          });
+        }
+        if (settings?.businessEmail) {
+          doc.text(settings.businessEmail, margin, yPos);
+          yPos += 14;
+        }
+        
+        // Invoice details section
+        yPos = 180;
+        const labelX = 350;
+        const valueX = 450;
+        
+        doc.fontSize(10).font('Helvetica');
+        doc.text('Invoice Date:', labelX, yPos);
+        doc.text(invoice.issueDate || '-', valueX, yPos);
+        yPos += 18;
+        
+        doc.text('Terms:', labelX, yPos);
+        doc.text(invoice.terms || 'Due on Receipt', valueX, yPos);
+        yPos += 18;
+        
+        doc.text('Due Date:', labelX, yPos);
+        doc.text(invoice.dueDate, valueX, yPos);
+        yPos += 18;
+        
+        // Client info
+        yPos = 180;
+        if (client) {
+          doc.fontSize(10).font('Helvetica-Bold').text(client.displayName || 'Client', margin, yPos);
+          yPos += 16;
+          doc.font('Helvetica');
+          if (client.address) {
+            doc.text(client.address, margin, yPos);
+            yPos += 14;
+          }
+          if (client.email) {
+            doc.text(client.email, margin, yPos);
+            yPos += 14;
+          }
+        }
+        
+        // Line items table
+        yPos = 280;
+        const tableTop = yPos;
+        const colWidths = [30, 220, 50, 70, 70, 70];
+        const colX = [margin, margin + 30, margin + 250, margin + 300, margin + 370, margin + 440];
+        
+        // Table header
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.rect(margin, yPos - 5, contentWidth, 20).fill('#f5f5f5');
+        doc.fillColor('#333');
+        doc.text('#', colX[0], yPos);
+        doc.text('Description', colX[1], yPos);
+        doc.text('Qty', colX[2], yPos);
+        doc.text('Rate', colX[3], yPos);
+        doc.text('Discount', colX[4], yPos);
+        doc.text('Amount', colX[5], yPos);
+        
+        yPos += 25;
+        
+        // Table rows
+        doc.font('Helvetica').fontSize(9);
+        const lineItems = (invoice.lineItems || []) as InvoiceLineItem[];
+        lineItems.forEach((item, index) => {
+          doc.fillColor('#333');
+          doc.text((index + 1).toString(), colX[0], yPos);
+          doc.text(item.description, colX[1], yPos, { width: 200 });
+          doc.text(item.quantity.toFixed(2), colX[2], yPos);
+          doc.text(`$${(item.rate / 100).toFixed(2)}`, colX[3], yPos);
+          doc.text(item.discountPercent > 0 ? `${item.discountPercent}%` : '-', colX[4], yPos);
+          doc.text(`$${(item.amount / 100).toFixed(2)}`, colX[5], yPos);
+          yPos += 30;
+        });
+        
+        // Totals
+        yPos += 20;
+        const totalsX = 380;
+        const totalsValueX = 480;
+        
+        doc.font('Helvetica').fontSize(10);
+        doc.text('Sub Total', totalsX, yPos);
+        doc.text(`$${(invoice.subtotalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+        yPos += 20;
+        
+        doc.font('Helvetica-Bold');
+        doc.text('Total', totalsX, yPos);
+        doc.text(`$${(invoice.totalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+        yPos += 20;
+        
+        doc.text('Balance Due', totalsX, yPos);
+        doc.text(`$${(invoice.balanceDueCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+        
+        // Footer
+        yPos = 650;
+        doc.font('Helvetica').fontSize(10);
+        const footerText = invoice.footerText || settings?.defaultFooterText || 'Thanks for your business.';
+        doc.text(footerText, margin, yPos);
+        
+        doc.end();
+      } catch (error) {
+        console.error("Error generating PDF:", error);
+        res.status(500).json({ message: "Failed to generate PDF" });
+      }
+    },
+  );
+
+  // Create invoice with auto-numbering
+  app.post(
+    "/api/admin/invoices/create",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        
+        // Get settings for auto-numbering
+        const settingsId = `IS-${userId}`;
+        let [settings] = await db
+          .select()
+          .from(invoiceSettings)
+          .where(eq(invoiceSettings.id, settingsId));
+        
+        const prefix = settings?.invoicePrefix || "INV-";
+        const nextNum = settings?.nextInvoiceNumber || 1;
+        const invoiceNumber = formatInvoiceNumber(prefix, nextNum);
+        
+        // Calculate totals
+        const lineItems = (req.body.lineItems || []) as InvoiceLineItem[];
+        const subtotalCents = lineItems.reduce((sum, item) => sum + item.amount, 0);
+        const taxPercent = req.body.taxPercent || 0;
+        const taxCents = Math.round(subtotalCents * (taxPercent / 100));
+        const totalCents = subtotalCents + taxCents;
+        const balanceDueCents = totalCents;
+        
+        // Create invoice
+        const invoice = await storage.createInvoice({
+          clientId: req.body.clientId,
+          invoiceNumber,
+          title: req.body.title || `Invoice ${invoiceNumber}`,
+          issueDate: req.body.issueDate || new Date().toISOString().split('T')[0],
+          dueDate: req.body.dueDate,
+          terms: req.body.terms || settings?.defaultTerms || "Due on Receipt",
+          lineItems,
+          subtotalCents,
+          taxPercent,
+          taxCents,
+          totalCents,
+          amountCents: totalCents,
+          balanceDueCents,
+          status: req.body.status || "draft",
+          footerText: req.body.footerText || settings?.defaultFooterText,
+        });
+        
+        // Increment next invoice number
+        if (settings) {
+          await db
+            .update(invoiceSettings)
+            .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
+            .where(eq(invoiceSettings.id, settingsId));
+        } else {
+          await db
+            .insert(invoiceSettings)
+            .values({
+              id: settingsId,
+              adminUserId: userId!,
+              nextInvoiceNumber: 2,
+            });
+        }
+        
+        res.status(201).json(invoice);
+      } catch (error) {
+        console.error("Error creating invoice:", error);
+        res.status(500).json({ message: "Failed to create invoice" });
       }
     },
   );

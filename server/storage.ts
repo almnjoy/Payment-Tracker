@@ -217,17 +217,26 @@ export class DatabaseStorage implements IStorage {
 
   async createInvoice(data: InsertInvoice): Promise<Invoice> {
     const invoiceId = generateInvoiceId();
+    const insertData = {
+      ...data,
+      invoiceId,
+      lineItems: data.lineItems || [],
+    };
     const [invoice] = await db
       .insert(invoices)
-      .values({ ...data, invoiceId })
+      .values(insertData as any)
       .returning();
     return invoice;
   }
 
   async updateInvoice(invoiceId: string, data: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const updateData = {
+      ...data,
+      updatedAt: new Date(),
+    };
     const [invoice] = await db
       .update(invoices)
-      .set({ ...data, updatedAt: new Date() })
+      .set(updateData as any)
       .where(eq(invoices.invoiceId, invoiceId))
       .returning();
     return invoice;

@@ -1,0 +1,94 @@
+Build a functional PDF-based Invoice Generator system.
+
+REFERENCE:
+Use the uploaded invoice PDF as the visual/layout reference for the default invoice template.
+The goal is NOT pixel-perfect editing, but structured data rendered into a professional PDF.
+
+GOAL:
+Turn the existing Invoice Generator page into a real, usable invoice system similar in concept to Zoho Invoice, but simpler.
+
+CORE REQUIREMENTS:
+
+1) Invoice Settings (Saved Defaults)
+Create a persistent Invoice Settings model that includes:
+- businessLogo (image upload)
+- businessName
+- businessAddress
+- businessEmail
+- defaultTerms
+- defaultFooterText
+- invoicePrefix (default: "INV-")
+- nextInvoiceNumber (auto-increment)
+
+These settings:
+- Are editable in the app
+- Are reused for every new invoice
+- Can be overridden per invoice if needed
+
+2) Invoice Data Model
+Each invoice should store:
+- invoiceNumber (auto-generated using prefix + counter)
+- clientId
+- issueDate
+- dueDate
+- terms
+- lineItems[] with:
+  - description
+  - quantity
+  - rate
+  - discount
+  - calculated amount
+- subtotal
+- tax (default 0)
+- total
+- balanceDue
+- status (draft, sent, paid)
+
+3) Invoice Editor UI (Extend existing page)
+Enhance the current Invoice Generator page to:
+- Pre-fill business info from Invoice Settings
+- Allow editing:
+  - Invoice number
+  - Dates
+  - Terms
+  - Line items
+- Auto-calculate totals
+- Save invoice as draft
+- Preview invoice before generating PDF
+
+4) PDF Template Rendering
+Create ONE default invoice PDF template that includes:
+- Logo (top-left)
+- Invoice number + balance due (top-right)
+- Business info
+- Client info
+- Invoice date, due date, terms
+- Line item table:
+  # | Description | Qty | Rate | Discount | Amount
+- Subtotal, Total, Balance Due
+- Footer text
+
+Render the PDF dynamically from invoice data.
+Do NOT hardcode values.
+
+5) Preview + Download
+- “Preview” button shows a PDF preview
+- “Generate” creates and stores the PDF
+- Allow download of the generated PDF
+
+6) Persistence
+- Generated PDFs should be stored and linked to the invoice
+- Invoice drafts can be edited and regenerated
+
+RULES:
+- Do NOT implement payments yet
+- Do NOT implement email sending yet
+- Do NOT over-engineer templates
+- Focus on correctness, clarity, and reusability
+
+ACCEPTANCE TESTS:
+- I can set my logo and business info once
+- I can create an invoice with line items
+- I can preview the invoice as a PDF
+- The PDF matches the reference invoice layout logically
+- Invoice numbers auto-increment correctly

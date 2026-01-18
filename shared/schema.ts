@@ -137,16 +137,64 @@ export type InsertInviteCode = z.infer<typeof insertInviteCodeSchema>;
 export type InviteCode = typeof inviteCodes.$inferSelect;
 
 // ============================================
+// INVOICE SETTINGS (Business defaults)
+// ============================================
+export const invoiceSettings = pgTable("invoice_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  adminUserId: varchar("admin_user_id").notNull(),
+  businessLogo: text("business_logo"), // URL to stored logo image
+  businessName: text("business_name"),
+  businessAddress: text("business_address"),
+  businessEmail: text("business_email"),
+  defaultTerms: text("default_terms").default("Due on Receipt"),
+  defaultFooterText: text("default_footer_text").default("Thanks for your business."),
+  invoicePrefix: text("invoice_prefix").default("INV-"),
+  nextInvoiceNumber: integer("next_invoice_number").default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertInvoiceSettingsSchema = createInsertSchema(invoiceSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertInvoiceSettings = z.infer<typeof insertInvoiceSettingsSchema>;
+export type InvoiceSettings = typeof invoiceSettings.$inferSelect;
+
+// Line item schema for invoice line items (stored as JSONB)
+export const invoiceLineItemSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  quantity: z.number(),
+  rate: z.number(), // in cents
+  discountPercent: z.number().default(0),
+  amount: z.number(), // in cents (calculated)
+});
+export type InvoiceLineItem = z.infer<typeof invoiceLineItemSchema>;
+
+// ============================================
 // INVOICES (Bills owed)
 // ============================================
 export const invoices = pgTable("invoices", {
   invoiceId: varchar("invoice_id").primaryKey(),
+  invoiceNumber: varchar("invoice_number").notNull(), // e.g., "INV-000001"
   clientId: varchar("client_id").notNull(),
   leaseId: varchar("lease_id"),
   title: text("title").notNull(),
-  amountCents: integer("amount_cents").notNull(),
+  issueDate: date("issue_date").notNull(),
   dueDate: date("due_date").notNull(),
-  status: text("status").notNull().default("open"),
+  terms: text("terms").default("Due on Receipt"),
+  lineItems: jsonb("line_items").$type<InvoiceLineItem[]>().default([]),
+  subtotalCents: integer("subtotal_cents").notNull().default(0),
+  taxPercent: integer("tax_percent").default(0),
+  taxCents: integer("tax_cents").default(0),
+  totalCents: integer("total_cents").notNull().default(0),
+  amountCents: integer("amount_cents").notNull(), // Legacy field for compatibility
+  balanceDueCents: integer("balance_due_cents").notNull().default(0),
+  status: text("status").notNull().default("draft"), // draft, sent, paid
+  pdfStorageKey: text("pdf_storage_key"), // Object storage key for generated PDF
+  footerText: text("footer_text"),
   stripeInvoiceId: varchar("stripe_invoice_id"),
   stripeHostedInvoiceUrl: text("stripe_hosted_invoice_url"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -590,4 +638,12 @@ export function generateFinanceEntryId(): string {
 export function generateClientBillingItemId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
   return `CBI-${num.toString().padStart(6, "0")}`;
+}
+
+export function generateInvoiceSettingsId(): string {
+  return `IS-default`;
+}
+
+export function formatInvoiceNumber(prefix: string, num: number): string {
+  return `${prefix}${num.toString().padStart(6, "0")}`;
 }
