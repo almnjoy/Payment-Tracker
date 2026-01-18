@@ -1034,10 +1034,7 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Invoice not found" });
         }
         
-        // Get client
-        const client = await storage.getClient(invoice.clientId);
-        
-        // Get settings
+        // Get settings (no client needed - using billTo fields)
         const [settings] = await db
           .select()
           .from(invoiceSettings)
@@ -1114,20 +1111,22 @@ export async function registerRoutes(
         doc.text(invoice.dueDate, valueX, yPos);
         yPos += 18;
         
-        // Client info
+        // Bill To info (standalone invoice - no client link)
         yPos = 180;
-        if (client) {
-          doc.fontSize(10).font('Helvetica-Bold').text(client.displayName || 'Client', margin, yPos);
-          yPos += 16;
-          doc.font('Helvetica');
-          if (client.address) {
-            doc.text(client.address, margin, yPos);
+        const billToName = invoice.billToName || 'Bill To';
+        doc.fontSize(10).font('Helvetica-Bold').text(billToName, margin, yPos);
+        yPos += 16;
+        doc.font('Helvetica');
+        if (invoice.billToAddress) {
+          const addressLines = invoice.billToAddress.split('\n');
+          addressLines.forEach(line => {
+            doc.text(line, margin, yPos);
             yPos += 14;
-          }
-          if (client.email) {
-            doc.text(client.email, margin, yPos);
-            yPos += 14;
-          }
+          });
+        }
+        if (invoice.billToEmail) {
+          doc.text(invoice.billToEmail, margin, yPos);
+          yPos += 14;
         }
         
         // Line items table
@@ -1223,9 +1222,11 @@ export async function registerRoutes(
         const totalCents = subtotalCents + taxCents;
         const balanceDueCents = totalCents;
         
-        // Create invoice
+        // Create invoice (standalone - no client link required)
         const invoice = await storage.createInvoice({
-          clientId: req.body.clientId,
+          billToName: req.body.billToName,
+          billToEmail: req.body.billToEmail || null,
+          billToAddress: req.body.billToAddress || null,
           invoiceNumber,
           title: req.body.title || `Invoice ${invoiceNumber}`,
           issueDate: req.body.issueDate || new Date().toISOString().split('T')[0],

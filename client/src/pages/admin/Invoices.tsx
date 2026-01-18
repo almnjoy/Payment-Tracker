@@ -25,16 +25,13 @@ interface LineItem {
   amount: number;
 }
 
-interface Client {
-  clientId: string;
-  displayName: string;
-  email: string;
-}
-
 interface Invoice {
   invoiceId: string;
   invoiceNumber: string;
-  clientId: string;
+  clientId?: string; // Optional - backwards compatibility
+  billToName?: string;
+  billToEmail?: string;
+  billToAddress?: string;
   title: string;
   issueDate: string;
   dueDate: string;
@@ -47,6 +44,7 @@ interface Invoice {
   balanceDueCents: number;
   status: string;
   footerText: string | null;
+  pdfStorageKey?: string;
   createdAt: string;
 }
 
@@ -76,7 +74,9 @@ export default function AdminInvoices() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    clientId: "",
+    billToName: "",
+    billToEmail: "",
+    billToAddress: "",
     title: "",
     issueDate: new Date().toISOString().split('T')[0],
     dueDate: "",
@@ -92,10 +92,6 @@ export default function AdminInvoices() {
 
   const { data: invoices = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
     queryKey: ["/api/admin/invoices"],
-  });
-
-  const { data: clients = [] } = useQuery<Client[]>({
-    queryKey: ["/api/admin/clients"],
   });
 
   const createInvoiceMutation = useMutation({
@@ -133,7 +129,9 @@ export default function AdminInvoices() {
   const resetForm = () => {
     setSelectedInvoice(null);
     setFormData({
-      clientId: "",
+      billToName: "",
+      billToEmail: "",
+      billToAddress: "",
       title: "",
       issueDate: new Date().toISOString().split('T')[0],
       dueDate: "",
@@ -155,7 +153,9 @@ export default function AdminInvoices() {
   const openEditInvoice = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
     setFormData({
-      clientId: invoice.clientId,
+      billToName: invoice.billToName || "",
+      billToEmail: invoice.billToEmail || "",
+      billToAddress: invoice.billToAddress || "",
       title: invoice.title,
       issueDate: invoice.issueDate,
       dueDate: invoice.dueDate,
@@ -202,8 +202,8 @@ export default function AdminInvoices() {
   const totalCents = subtotalCents + taxCents;
 
   const handleSave = () => {
-    if (!formData.clientId) {
-      toast({ title: "Error", description: "Please select a client.", variant: "destructive" });
+    if (!formData.billToName?.trim()) {
+      toast({ title: "Error", description: "Please enter a Bill To name.", variant: "destructive" });
       return;
     }
     if (!formData.dueDate) {
@@ -273,18 +273,14 @@ export default function AdminInvoices() {
     };
   }, [pdfUrl]);
 
-  const getClientName = (clientId: string) => {
-    const client = clients.find(c => c.clientId === clientId);
-    return client?.displayName || "Unknown Client";
-  };
-
+  
   return (
     <Layout role="admin">
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Invoices</h2>
-            <p className="text-gray-500">Create and manage client invoices.</p>
+            <p className="text-gray-500">Create and manage invoices.</p>
           </div>
           <div className="flex gap-3">
             <Link href="/admin/invoice-settings">
@@ -322,7 +318,7 @@ export default function AdminInvoices() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Invoice #</TableHead>
-                    <TableHead>Client</TableHead>
+                    <TableHead>Bill To</TableHead>
                     <TableHead>Issue Date</TableHead>
                     <TableHead>Due Date</TableHead>
                     <TableHead>Total</TableHead>
@@ -334,7 +330,7 @@ export default function AdminInvoices() {
                   {invoices.map(invoice => (
                     <TableRow key={invoice.invoiceId} data-testid={`row-invoice-${invoice.invoiceId}`}>
                       <TableCell className="font-mono font-medium">{invoice.invoiceNumber}</TableCell>
-                      <TableCell>{getClientName(invoice.clientId)}</TableCell>
+                      <TableCell>{invoice.billToName || "-"}</TableCell>
                       <TableCell>{invoice.issueDate}</TableCell>
                       <TableCell>{invoice.dueDate}</TableCell>
                       <TableCell className="font-medium">{formatCurrency(invoice.totalCents)}</TableCell>
@@ -386,25 +382,43 @@ export default function AdminInvoices() {
           </DialogHeader>
 
           <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Client</Label>
-                <Select
-                  value={formData.clientId}
-                  onValueChange={(v) => setFormData(prev => ({ ...prev, clientId: v }))}
-                >
-                  <SelectTrigger data-testid="select-client">
-                    <SelectValue placeholder="Select a client" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map(client => (
-                      <SelectItem key={client.clientId} value={client.clientId}>
-                        {client.displayName} ({client.email})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {/* Bill To Section */}
+            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <Label className="text-base font-semibold mb-3 block">Bill To</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-sm text-gray-600">Name *</Label>
+                  <Input
+                    value={formData.billToName}
+                    onChange={(e) => setFormData(prev => ({ ...prev, billToName: e.target.value }))}
+                    placeholder="Company or person name"
+                    data-testid="input-bill-to-name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm text-gray-600">Email</Label>
+                  <Input
+                    type="email"
+                    value={formData.billToEmail}
+                    onChange={(e) => setFormData(prev => ({ ...prev, billToEmail: e.target.value }))}
+                    placeholder="email@example.com"
+                    data-testid="input-bill-to-email"
+                  />
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <Label className="text-sm text-gray-600">Address</Label>
+                  <Textarea
+                    value={formData.billToAddress}
+                    onChange={(e) => setFormData(prev => ({ ...prev, billToAddress: e.target.value }))}
+                    placeholder="Street address, City, State, ZIP"
+                    rows={2}
+                    data-testid="input-bill-to-address"
+                  />
+                </div>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
               <div className="space-y-2">
                 <Label>Status</Label>
                 <Select
