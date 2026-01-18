@@ -22,6 +22,7 @@ import AdminSettings from "@/pages/admin/Settings";
 import AccountSummaries from "@/pages/admin/AccountSummaries";
 import SpendingHabits from "@/pages/admin/SpendingHabits";
 import FinanceTracker from "@/pages/admin/FinanceTracker";
+import InvoiceSettings from "@/pages/admin/InvoiceSettings";
 
 function Router() {
   return (
@@ -43,6 +44,7 @@ function Router() {
       <Route path="/admin/clients/:id" component={ClientDetail} />
       <Route path="/admin/documents" component={AdminDocuments} />
       <Route path="/admin/invoices" component={AdminInvoices} />
+      <Route path="/admin/invoice-settings" component={InvoiceSettings} />
       <Route path="/admin/settings" component={AdminSettings} />
       
       {/* New Admin Finance Routes */}
