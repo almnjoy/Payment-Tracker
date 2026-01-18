@@ -414,6 +414,8 @@ export interface PlaidTransaction {
   amount_cents: number;
   pending: boolean;
   category_primary: string | null;
+  override_finance_type: string | null;
+  effective_finance_type: string | null;
 }
 
 export interface PlaidAccountTransactions {
@@ -428,6 +430,7 @@ export interface PlaidAccountTransactions {
     availableBalanceCents: number | null;
     institution_name: string | null;
     last_sync_at: string | null;
+    default_finance_type: string | null;
   };
   transactions: PlaidTransaction[];
 }

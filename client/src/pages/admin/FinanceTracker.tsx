@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight } from "lucide-react";
 import { 
   useAdminPlaidSyncStatus, 
   useAdminPlaidFinanceTotals, 
@@ -18,11 +21,26 @@ import {
   useSyncPlaidTransactions,
   useAllBillingItems,
   useAdminClients,
+  useAdminPlaidAccountSummaries,
+  useAdminPlaidAccountTransactions,
+  useUpdateAccountDefaultType,
+  useUpdateTransactionType,
   formatCents,
-  formatDate
+  formatDate,
+  FinanceType
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+
+type FinanceTypeValue = "income" | "bill" | "debt" | "holding" | "other";
+const FINANCE_TYPES: { value: FinanceTypeValue | "none"; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "income", label: "Income" },
+  { value: "bill", label: "Bill" },
+  { value: "debt", label: "Debt" },
+  { value: "holding", label: "Holding" },
+  { value: "other", label: "Other" },
+];
 
 export default function FinanceTracker() {
   const [activeTab, setActiveTab] = useState("income");
@@ -38,16 +56,38 @@ export default function FinanceTracker() {
     externalUrl: "",
   });
   
+  // Modal states
+  const [institutionsModalOpen, setInstitutionsModalOpen] = useState(false);
+  const [accountsModalOpen, setAccountsModalOpen] = useState(false);
+  const [lastSyncModalOpen, setLastSyncModalOpen] = useState(false);
+  const [incomeModalOpen, setIncomeModalOpen] = useState(false);
+  const [transactionsModalOpen, setTransactionsModalOpen] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [transactionSearch, setTransactionSearch] = useState("");
+  
   const { toast } = useToast();
   const syncStatus = useAdminPlaidSyncStatus();
   const financeTotals = useAdminPlaidFinanceTotals(parseInt(dateRange));
   const entries = useAdminFinanceEntries(activeTab);
   const plaidAccounts = useAdminPlaidAllAccounts();
+  const accountSummaries = useAdminPlaidAccountSummaries();
   const createEntry = useCreateFinanceEntry();
   const deleteEntry = useDeleteFinanceEntry();
   const syncTransactions = useSyncPlaidTransactions();
   const billingItems = useAllBillingItems();
   const clients = useAdminClients();
+  const updateAccountType = useUpdateAccountDefaultType();
+  const updateTransactionType = useUpdateTransactionType();
+  
+  // Date range for transactions
+  const dateRangeMs = parseInt(dateRange) * 24 * 60 * 60 * 1000;
+  const endDate = new Date().toISOString().split("T")[0];
+  const startDate = new Date(Date.now() - dateRangeMs).toISOString().split("T")[0];
+  
+  const accountTransactions = useAdminPlaidAccountTransactions(
+    selectedAccountId,
+    { startDate, endDate, search: transactionSearch || undefined }
+  );
 
   const handleCreateEntry = async () => {
     if (!formData.title || !formData.amountCents) {
@@ -104,6 +144,32 @@ export default function FinanceTracker() {
     }
   };
 
+  const handleAccountTypeChange = async (accountId: string, value: string) => {
+    const newType = value === "none" ? null : value as FinanceType;
+    try {
+      await updateAccountType.mutateAsync({ accountId, defaultFinanceType: newType });
+      toast({ title: "Account type updated" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleTransactionTypeChange = async (transactionId: string, value: string) => {
+    const newType = value === "none" ? null : value as FinanceType;
+    try {
+      await updateTransactionType.mutateAsync({ transactionId, overrideFinanceType: newType });
+      toast({ title: "Transaction type updated" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const openTransactionsModal = (plaidAccountId: string) => {
+    setSelectedAccountId(plaidAccountId);
+    setTransactionSearch("");
+    setTransactionsModalOpen(true);
+  };
+
   const currentEntries = entries.data || [];
   const manualTotal = currentEntries.reduce((sum, entry) => sum + entry.amountCents, 0);
 
@@ -129,6 +195,40 @@ export default function FinanceTracker() {
   };
 
   const plaidTotal = getPlaidTotalForTab();
+
+  // Group accounts by institution for the institutions modal
+  const accountsByInstitution = useMemo(() => {
+    const grouped: Record<string, typeof plaidAccounts.data> = {};
+    plaidAccounts.data?.forEach(acc => {
+      const inst = acc.institutionName || "Unknown";
+      if (!grouped[inst]) grouped[inst] = [];
+      grouped[inst]!.push(acc);
+    });
+    return grouped;
+  }, [plaidAccounts.data]);
+
+  // Calculate income transactions for the date range
+  const incomeTransactions = useMemo(() => {
+    // We'd need a separate hook to get all income transactions
+    // For now, show the total from financeTotals
+    return financeTotals.data?.income || 0;
+  }, [financeTotals.data]);
+
+  const getFinanceTypeBadge = (type: string | null) => {
+    if (!type) return null;
+    const colors: Record<string, string> = {
+      income: "bg-green-100 text-green-800",
+      bill: "bg-red-100 text-red-800",
+      debt: "bg-orange-100 text-orange-800",
+      holding: "bg-blue-100 text-blue-800",
+      other: "bg-gray-100 text-gray-800",
+    };
+    return (
+      <Badge className={colors[type] || colors.other}>
+        {type.charAt(0).toUpperCase() + type.slice(1)}
+      </Badge>
+    );
+  };
 
   return (
     <Layout role="admin">
@@ -369,6 +469,7 @@ export default function FinanceTracker() {
             </Card>
           </div>
 
+          {/* Auto-Sync Section */}
           <Card className="shadow-sm border-gray-200">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
@@ -401,53 +502,149 @@ export default function FinanceTracker() {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
               {syncStatus.isLoading ? (
                 <div className="flex justify-center py-8">
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                 </div>
               ) : syncStatus.data && syncStatus.data.linked_accounts > 0 ? (
-                <div className="grid md:grid-cols-4 gap-4">
-                  <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                    <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                      <Building className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-gray-900" data-testid="text-institutions">{syncStatus.data.linked_institutions}</p>
-                      <p className="text-xs text-gray-500">Institutions</p>
+                <>
+                  {/* Clickable Summary Cards */}
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <button
+                      onClick={() => setInstitutionsModalOpen(true)}
+                      className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                      data-testid="button-institutions-card"
+                    >
+                      <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Building className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-2xl font-bold text-gray-900" data-testid="text-institutions">{syncStatus.data.linked_institutions}</p>
+                        <p className="text-xs text-gray-500">Institutions</p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                    </button>
+                    
+                    <button
+                      onClick={() => setAccountsModalOpen(true)}
+                      className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                      data-testid="button-accounts-card"
+                    >
+                      <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
+                        <Wallet className="h-5 w-5 text-green-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-2xl font-bold text-gray-900" data-testid="text-accounts">{syncStatus.data.linked_accounts}</p>
+                        <p className="text-xs text-gray-500">Accounts</p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                    </button>
+                    
+                    <button
+                      onClick={() => setLastSyncModalOpen(true)}
+                      className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                      data-testid="button-last-sync-card"
+                    >
+                      <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center">
+                        <Clock className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-gray-900" data-testid="text-last-sync">
+                          {syncStatus.data.last_sync_at ? formatDate(syncStatus.data.last_sync_at) : "Never"}
+                        </p>
+                        <p className="text-xs text-gray-500">Last Sync</p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                    </button>
+                    
+                    <button
+                      onClick={() => setIncomeModalOpen(true)}
+                      className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                      data-testid="button-income-card"
+                    >
+                      <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
+                        <DollarSign className="h-5 w-5 text-purple-600" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-lg font-bold text-gray-900" data-testid="text-plaid-total">
+                          {formatCents(plaidTotal)}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} ({dateRange}d)
+                        </p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                    </button>
+                  </div>
+
+                  {/* Linked Accounts Table */}
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4">Linked Accounts</h3>
+                    <div className="border rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-gray-50">
+                            <TableHead>Account Name</TableHead>
+                            <TableHead>Institution</TableHead>
+                            <TableHead>Last 4</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead className="text-right">Balance</TableHead>
+                            <TableHead>Default Type</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {plaidAccounts.data?.map((account) => (
+                            <TableRow key={account.accountId} data-testid={`row-account-${account.accountId}`}>
+                              <TableCell className="font-medium">{account.name}</TableCell>
+                              <TableCell>{account.institutionName || "—"}</TableCell>
+                              <TableCell>{account.mask ? `••${account.mask}` : "—"}</TableCell>
+                              <TableCell>
+                                <span className="text-sm text-gray-600">
+                                  {account.subtype || account.type || "—"}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {account.currentBalanceCents != null 
+                                  ? formatCents(account.currentBalanceCents) 
+                                  : "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Select
+                                  value={account.defaultFinanceType || "none"}
+                                  onValueChange={(v) => handleAccountTypeChange(account.accountId, v)}
+                                >
+                                  <SelectTrigger className="w-[120px] h-8" data-testid={`select-default-type-${account.accountId}`}>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {FINANCE_TYPES.map((type) => (
+                                      <SelectItem key={type.value} value={type.value}>
+                                        {type.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openTransactionsModal(account.plaidAccountId)}
+                                  data-testid={`button-view-transactions-${account.accountId}`}
+                                >
+                                  <Eye className="h-4 w-4 mr-1" />
+                                  Transactions
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                    <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center">
-                      <Wallet className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold text-gray-900" data-testid="text-accounts">{syncStatus.data.linked_accounts}</p>
-                      <p className="text-xs text-gray-500">Accounts</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                    <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center">
-                      <Clock className="h-5 w-5 text-orange-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900" data-testid="text-last-sync">
-                        {syncStatus.data.last_sync_at ? formatDate(syncStatus.data.last_sync_at) : "Never"}
-                      </p>
-                      <p className="text-xs text-gray-500">Last Sync</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
-                    <div className="flex-1">
-                      <p className="text-lg font-bold text-gray-900" data-testid="text-plaid-total">
-                        {formatCents(plaidTotal)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} ({dateRange}d)
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                </>
               ) : (
                 <div className="flex flex-col items-center justify-center text-center py-8">
                   <div className="h-12 w-12 rounded-full bg-gray-200 flex items-center justify-center mb-4">
@@ -468,6 +665,247 @@ export default function FinanceTracker() {
           </Card>
         </Tabs>
       </div>
+
+      {/* Institutions Modal */}
+      <Dialog open={institutionsModalOpen} onOpenChange={setInstitutionsModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building className="h-5 w-5 text-blue-600" />
+              Linked Institutions
+            </DialogTitle>
+            <DialogDescription>
+              {Object.keys(accountsByInstitution).length} institution(s) connected
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <div className="space-y-4">
+              {Object.entries(accountsByInstitution).map(([institution, accounts]) => (
+                <div key={institution} className="border rounded-lg p-4">
+                  <h4 className="font-semibold text-gray-900 mb-3">{institution}</h4>
+                  <div className="space-y-2">
+                    {accounts?.map((acc) => (
+                      <div key={acc.accountId} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                        <span className="text-sm">{acc.name} {acc.mask && `(••${acc.mask})`}</span>
+                        <span className="text-sm text-gray-500">{acc.subtype || acc.type}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Accounts Modal */}
+      <Dialog open={accountsModalOpen} onOpenChange={setAccountsModalOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-green-600" />
+              All Linked Accounts
+            </DialogTitle>
+            <DialogDescription>
+              {plaidAccounts.data?.length || 0} account(s) linked
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Account</TableHead>
+                  <TableHead>Institution</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead>Default Type</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {plaidAccounts.data?.map((acc) => (
+                  <TableRow key={acc.accountId}>
+                    <TableCell className="font-medium">
+                      {acc.name} {acc.mask && <span className="text-gray-500">(••{acc.mask})</span>}
+                    </TableCell>
+                    <TableCell>{acc.institutionName}</TableCell>
+                    <TableCell>{acc.subtype || acc.type || "—"}</TableCell>
+                    <TableCell className="text-right">
+                      {acc.currentBalanceCents != null ? formatCents(acc.currentBalanceCents) : "—"}
+                    </TableCell>
+                    <TableCell>
+                      {getFinanceTypeBadge(acc.defaultFinanceType)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Last Sync Modal */}
+      <Dialog open={lastSyncModalOpen} onOpenChange={setLastSyncModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-orange-600" />
+              Sync Details
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-sm text-gray-500">Last Sync</p>
+              <p className="text-lg font-semibold">
+                {syncStatus.data?.last_sync_at 
+                  ? new Date(syncStatus.data.last_sync_at).toLocaleString()
+                  : "Never synced"}
+              </p>
+            </div>
+            <p className="text-sm text-gray-600">
+              Last sync applies to all {syncStatus.data?.linked_accounts || 0} linked account(s) across {syncStatus.data?.linked_institutions || 0} institution(s).
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Income/Category Total Modal */}
+      <Dialog open={incomeModalOpen} onOpenChange={setIncomeModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-purple-600" />
+              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Summary ({dateRange} days)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-lg text-center">
+              <p className="text-sm text-gray-500">Total from Linked Accounts</p>
+              <p className="text-3xl font-bold text-gray-900">{formatCents(plaidTotal)}</p>
+            </div>
+            <p className="text-sm text-gray-600">
+              This total is calculated from transactions categorized as "{activeTab}" across all linked accounts for the last {dateRange} days.
+            </p>
+            <p className="text-sm text-gray-500">
+              To see detailed transactions, click "View Transactions" on any account in the table above.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transactions Modal */}
+      <Dialog open={transactionsModalOpen} onOpenChange={setTransactionsModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5 text-blue-600" />
+              Transaction History
+            </DialogTitle>
+            <DialogDescription>
+              {accountTransactions.data?.account?.name} {accountTransactions.data?.account?.mask && `(••${accountTransactions.data.account.mask})`}
+              {accountTransactions.data?.account?.institution_name && ` • ${accountTransactions.data.account.institution_name}`}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Input
+                placeholder="Search transactions..."
+                value={transactionSearch}
+                onChange={(e) => setTransactionSearch(e.target.value)}
+                className="max-w-xs"
+                data-testid="input-transaction-search"
+              />
+              <span className="text-sm text-gray-500">
+                {accountTransactions.data?.transactions?.length || 0} transactions
+              </span>
+            </div>
+
+            <ScrollArea className="h-[50vh]">
+              {accountTransactions.isLoading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                </div>
+              ) : accountTransactions.data?.transactions?.length ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead>Type</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accountTransactions.data.transactions.map((txn) => (
+                      <TableRow key={txn.transaction_id} data-testid={`row-transaction-${txn.transaction_id}`}>
+                        <TableCell className="whitespace-nowrap">{formatDate(txn.date)}</TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{txn.name}</p>
+                            {txn.merchant_name && txn.merchant_name !== txn.name && (
+                              <p className="text-sm text-gray-500">{txn.merchant_name}</p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {txn.category_primary && (
+                            <Badge variant="outline">{txn.category_primary}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className={`text-right font-medium ${txn.amount_cents < 0 ? "text-green-600" : "text-gray-900"}`}>
+                          {formatCents(Math.abs(txn.amount_cents))}
+                          {txn.amount_cents < 0 && <span className="text-xs ml-1">(credit)</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={txn.override_finance_type || (accountTransactions.data?.account?.default_finance_type ? "inherited" : "none")}
+                            onValueChange={(v) => {
+                              if (v === "inherited") {
+                                handleTransactionTypeChange(txn.transaction_id, "none");
+                              } else {
+                                handleTransactionTypeChange(txn.transaction_id, v);
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-[130px] h-8" data-testid={`select-txn-type-${txn.transaction_id}`}>
+                              <SelectValue>
+                                {txn.override_finance_type 
+                                  ? FINANCE_TYPES.find(t => t.value === txn.override_finance_type)?.label
+                                  : txn.effective_finance_type 
+                                    ? `(${FINANCE_TYPES.find(t => t.value === txn.effective_finance_type)?.label})`
+                                    : "None"
+                                }
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {accountTransactions.data?.account?.default_finance_type && (
+                                <SelectItem value="inherited">
+                                  Use default ({accountTransactions.data.account.default_finance_type})
+                                </SelectItem>
+                              )}
+                              {FINANCE_TYPES.filter(t => t.value !== "none").map((type) => (
+                                <SelectItem key={type.value} value={type.value}>
+                                  {type.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-gray-400">
+                  No transactions found for this period.
+                </div>
+              )}
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
