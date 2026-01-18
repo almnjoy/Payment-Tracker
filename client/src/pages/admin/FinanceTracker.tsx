@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight } from "lucide-react";
+import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight, Pencil, RotateCcw } from "lucide-react";
 import { 
   useAdminPlaidSyncStatus, 
   useAdminPlaidFinanceTotals, 
@@ -239,7 +239,10 @@ export default function FinanceTracker() {
   };
 
   const currentEntries = entries.data || [];
-  const manualTotal = currentEntries.reduce((sum, entry) => sum + entry.amountCents, 0);
+  const manualTotal = currentEntries.reduce((sum, entry) => {
+    const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
+    return sum + Math.round(entry.amountCents * multiplier);
+  }, 0);
 
   const clientBillingItemsList = billingItems.data || [];
   const monthlyBillingTotal = clientBillingItemsList
@@ -389,16 +392,23 @@ export default function FinanceTracker() {
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="recurrence" className="text-right">Frequency</Label>
-                  <Select value={formData.recurrence} onValueChange={(v) => setFormData({ ...formData, recurrence: v })}>
-                    <SelectTrigger className="col-span-3" data-testid="select-recurrence">
-                      <SelectValue placeholder="Select frequency" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="one_time">One-time</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="col-span-3 space-y-1">
+                    <Select value={formData.recurrence} onValueChange={(v) => setFormData({ ...formData, recurrence: v })}>
+                      <SelectTrigger data-testid="select-recurrence">
+                        <SelectValue placeholder="Select frequency" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {RECURRENCE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {formData.recurrence && formData.recurrence !== "one_time" && (
+                      <p className="text-xs text-purple-600">
+                        {getMultiplierLabel(formData.recurrence, selectedPeriod) || `Recurs ${formData.recurrence}`}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="externalUrl" className="text-right">Link URL</Label>
@@ -495,40 +505,75 @@ export default function FinanceTracker() {
                       <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                     </div>
                   ) : currentEntries.length > 0 ? (
-                    currentEntries.map((entry) => (
-                      <div key={entry.entryId} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100" data-testid={`entry-${entry.entryId}`}>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-gray-900">{entry.title}</h4>
-                            {entry.entryType === "linked" && (
-                              <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">Linked</span>
-                            )}
-                            {entry.externalUrl && (
-                              <a href={entry.externalUrl} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-500">
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
-                            )}
+                    currentEntries.map((entry) => {
+                      const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
+                      const multiplierLabel = getMultiplierLabel(entry.recurrence, selectedPeriod);
+                      const effectiveAmount = Math.round(entry.amountCents * multiplier);
+                      
+                      return (
+                        <div key={entry.entryId} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100" data-testid={`entry-${entry.entryId}`}>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-gray-900">{entry.title}</h4>
+                              {entry.recurrence && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 flex items-center gap-1">
+                                  <RotateCcw className="h-3 w-3" />
+                                  {entry.recurrence}
+                                </span>
+                              )}
+                              {entry.entryType === "linked" && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">Linked</span>
+                              )}
+                              {entry.externalUrl && (
+                                <a href={entry.externalUrl} target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-500">
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500">
+                              {formatDate(entry.date)}
+                              {multiplierLabel && (
+                                <span className="ml-2 text-purple-600" title={multiplierLabel}>
+                                  ({multiplier.toFixed(1)}x for {selectedPeriod})
+                                </span>
+                              )}
+                            </p>
                           </div>
-                          <p className="text-sm text-gray-500">
-                            {formatDate(entry.date)} {entry.recurrence && `• ${entry.recurrence}`}
-                          </p>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <span className="font-bold text-gray-900 text-lg">
+                                {formatCents(effectiveAmount)}
+                              </span>
+                              {multiplier !== 1 && (
+                                <p className="text-xs text-gray-400">
+                                  base: {formatCents(entry.amountCents)}
+                                </p>
+                              )}
+                            </div>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => {
+                                setEditingEntry(entry);
+                                setEditDialogOpen(true);
+                              }}
+                              data-testid={`button-edit-${entry.entryId}`}
+                            >
+                              <Pencil className="h-4 w-4 text-gray-400 hover:text-blue-500" />
+                            </Button>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={() => handleDeleteEntry(entry.entryId)}
+                              disabled={deleteEntry.isPending}
+                              data-testid={`button-delete-${entry.entryId}`}
+                            >
+                              <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-gray-900 text-lg">
-                            {formatCents(entry.amountCents)}
-                          </span>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => handleDeleteEntry(entry.entryId)}
-                            disabled={deleteEntry.isPending}
-                            data-testid={`button-delete-${entry.entryId}`}
-                          >
-                            <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="text-center py-8 text-gray-400">
                       No entries found. Add one to get started.
@@ -1028,6 +1073,121 @@ export default function FinanceTracker() {
               )}
             </ScrollArea>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Entry Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-blue-600" />
+              Edit Entry
+            </DialogTitle>
+          </DialogHeader>
+          {editingEntry && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Title</label>
+                <Input 
+                  value={editingEntry.title}
+                  onChange={(e) => setEditingEntry({ ...editingEntry, title: e.target.value })}
+                  data-testid="input-edit-title"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Amount</label>
+                <Input 
+                  type="number"
+                  step="0.01"
+                  value={(editingEntry.amountCents / 100).toFixed(2)}
+                  onChange={(e) => setEditingEntry({ ...editingEntry, amountCents: Math.round(parseFloat(e.target.value || "0") * 100) })}
+                  data-testid="input-edit-amount"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Date</label>
+                <Input 
+                  type="date"
+                  value={editingEntry.date?.split("T")[0] || ""}
+                  onChange={(e) => setEditingEntry({ ...editingEntry, date: e.target.value })}
+                  data-testid="input-edit-date"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Recurrence</label>
+                <Select 
+                  value={editingEntry.recurrence || "one_time"}
+                  onValueChange={(v) => setEditingEntry({ ...editingEntry, recurrence: v === "one_time" ? null : v })}
+                >
+                  <SelectTrigger data-testid="select-edit-recurrence">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {RECURRENCE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {editingEntry.recurrence && (
+                  <p className="text-xs text-purple-600">
+                    {getMultiplierLabel(editingEntry.recurrence, selectedPeriod) || `Recurs ${editingEntry.recurrence}`}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">External URL (optional)</label>
+                <Input 
+                  value={editingEntry.externalUrl || ""}
+                  onChange={(e) => setEditingEntry({ ...editingEntry, externalUrl: e.target.value || null })}
+                  placeholder="https://..."
+                  data-testid="input-edit-url"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-4">
+                <Button variant="outline" onClick={() => setEditDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!editingEntry.title?.trim()) {
+                      toast({ title: "Error", description: "Title is required", variant: "destructive" });
+                      return;
+                    }
+                    if (!editingEntry.amountCents || editingEntry.amountCents <= 0) {
+                      toast({ title: "Error", description: "Amount must be greater than 0", variant: "destructive" });
+                      return;
+                    }
+                    const dateStr = editingEntry.date?.split("T")[0];
+                    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                      toast({ title: "Error", description: "Valid date is required", variant: "destructive" });
+                      return;
+                    }
+                    try {
+                      await updateEntry.mutateAsync({
+                        entryId: editingEntry.entryId,
+                        title: editingEntry.title.trim(),
+                        amountCents: editingEntry.amountCents,
+                        date: dateStr,
+                        recurrence: editingEntry.recurrence,
+                        externalUrl: editingEntry.externalUrl?.trim() || null,
+                      });
+                      setEditDialogOpen(false);
+                      setEditingEntry(null);
+                      toast({ title: "Entry updated" });
+                    } catch (error: any) {
+                      toast({ title: "Error", description: error.message, variant: "destructive" });
+                    }
+                  }}
+                  disabled={updateEntry.isPending}
+                  data-testid="button-save-edit"
+                >
+                  {updateEntry.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </Layout>
