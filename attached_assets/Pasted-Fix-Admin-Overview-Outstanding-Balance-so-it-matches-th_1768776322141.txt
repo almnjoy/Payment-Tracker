@@ -1,0 +1,41 @@
+Fix Admin Overview > Outstanding Balance so it matches the same balance logic shown on Admin > Client Details.
+
+CURRENT ISSUE:
+Client CL_502073 is active and has a $1000 bill with no payments.
+Client Details correctly shows current balance = -1000.
+Admin Overview “Outstanding Balance” does not reflect this and should show -1000 (or include it in the total outstanding balance metric).
+
+REQUIREMENTS:
+1) Single source of truth:
+- Create one shared function/helper used by BOTH:
+  - Admin Client Details balance
+  - Admin Overview Outstanding Balance
+- The function must compute outstanding balances from the same data sources and rules.
+
+2) Calculation rules:
+- Outstanding balance for a client = SUM(billing items assigned to client) - SUM(payments applied to client)
+- If you represent bills as positive amounts and payments as positive amounts:
+  - outstanding = billsTotal - paymentsTotal
+- If your UI displays “Current balance” as negative when money is owed:
+  - displayBalance = -outstanding
+  - Example: outstanding = 1000 => displayBalance = -1000
+
+3) Filtering:
+- Include ONLY clients with status = active (and optionally paused if you want, but for now ACTIVE only).
+- Exclude inactive clients.
+- Outstanding Balance should include overdue/owed amounts, so any client with outstanding > 0 must affect the total.
+
+4) Admin Overview metric:
+- “Outstanding Balance” must be the SUM of all client outstanding balances (displayed in the same sign convention you use).
+- If Client Details shows owed as negative, Admin Overview should also show negative totals.
+
+5) Acceptance test:
+- For CL_502073: bill = 1000, payments = 0 => outstanding = 1000 => displayed = -1000
+- Admin Overview Outstanding Balance must reflect this (at least -1000 if only one client owes, or include it in the aggregate if multiple clients).
+
+DO NOT:
+- Change client details calculation (it is correct).
+- Change existing UI layout; just fix the data/logic behind the metric.
+
+DELIVERABLE:
+- Update the Admin Overview computation so it calls the same balance helper used by Client Details, and ensure the sign convention matches.

@@ -1829,13 +1829,16 @@ export async function registerRoutes(
       try {
         const clients = await storage.getAllClients();
         const payments = await storage.getAllPayments();
+        
+        // Get all active billing items directly from database
+        const allBillingItems = await db
+          .select()
+          .from(clientBillingItems)
+          .where(eq(clientBillingItems.status, "active"));
 
-        // Get client IDs for active/behind clients only (exclude paused/inactive)
-        const activeClientIds = new Set(
-          clients
-            .filter(c => c.status === "active" || c.status === "behind")
-            .map(c => c.clientId)
-        );
+        // Get active clients only (exclude paused/inactive)
+        const activeClients = clients.filter(c => c.status === "active" || c.status === "behind");
+        const activeClientIds = new Set(activeClients.map(c => c.clientId));
 
         // Filter payments to only include those from active/behind clients
         const activePayments = payments.filter(p => activeClientIds.has(p.clientId));
@@ -1845,10 +1848,32 @@ export async function registerRoutes(
           .filter((p) => p.status === "confirmed")
           .reduce((sum, p) => sum + p.amountCents, 0);
 
-        // Outstanding = posted/rejected/pending payments from active/behind clients
-        const outstandingCents = activePayments
-          .filter((p) => ["posted", "rejected", "pending"].includes(p.status))
-          .reduce((sum, p) => sum + p.amountCents, 0);
+        // Calculate Outstanding Balance using same logic as Client Details:
+        // For each active client: billingItemsTotal - confirmedPaymentsTotal
+        // Negative value means client owes money
+        let totalOutstandingCents = 0;
+        for (const client of activeClients) {
+          const clientBills = allBillingItems.filter(
+            item => item.clientId === client.clientId
+          );
+          const clientBillingTotal = clientBills.reduce(
+            (sum: number, item) => sum + (item.amountCents || 0), 0
+          );
+          
+          const clientConfirmedPayments = activePayments.filter(
+            p => p.clientId === client.clientId && p.status === 'confirmed'
+          );
+          const clientPaymentsTotal = clientConfirmedPayments.reduce(
+            (sum, p) => sum + p.amountCents, 0
+          );
+          
+          // currentBalance = confirmedPayments - billingItems (negative = owes)
+          const clientBalance = clientPaymentsTotal - clientBillingTotal;
+          // Add to total outstanding (only if client owes money, i.e., balance < 0)
+          if (clientBalance < 0) {
+            totalOutstandingCents += clientBalance; // Accumulate negative amounts
+          }
+        }
 
         // Count payments needing verification from active/behind clients
         const pendingVerificationCount = activePayments.filter(
@@ -1857,9 +1882,9 @@ export async function registerRoutes(
 
         res.json({
           totalCollectedCents,
-          outstandingCents,
+          outstandingCents: totalOutstandingCents, // Now matches Client Details (negative = owed)
           pendingVerificationCount,
-          activeClients: clients.filter(c => c.status === "active").length,
+          activeClients: activeClients.filter(c => c.status === "active").length,
         });
       } catch (error) {
         console.error("Error fetching stats:", error);

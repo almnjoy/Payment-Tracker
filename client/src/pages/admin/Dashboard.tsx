@@ -102,7 +102,7 @@ export default function AdminDashboard() {
                 {stats ? formatCents(stats.outstandingCents) : '$0.00'}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                Posted, pending, or rejected payments
+                Total owed by active clients
               </p>
             </CardContent>
           </Card>
