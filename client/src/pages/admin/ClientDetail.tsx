@@ -8,9 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2, Eye, ExternalLink } from "lucide-react";
+import { ArrowLeft, Download, Upload, FileText, Loader2, AlertCircle, Plus, DollarSign, Calendar, Trash2, Eye, ExternalLink, Copy, CheckCircle } from "lucide-react";
 import { Link, useRoute, useLocation } from "wouter";
-import { useAdminClient, useClientBillingItems, useCreateBillingItem, useDeleteBillingItem, useUpdateClientStatus, useUploadDocument, formatCents, formatDate } from "@/lib/api";
+import { useAdminClient, useClientBillingItems, useCreateBillingItem, useDeleteBillingItem, useUpdateClientStatus, useUploadDocument, useToggleActiveAgreement, formatCents, formatDate } from "@/lib/api";
+import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { PDFViewerModal } from "@/components/PDFViewerModal";
 
@@ -26,6 +28,7 @@ export default function ClientDetail() {
   const deleteBillingItem = useDeleteBillingItem();
   const updateClientStatus = useUpdateClientStatus();
   const uploadDocument = useUploadDocument();
+  const toggleActiveAgreement = useToggleActiveAgreement();
   
   const [billingDialogOpen, setBillingDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -33,6 +36,8 @@ export default function ClientDetail() {
   const [selectedDocument, setSelectedDocument] = useState<{ documentId: string; title: string } | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  const [copied, setCopied] = useState(false);
   
   const [billingFormData, setBillingFormData] = useState({
     type: "rent",
@@ -42,6 +47,17 @@ export default function ClientDetail() {
     frequency: "monthly",
     notes: "",
   });
+
+  const handleCopyClientId = async () => {
+    try {
+      await navigator.clipboard.writeText(clientId);
+      setCopied(true);
+      toast({ title: "Copied!", description: `Client ID ${clientId} copied to clipboard` });
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to copy to clipboard", variant: "destructive" });
+    }
+  };
   
   const [uploadFormData, setUploadFormData] = useState({
     title: "",
@@ -233,7 +249,22 @@ export default function ClientDetail() {
           </Link>
           <div className="flex-1">
             <h2 className="text-2xl font-bold tracking-tight text-gray-900">{client.displayName}</h2>
-            <p className="text-gray-500">{client.email || 'No email provided'}</p>
+            <div className="flex items-center gap-3">
+              <p className="text-gray-500">{client.email || 'No email provided'}</p>
+              <span className="text-gray-300">•</span>
+              <button
+                onClick={handleCopyClientId}
+                className="inline-flex items-center gap-1.5 px-2 py-1 text-sm font-mono bg-gray-100 hover:bg-gray-200 rounded-md transition-colors group"
+                data-testid="button-copy-client-id"
+              >
+                <span className="text-gray-600">{clientId}</span>
+                {copied ? (
+                  <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5 text-gray-400 group-hover:text-gray-600" />
+                )}
+              </button>
+            </div>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="gap-2" onClick={handleViewClientPortal} data-testid="button-view-portal">
@@ -595,25 +626,67 @@ export default function ClientDetail() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                    {documents.length > 0 ? (
-                     documents.map(doc => (
-                       <div key={doc.documentId} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors group" data-testid={`doc-${doc.documentId}`}>
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <FileText size={18} className="text-red-500 shrink-0" />
-                            <span className="text-sm font-medium truncate">{doc.title}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-7 w-7 text-gray-400 hover:text-blue-500"
-                              onClick={() => handleQuickView(doc)}
-                              data-testid={`button-view-${doc.documentId}`}
-                            >
-                              <Eye size={14} />
-                            </Button>
-                          </div>
-                       </div>
-                     ))
+                     <TooltipProvider>
+                       {documents.map(doc => (
+                         <div key={doc.documentId} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors group" data-testid={`doc-${doc.documentId}`}>
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <FileText size={18} className={`shrink-0 ${(doc as any).isActiveAgreement ? 'text-green-600' : 'text-red-500'}`} />
+                              <span className="text-sm font-medium truncate">{doc.title}</span>
+                              {(doc as any).isActiveAgreement && (
+                                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs shrink-0">
+                                  Active
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {doc.docType === 'agreement' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="flex items-center">
+                                      <Switch
+                                        checked={(doc as any).isActiveAgreement || false}
+                                        onCheckedChange={(checked) => {
+                                          toggleActiveAgreement.mutate(
+                                            { documentId: doc.documentId, isActive: checked },
+                                            {
+                                              onSuccess: () => {
+                                                toast({
+                                                  title: checked ? "Marked as Active Agreement" : "Unmarked Active Agreement",
+                                                  description: checked
+                                                    ? "This is now the active agreement for this client"
+                                                    : "Agreement status removed",
+                                                });
+                                                refetchClient();
+                                              },
+                                              onError: (error) => {
+                                                toast({ title: "Error", description: error.message, variant: "destructive" });
+                                              },
+                                            }
+                                          );
+                                        }}
+                                        disabled={toggleActiveAgreement.isPending}
+                                        data-testid={`switch-active-${doc.documentId}`}
+                                      />
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="text-xs">Set as active agreement</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-7 w-7 text-gray-400 hover:text-blue-500"
+                                onClick={() => handleQuickView(doc)}
+                                data-testid={`button-view-${doc.documentId}`}
+                              >
+                                <Eye size={14} />
+                              </Button>
+                            </div>
+                         </div>
+                       ))}
+                     </TooltipProvider>
                    ) : (
                      <div className="text-center py-4 text-gray-400">
                        <p className="text-sm">No documents uploaded</p>

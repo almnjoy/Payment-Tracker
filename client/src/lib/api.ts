@@ -216,6 +216,20 @@ export function useUploadDocument() {
   });
 }
 
+export function useToggleActiveAgreement() {
+  const queryClient = useQueryClient();
+  return useMutation<Document, Error, { documentId: string; isActive: boolean }>({
+    mutationFn: async ({ documentId, isActive }) => {
+      const response = await apiRequest("PATCH", `/api/admin/documents/${documentId}/active-agreement`, { isActive });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "clients"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "documents"] });
+    },
+  });
+}
+
 export function useAdminExternalAccounts() {
   return useQuery<ExternalAccount[]>({
     queryKey: ["admin", "external-accounts"],
