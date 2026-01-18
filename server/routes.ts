@@ -1088,18 +1088,24 @@ export async function registerRoutes(
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (settings?.automationToken) {
           headers["X-Automation-Token"] = settings.automationToken;
+        } else {
+          console.warn("Automation webhook token not set");
         }
 
         // Send webhook request
+        console.log(`Sending signup email webhook to: ${webhookUrl}`);
         const response = await fetch(webhookUrl, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
         });
 
+        const responseText = await response.text();
+        console.log(`Webhook response: ${response.status} - ${responseText}`);
+
         if (!response.ok) {
-          console.error("Webhook failed:", response.status, await response.text());
-          return res.status(502).json({ message: `Webhook returned ${response.status}` });
+          console.error("Webhook failed:", response.status, responseText);
+          return res.status(502).json({ message: "Webhook request failed" });
         }
 
         console.log(`Signup email webhook sent for client ${clientId} to ${client.email}`);
