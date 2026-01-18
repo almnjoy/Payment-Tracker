@@ -34,14 +34,14 @@ export default function RegisterPage() {
 
   const verifyClientIdMutation = useMutation({
     mutationFn: async ({ clientId, email }: { clientId: string; email: string }) => {
-      const res = await apiRequest("POST", "/api/register/verify-client", { clientId, email });
+      const res = await apiRequest("POST", "/api/client-signup/verify", { clientId, email });
       return res.json();
     },
   });
 
   const claimClientIdMutation = useMutation({
     mutationFn: async ({ clientId, email }: { clientId: string; email: string }) => {
-      const res = await apiRequest("POST", "/api/register/claim-client", { clientId, email });
+      const res = await apiRequest("POST", "/api/client-signup/claim", { clientId, email });
       return res.json();
     },
   });
