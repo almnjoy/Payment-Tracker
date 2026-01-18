@@ -23,6 +23,7 @@ import {
   useAdminClients,
   useAdminPlaidAccountSummaries,
   useAdminPlaidAccountTransactions,
+  useAdminPlaidTypedTransactions,
   useUpdateAccountDefaultType,
   useUpdateTransactionType,
   formatCents,
@@ -88,6 +89,9 @@ export default function FinanceTracker() {
     selectedAccountId,
     { startDate, endDate, search: transactionSearch || undefined }
   );
+  
+  // Typed Plaid transactions for the current tab
+  const typedTransactions = useAdminPlaidTypedTransactions(activeTab, parseInt(dateRange));
 
   const handleCreateEntry = async () => {
     if (!formData.title || !formData.amountCents) {
@@ -187,9 +191,10 @@ export default function FinanceTracker() {
     if (!financeTotals.data) return 0;
     switch (activeTab) {
       case "income": return financeTotals.data.income;
-      case "bills": return financeTotals.data.spending;
+      case "bills": return financeTotals.data.bills;
       case "debts": return financeTotals.data.debts;
       case "holdings": return financeTotals.data.holdings;
+      case "other": return financeTotals.data.other;
       default: return 0;
     }
   };
@@ -365,6 +370,7 @@ export default function FinanceTracker() {
             <TabsTrigger value="bills" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-bills">Bills</TabsTrigger>
             <TabsTrigger value="debts" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-debts">Debts</TabsTrigger>
             <TabsTrigger value="holdings" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-holdings">Holdings</TabsTrigger>
+            <TabsTrigger value="other" className="rounded-lg data-[state=active]:bg-[#007BFF] data-[state=active]:text-white px-6 py-2" data-testid="tab-other">Other</TabsTrigger>
           </TabsList>
           
           {activeTab === "income" && monthlyBillingTotal > 0 && (
@@ -468,6 +474,61 @@ export default function FinanceTracker() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Plaid Entries Section - Shows transactions with assigned types */}
+          <Card className="shadow-sm border-gray-200">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <LinkIcon className="h-5 w-5 text-[#007BFF]" />
+                Plaid Entries ({dateRange}d)
+              </CardTitle>
+              <span className="text-sm text-gray-500">
+                {typedTransactions.data?.transactions.length || 0} transactions assigned to {activeTab}
+              </span>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {typedTransactions.isLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                  </div>
+                ) : typedTransactions.data && typedTransactions.data.transactions.length > 0 ? (
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-2">
+                      {typedTransactions.data.transactions.map((tx) => (
+                        <div 
+                          key={tx.transaction_id} 
+                          className="flex items-center justify-between p-3 bg-blue-50/50 rounded-lg border border-blue-100"
+                          data-testid={`plaid-entry-${tx.transaction_id}`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-medium text-gray-900 truncate">{tx.merchant_name || tx.name}</h4>
+                              {tx.pending && (
+                                <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">Pending</span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-500 truncate">
+                              {formatDate(tx.date)} • {tx.account_name}
+                              {tx.institution_name && ` • ${tx.institution_name}`}
+                            </p>
+                          </div>
+                          <span className={`font-bold text-lg ${tx.amount_cents < 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                            {formatCents(Math.abs(tx.amount_cents))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center py-8 text-gray-400">
+                    <p>No Plaid transactions assigned to {activeTab}.</p>
+                    <p className="text-sm mt-1">Assign types to transactions in the Linked Accounts section below.</p>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Auto-Sync Section */}
           <Card className="shadow-sm border-gray-200">

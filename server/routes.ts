@@ -2072,7 +2072,7 @@ export async function registerRoutes(
     },
   );
 
-  // I) Get Plaid-derived financial totals
+  // I) Get Plaid-derived financial totals - ONLY counts user-assigned types
   app.get(
     "/api/admin/plaid/finance-totals",
     isAuthenticated,
@@ -2097,12 +2097,24 @@ export async function registerRoutes(
         if (itemIds.length === 0) {
           return res.json({
             income: 0,
-            spending: 0,
+            bills: 0,
             debts: 0,
             holdings: 0,
+            other: 0,
             date_range: daysNum,
           });
         }
+
+        // Get all accounts to build default type map
+        const accounts = await db
+          .select()
+          .from(plaidAccounts)
+          .where(inArray(plaidAccounts.itemId, itemIds));
+
+        const accountDefaultMap = new Map<string, string | null>();
+        accounts.forEach((a) => {
+          accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
+        });
 
         // Get transactions in date range
         const transactions = await db
@@ -2118,46 +2130,158 @@ export async function registerRoutes(
             ),
           );
 
-        // Calculate income (negative amounts in Plaid = money in)
-        const income = transactions
-          .filter((t) => t.amountCents < 0)
+        // Calculate effective type for each transaction (override > account default > null)
+        // ONLY count transactions with an explicitly assigned type
+        const typedTransactions = transactions.map((t) => ({
+          ...t,
+          effectiveType: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
+        })).filter((t) => t.effectiveType !== null);
+
+        // Sum by category - use absolute value for amounts
+        const income = typedTransactions
+          .filter((t) => t.effectiveType === "income")
           .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
 
-        // Calculate spending (positive amounts in Plaid = money out)
-        const spending = transactions
-          .filter((t) => t.amountCents > 0)
-          .reduce((sum, t) => sum + t.amountCents, 0);
+        const bills = typedTransactions
+          .filter((t) => t.effectiveType === "bill")
+          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
 
-        // Get account balances for debts and holdings
-        const accounts = await db
-          .select()
-          .from(plaidAccounts)
-          .where(inArray(plaidAccounts.itemId, itemIds));
+        const debts = typedTransactions
+          .filter((t) => t.effectiveType === "debt")
+          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
 
-        // Debts: credit, loan account types
-        const debts = accounts
-          .filter((a) =>
-            ["credit", "loan"].includes(a.type?.toLowerCase() || ""),
-          )
-          .reduce((sum, a) => sum + (a.currentBalanceCents || 0), 0);
+        const holdings = typedTransactions
+          .filter((t) => t.effectiveType === "holding")
+          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
 
-        // Holdings: investment accounts
-        const holdings = accounts
-          .filter((a) =>
-            ["investment", "brokerage"].includes(a.type?.toLowerCase() || ""),
-          )
-          .reduce((sum, a) => sum + (a.currentBalanceCents || 0), 0);
+        const other = typedTransactions
+          .filter((t) => t.effectiveType === "other")
+          .reduce((sum, t) => sum + Math.abs(t.amountCents), 0);
 
         res.json({
           income,
-          spending,
+          bills,
           debts,
           holdings,
+          other,
           date_range: daysNum,
         });
       } catch (error) {
         console.error("Error fetching finance totals:", error);
         res.status(500).json({ message: "Failed to fetch finance totals" });
+      }
+    },
+  );
+
+  // I2) Get typed Plaid transactions by category
+  app.get(
+    "/api/admin/plaid/typed-transactions",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { category, days = "30" } = req.query;
+
+        if (!category || typeof category !== "string") {
+          return res.status(400).json({ message: "Category is required" });
+        }
+
+        // Map tab names to finance type values
+        const categoryToType: Record<string, string> = {
+          income: "income",
+          bills: "bill",
+          debts: "debt",
+          holdings: "holding",
+          other: "other",
+        };
+
+        const financeType = categoryToType[category];
+        if (!financeType) {
+          return res.status(400).json({ message: "Invalid category" });
+        }
+
+        const daysNum = parseInt(days as string) || 30;
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - daysNum);
+
+        // Get all items for this admin
+        const items = await db
+          .select()
+          .from(plaidItems)
+          .where(eq(plaidItems.adminUserId, userId!));
+
+        const itemIds = items.map((i) => i.itemId);
+
+        if (itemIds.length === 0) {
+          return res.json({ transactions: [] });
+        }
+
+        // Build institution name map from items
+        const institutionNameMap = new Map<string, string | null>();
+        items.forEach((i) => {
+          institutionNameMap.set(i.itemId, i.institutionName);
+        });
+
+        // Get all accounts to build default type map and name map
+        const accounts = await db
+          .select()
+          .from(plaidAccounts)
+          .where(inArray(plaidAccounts.itemId, itemIds));
+
+        const accountDefaultMap = new Map<string, string | null>();
+        const accountNameMap = new Map<string, { name: string; institutionName: string | null; itemId: string }>();
+        accounts.forEach((a) => {
+          accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
+          accountNameMap.set(a.plaidAccountId, { 
+            name: a.name, 
+            institutionName: institutionNameMap.get(a.itemId) || null,
+            itemId: a.itemId
+          });
+        });
+
+        // Get transactions in date range
+        const transactions = await db
+          .select()
+          .from(plaidTransactions)
+          .where(
+            and(
+              gte(
+                plaidTransactions.date,
+                startDate.toISOString().split("T")[0],
+              ),
+              inArray(plaidTransactions.itemId, itemIds),
+            ),
+          )
+          .orderBy(sql`${plaidTransactions.date} DESC`);
+
+        // Filter to only transactions with matching effective type
+        const typedTransactions = transactions
+          .map((t) => ({
+            ...t,
+            effectiveType: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
+          }))
+          .filter((t) => t.effectiveType === financeType)
+          .map((t) => {
+            const accountInfo = accountNameMap.get(t.plaidAccountId);
+            return {
+              transaction_id: t.transactionId,
+              plaid_account_id: t.plaidAccountId,
+              account_name: accountInfo?.name || "Unknown Account",
+              institution_name: accountInfo?.institutionName || null,
+              date: t.date,
+              name: t.name,
+              merchant_name: t.merchantName,
+              amount_cents: t.amountCents,
+              pending: t.pending,
+              effective_type: t.effectiveType,
+            };
+          });
+
+        res.json({ transactions: typedTransactions });
+      } catch (error) {
+        console.error("Error fetching typed transactions:", error);
+        res.status(500).json({ message: "Failed to fetch typed transactions" });
       }
     },
   );

@@ -1,0 +1,80 @@
+Enhance ONLY the Admin “Finance Tracker” page totals logic and breakdown behavior.
+
+IMPORTANT PRINCIPLE (MOST IMPORTANT):
+Totals must be based ONLY on user-applied data.
+Nothing is auto-counted just because it exists in Plaid.
+
+CURRENT STATE (keep this behavior):
+- Each tab (Income, Bills, Debts, Holdings) shows a Total card.
+- Under the total, it lists sources like:
+  - Manual entries: $X
+  - From Plaid (30d): $Y
+  - Client rent (monthly): $Z
+- Manual Entries already work and should remain unchanged.
+
+NEW RULES FOR TOTALS (CRITICAL):
+1) Manual entries:
+   - Always counted toward totals.
+   - These are explicitly user-created, so no change here.
+
+2) Plaid entries:
+   - MUST ONLY be counted if the user explicitly assigns a Type
+     (Income, Bill, Debt, Holding, Other) via the dropdown.
+   - Plaid transactions with Type = None must NOT appear in totals.
+   - Plaid transactions must NOT be auto-categorized.
+
+3) Empty categories are valid:
+   - Example:
+     - Debts total should be $0.00
+     - Until the user either:
+       a) adds a manual debt entry, OR
+       b) explicitly marks Plaid transactions as Debt
+   - Do not infer debt from account type or transaction amount.
+
+4) Client rent (monthly):
+   - Continue to appear as its own source line in totals (like it does now).
+   - Only counted where applicable (Income tab).
+
+BREAKDOWN DISPLAY (keep and extend):
+- Under each Total card, continue to show:
+  - Manual entries: $X
+  - From Plaid (30d): $Y
+  - Client rent (monthly): $Z (if applicable)
+- “From Plaid (30d)” must ONLY include Plaid transactions
+  that the user has explicitly typed.
+
+PLAID ENTRIES LIST (per tab):
+- Each tab should show:
+  - Manual Entries section (existing)
+  - Plaid Entries section (new)
+- Plaid Entries list must:
+  - Only show transactions whose Type matches the active tab
+  - Be empty if no transactions were manually assigned
+  - Update immediately when a transaction Type is changed
+
+ADD “OTHER” CATEGORY:
+- Add an “Other” tab and Total card.
+- Same rules apply:
+  - Manual Other entries always count
+  - Plaid entries only count if user sets Type = Other
+
+DO NOT:
+- Auto-classify Plaid transactions
+- Assume debts from credit cards or loans
+- Change existing UI layout
+- Change how Sync works
+
+BACKEND GUIDANCE (you decide implementation):
+- Persist:
+  - transaction.typeOverride
+- Totals = sum(manual entries) + sum(plaid transactions WHERE typeOverride == category)
+- Client rent remains a separate explicit source
+
+ACCEPTANCE TESTS:
+1) Debts shows $0.00 if nothing is manually assigned.
+2) Assigning a Plaid transaction as Bill immediately updates:
+   - Bills total
+   - Bills “From Plaid (30d)” line
+   - Bills Plaid Entries list
+3) Unassigned Plaid transactions never affect totals.
+4) Breakdown text under totals remains exactly as before, just filtered correctly.

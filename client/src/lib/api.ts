@@ -391,10 +391,24 @@ export interface PlaidSyncStatus {
 
 export interface PlaidFinanceTotals {
   income: number;
-  spending: number;
+  bills: number;
   debts: number;
   holdings: number;
+  other: number;
   date_range: number;
+}
+
+export interface TypedPlaidTransaction {
+  transaction_id: string;
+  plaid_account_id: string;
+  account_name: string;
+  institution_name: string | null;
+  date: string;
+  name: string;
+  merchant_name: string | null;
+  amount_cents: number;
+  pending: boolean;
+  effective_type: string;
 }
 
 export interface PlaidSpendingSummary {
@@ -550,6 +564,14 @@ export function useAdminPlaidSpendingSummary(days: number = 30) {
   return useQuery<PlaidSpendingSummary>({
     queryKey: ["admin", "plaid", "spending-summary", days],
     queryFn: () => fetchApi(`/api/admin/plaid/spending-summary?days=${days}`),
+  });
+}
+
+export function useAdminPlaidTypedTransactions(category: string, days: number = 30) {
+  return useQuery<{ transactions: TypedPlaidTransaction[] }>({
+    queryKey: ["admin", "plaid", "typed-transactions", category, days],
+    queryFn: () => fetchApi(`/api/admin/plaid/typed-transactions?category=${category}&days=${days}`),
+    enabled: !!category,
   });
 }
 
