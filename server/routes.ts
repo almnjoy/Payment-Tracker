@@ -1173,7 +1173,7 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const file = req.file;
-        const { clientId, leaseId, invoiceId, title, docType, visibility } =
+        const { clientId, leaseId, invoiceId, title, docType, visibility, isActiveAgreement } =
           req.body;
 
         if (!file || !clientId || !title) {
@@ -1209,6 +1209,11 @@ export async function registerRoutes(
           },
         });
 
+        // If setting as active agreement, clear any existing active agreements for this client
+        if (isActiveAgreement === "true") {
+          await storage.clearActiveAgreementForClient(clientId);
+        }
+
         // Save document metadata
         const document = await storage.createDocument({
           clientId,
@@ -1222,6 +1227,7 @@ export async function registerRoutes(
           contentType: file.mimetype,
           fileSizeBytes: file.size,
           uploadedByUserId: userId!,
+          isActiveAgreement: isActiveAgreement === "true",
         });
 
         res.status(201).json(document);

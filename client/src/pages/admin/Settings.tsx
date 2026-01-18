@@ -4,9 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { CreditCard, Plus, Trash2, RefreshCw, Loader2 } from "lucide-react";
+import { CreditCard, Plus, Trash2, RefreshCw, Loader2, DollarSign, Wallet, Building2, Save, ExternalLink } from "lucide-react";
 import { usePlaidLink } from "react-plaid-link";
 import { 
   useAdminPlaidItems, 
@@ -17,6 +19,7 @@ import {
   formatDate 
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 function PlaidLinkButton({ onSuccess }: { onSuccess: () => void }) {
   const createLinkToken = useCreatePlaidLinkToken();
@@ -81,6 +84,239 @@ function PlaidLinkButton({ onSuccess }: { onSuccess: () => void }) {
         </>
       )}
     </Button>
+  );
+}
+
+interface PaymentSettings {
+  id: string | null;
+  cashAppHandle: string | null;
+  cashAppLink: string | null;
+  venmoHandle: string | null;
+  venmoLink: string | null;
+  bankInstructions: string | null;
+  stripePlaceholderMessage: string | null;
+}
+
+function PaymentSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<PaymentSettings>({
+    id: null,
+    cashAppHandle: "",
+    cashAppLink: "",
+    venmoHandle: "",
+    venmoLink: "",
+    bankInstructions: "",
+    stripePlaceholderMessage: "Stripe payments coming soon!",
+  });
+
+  const { data: settings, isLoading } = useQuery<PaymentSettings>({
+    queryKey: ["admin", "payment-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/payment-settings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch payment settings");
+      return response.json();
+    },
+  });
+
+  useEffect(() => {
+    if (settings) {
+      setFormData({
+        id: settings.id,
+        cashAppHandle: settings.cashAppHandle || "",
+        cashAppLink: settings.cashAppLink || "",
+        venmoHandle: settings.venmoHandle || "",
+        venmoLink: settings.venmoLink || "",
+        bankInstructions: settings.bankInstructions || "",
+        stripePlaceholderMessage: settings.stripePlaceholderMessage || "Stripe payments coming soon!",
+      });
+    }
+  }, [settings]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (data: Partial<PaymentSettings>) => {
+      const response = await fetch("/api/admin/payment-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error("Failed to save payment settings");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "payment-settings"] });
+      toast({ title: "Settings Saved", description: "Payment settings have been updated." });
+      setIsEditing(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      cashAppHandle: formData.cashAppHandle || null,
+      cashAppLink: formData.cashAppLink || null,
+      venmoHandle: formData.venmoHandle || null,
+      venmoLink: formData.venmoLink || null,
+      bankInstructions: formData.bankInstructions || null,
+      stripePlaceholderMessage: formData.stripePlaceholderMessage || null,
+    });
+  };
+
+  const handleCancel = () => {
+    if (settings) {
+      setFormData({
+        id: settings.id,
+        cashAppHandle: settings.cashAppHandle || "",
+        cashAppLink: settings.cashAppLink || "",
+        venmoHandle: settings.venmoHandle || "",
+        venmoLink: settings.venmoLink || "",
+        bankInstructions: settings.bankInstructions || "",
+        stripePlaceholderMessage: settings.stripePlaceholderMessage || "Stripe payments coming soon!",
+      });
+    }
+    setIsEditing(false);
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="border-gray-200 shadow-sm">
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-gray-200 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5" />
+            Client Payment Methods
+          </CardTitle>
+          <CardDescription>Configure payment methods available to clients for reporting payments.</CardDescription>
+        </div>
+        {!isEditing ? (
+          <Button variant="outline" onClick={() => setIsEditing(true)} data-testid="button-edit-payment-settings">
+            Edit Settings
+          </Button>
+        ) : (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleCancel} data-testid="button-cancel-payment-settings">
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-payment-settings">
+              {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+              Save
+            </Button>
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="space-y-4 p-4 bg-green-50/50 rounded-lg border border-green-100">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 bg-green-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">$</div>
+              <h4 className="font-semibold text-gray-900">Cash App</h4>
+            </div>
+            {isEditing ? (
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-sm text-gray-600">Cash App Handle</Label>
+                  <Input
+                    placeholder="$YourCashTag"
+                    value={formData.cashAppHandle || ""}
+                    onChange={(e) => setFormData({ ...formData, cashAppHandle: e.target.value })}
+                    data-testid="input-cashapp-handle"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Cash App Link (optional)</Label>
+                  <Input
+                    placeholder="https://cash.app/$YourCashTag"
+                    value={formData.cashAppLink || ""}
+                    onChange={(e) => setFormData({ ...formData, cashAppLink: e.target.value })}
+                    data-testid="input-cashapp-link"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1 text-sm">
+                <p className="text-gray-600">Handle: <span className="font-medium text-gray-900">{settings?.cashAppHandle || "Not configured"}</span></p>
+                {settings?.cashAppLink && (
+                  <a href={settings.cashAppLink} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:underline flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Open Link
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4 p-4 bg-blue-50/50 rounded-lg border border-blue-100">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">V</div>
+              <h4 className="font-semibold text-gray-900">Venmo</h4>
+            </div>
+            {isEditing ? (
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-sm text-gray-600">Venmo Handle</Label>
+                  <Input
+                    placeholder="@YourVenmo"
+                    value={formData.venmoHandle || ""}
+                    onChange={(e) => setFormData({ ...formData, venmoHandle: e.target.value })}
+                    data-testid="input-venmo-handle"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Venmo Link (optional)</Label>
+                  <Input
+                    placeholder="https://venmo.com/YourVenmo"
+                    value={formData.venmoLink || ""}
+                    onChange={(e) => setFormData({ ...formData, venmoLink: e.target.value })}
+                    data-testid="input-venmo-link"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1 text-sm">
+                <p className="text-gray-600">Handle: <span className="font-medium text-gray-900">{settings?.venmoHandle || "Not configured"}</span></p>
+                {settings?.venmoLink && (
+                  <a href={settings.venmoLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Open Link
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-4 p-4 bg-gray-50/50 rounded-lg border border-gray-200">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-gray-600" />
+            <h4 className="font-semibold text-gray-900">Bank Transfer / Other Instructions</h4>
+          </div>
+          {isEditing ? (
+            <Textarea
+              placeholder="Enter bank transfer instructions, account details, or other payment information for clients..."
+              className="min-h-[100px]"
+              value={formData.bankInstructions || ""}
+              onChange={(e) => setFormData({ ...formData, bankInstructions: e.target.value })}
+              data-testid="textarea-bank-instructions"
+            />
+          ) : (
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">
+              {settings?.bankInstructions || "No bank transfer instructions configured."}
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -262,6 +498,8 @@ export default function AdminSettings() {
              </div>
           </CardContent>
         </Card>
+
+        <PaymentSettingsCard />
 
         <Card className="border-gray-200 shadow-sm">
            <CardHeader>

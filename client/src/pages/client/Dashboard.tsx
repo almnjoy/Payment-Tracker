@@ -182,7 +182,11 @@ export default function ClientDashboard() {
                        <p className="font-semibold text-orange-900">Outstanding Balance: {formatCents(amountDueCents)}</p>
                        <p className="text-xs text-orange-700">Due {formatDate(nextDueDate)}</p>
                      </div>
-                     <Button className="btn-primary-orange shadow-orange-200" data-testid="button-pay-now">
+                     <Button 
+                       className="btn-primary-orange shadow-orange-200" 
+                       onClick={() => navigate(`/client/payments${asClientId ? `?asClientId=${asClientId}` : ''}`)}
+                       data-testid="button-pay-now"
+                     >
                        Pay Now
                      </Button>
                   </div>

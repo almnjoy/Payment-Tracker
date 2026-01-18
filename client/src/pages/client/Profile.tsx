@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,11 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { User, Mail, Phone, Building, MapPin, Loader2, Eye, ArrowLeft, Calendar, Hash } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { User, Mail, Phone, MapPin, Loader2, Eye, ArrowLeft, Calendar, Hash, Building, Bell, Save, X, ExternalLink } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useClientDashboard, formatDate } from "@/lib/api";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export default function ClientProfile() {
   const [, navigate] = useLocation();
@@ -19,7 +22,84 @@ export default function ClientProfile() {
   const isImpersonating = !!asClientId;
   
   const { user } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: dashboardData, isLoading } = useClientDashboard(asClientId);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    displayName: "",
+    email: "",
+    phone: "",
+    address: "",
+    notificationsEnabled: true,
+  });
+
+  useEffect(() => {
+    if (dashboardData?.client) {
+      setFormData({
+        displayName: dashboardData.client.displayName || "",
+        email: dashboardData.client.email || "",
+        phone: dashboardData.client.phone || "",
+        address: dashboardData.client.address || "",
+        notificationsEnabled: dashboardData.client.notificationsEnabled ?? true,
+      });
+    }
+  }, [dashboardData?.client]);
+
+  const updateProfileMutation = useMutation({
+    mutationFn: async (data: typeof formData) => {
+      const response = await fetch("/api/client/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to update profile");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Profile updated", description: "Your changes have been saved." });
+      setIsEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => {
+    if (!formData.displayName.trim()) {
+      toast({ title: "Error", description: "Name is required", variant: "destructive" });
+      return;
+    }
+    if (!formData.email.trim()) {
+      toast({ title: "Error", description: "Email is required", variant: "destructive" });
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      toast({ title: "Error", description: "Invalid email format", variant: "destructive" });
+      return;
+    }
+    updateProfileMutation.mutate(formData);
+  };
+
+  const handleCancel = () => {
+    if (dashboardData?.client) {
+      setFormData({
+        displayName: dashboardData.client.displayName || "",
+        email: dashboardData.client.email || "",
+        phone: dashboardData.client.phone || "",
+        address: dashboardData.client.address || "",
+        notificationsEnabled: dashboardData.client.notificationsEnabled ?? true,
+      });
+    }
+    setIsEditing(false);
+  };
 
   if (isLoading) {
     return (
@@ -73,9 +153,31 @@ export default function ClientProfile() {
           </div>
         )}
 
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight text-gray-900">Profile</h2>
-          <p className="text-gray-500">Your account information and details.</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight text-gray-900">Profile</h2>
+            <p className="text-gray-500">Your account information and details.</p>
+          </div>
+          {!isImpersonating && !isEditing && (
+            <Button onClick={() => setIsEditing(true)} data-testid="button-edit-profile">
+              Edit Profile
+            </Button>
+          )}
+          {isEditing && (
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleCancel} data-testid="button-cancel-edit">
+                <X className="h-4 w-4 mr-2" /> Cancel
+              </Button>
+              <Button onClick={handleSave} disabled={updateProfileMutation.isPending} data-testid="button-save-profile">
+                {updateProfileMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                Save Changes
+              </Button>
+            </div>
+          )}
         </div>
 
         <Card className="border-gray-200 shadow-sm">
@@ -87,12 +189,12 @@ export default function ClientProfile() {
             <div className="flex flex-col md:flex-row gap-6 items-start md:items-center">
               <Avatar className="h-24 w-24 border-2 border-white shadow-lg">
                 <AvatarFallback className="bg-blue-100 text-blue-600 text-2xl font-semibold">
-                  {getInitials(client?.displayName)}
+                  {getInitials(isEditing ? formData.displayName : client?.displayName)}
                 </AvatarFallback>
               </Avatar>
               <div className="space-y-1">
                 <h3 className="text-xl font-bold text-gray-900" data-testid="text-display-name">
-                  {client?.displayName || 'Unknown Client'}
+                  {isEditing ? formData.displayName : (client?.displayName || 'Unknown Client')}
                 </h3>
                 <div className="flex items-center gap-2">
                   {getStatusBadge(client?.status)}
@@ -107,41 +209,122 @@ export default function ClientProfile() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label className="text-gray-500 text-sm">Full Name</Label>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <User className="h-4 w-4 text-gray-400" />
-                  <span className="font-medium text-gray-900" data-testid="text-name">
-                    {client?.displayName || 'Not set'}
-                  </span>
-                </div>
+                <Label className="text-gray-500 text-sm">Full Name *</Label>
+                {isEditing ? (
+                  <div className="flex items-center gap-3">
+                    <User className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <Input
+                      value={formData.displayName}
+                      onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+                      placeholder="Enter your name"
+                      data-testid="input-name"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <User className="h-4 w-4 text-gray-400" />
+                    <span className="font-medium text-gray-900" data-testid="text-name">
+                      {client?.displayName || 'Not set'}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
-                <Label className="text-gray-500 text-sm">Email Address</Label>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <Mail className="h-4 w-4 text-gray-400" />
-                  <span className="font-medium text-gray-900" data-testid="text-email">
-                    {client?.email || 'Not set'}
-                  </span>
-                </div>
+                <Label className="text-gray-500 text-sm">Email Address *</Label>
+                {isEditing ? (
+                  <div className="flex items-center gap-3">
+                    <Mail className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <Input
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      placeholder="Enter your email"
+                      data-testid="input-email"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <Mail className="h-4 w-4 text-gray-400" />
+                    <span className="font-medium text-gray-900" data-testid="text-email">
+                      {client?.email || 'Not set'}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-gray-500 text-sm">Phone Number</Label>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <Phone className="h-4 w-4 text-gray-400" />
-                  <span className="font-medium text-gray-900" data-testid="text-phone">
-                    {client?.phone || 'Not set'}
-                  </span>
-                </div>
+                {isEditing ? (
+                  <div className="flex items-center gap-3">
+                    <Phone className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <Input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder="Enter your phone"
+                      data-testid="input-phone"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <Phone className="h-4 w-4 text-gray-400" />
+                    <span className="font-medium text-gray-900" data-testid="text-phone">
+                      {client?.phone || 'Not set'}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-gray-500 text-sm">Address</Label>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <MapPin className="h-4 w-4 text-gray-400" />
-                  <span className="font-medium text-gray-900" data-testid="text-address">
-                    {client?.address || 'Not set'}
-                  </span>
-                </div>
+                {isEditing ? (
+                  <div className="flex items-center gap-3">
+                    <MapPin className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                    <Input
+                      value={formData.address}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      placeholder="Enter your address"
+                      data-testid="input-address"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <MapPin className="h-4 w-4 text-gray-400" />
+                    <span className="font-medium text-gray-900" data-testid="text-address">
+                      {client?.address || 'Not set'}
+                    </span>
+                  </div>
+                )}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-gray-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5" />
+              Notifications
+            </CardTitle>
+            <CardDescription>Manage your notification preferences.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Email Notifications</Label>
+                <p className="text-sm text-gray-500">
+                  Receive email updates about invoices, payments, and important notices.
+                </p>
+              </div>
+              <Switch
+                checked={formData.notificationsEnabled}
+                onCheckedChange={(checked) => {
+                  setFormData({ ...formData, notificationsEnabled: checked });
+                  if (!isEditing) {
+                    updateProfileMutation.mutate({ ...formData, notificationsEnabled: checked });
+                  }
+                }}
+                disabled={isImpersonating}
+                data-testid="switch-notifications"
+              />
             </div>
           </CardContent>
         </Card>
@@ -195,18 +378,28 @@ export default function ClientProfile() {
           </Card>
         )}
 
-        <Card className="border-gray-200 shadow-sm bg-blue-50/30">
-          <CardContent className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <Mail className="h-5 w-5 text-blue-600" />
-              </div>
-              <div>
-                <h4 className="font-medium text-gray-900">Need to update your information?</h4>
-                <p className="text-sm text-gray-500 mt-1">
-                  Contact your administrator to update your profile details, email, or phone number.
+        <Card className="border-gray-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Security</CardTitle>
+            <CardDescription>Manage your account security settings.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Password</Label>
+                <p className="text-sm text-gray-500">
+                  Reset your password through your Replit account settings.
                 </p>
               </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.open('https://replit.com/account', '_blank')}
+                data-testid="button-reset-password"
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Account Settings
+              </Button>
             </div>
           </CardContent>
         </Card>

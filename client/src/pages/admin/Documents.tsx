@@ -7,10 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { FileText, Upload, Search, Loader2, Download, Eye, ChevronDown, ChevronRight, FolderOpen, User, FileArchive } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { FileText, Upload, Search, Loader2, Download, Eye, ChevronDown, ChevronRight, FolderOpen, User, FileArchive, Star, MoreHorizontal } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAdminDocuments, useAdminClients, useUploadDocument, formatDate } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { PDFViewerModal } from "@/components/PDFViewerModal";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 interface Document {
   documentId: string;
@@ -20,6 +24,7 @@ interface Document {
   fileSizeBytes: number | null;
   createdAt: string;
   contentType: string | null;
+  isActiveAgreement?: boolean;
 }
 
 interface ClientGroup {
@@ -27,10 +32,12 @@ interface ClientGroup {
   clientName: string;
   invoices: Document[];
   other: Document[];
+  hasActiveAgreement: boolean;
 }
 
 export default function AdminDocuments() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -39,6 +46,7 @@ export default function AdminDocuments() {
     clientId: "",
     title: "",
     docType: "other",
+    isActiveAgreement: false,
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -49,13 +57,32 @@ export default function AdminDocuments() {
   const { data: clients } = useAdminClients();
   const uploadDocument = useUploadDocument();
 
+  const updateDocumentMutation = useMutation({
+    mutationFn: async ({ documentId, data }: { documentId: string; data: Partial<Document> }) => {
+      const response = await fetch(`/api/admin/documents/${documentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to update document");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-documents"] });
+    },
+  });
+
   const groupedDocuments = useMemo(() => {
     if (!documents) return { byClient: [], noClient: [] as Document[] };
     
     const clientMap = new Map<string, ClientGroup>();
     const noClient: Document[] = [];
     
-    documents.forEach(doc => {
+    documents.forEach((doc: Document) => {
       if (!doc.clientId) {
         noClient.push(doc);
         return;
@@ -68,10 +95,14 @@ export default function AdminDocuments() {
           clientName: client?.displayName || doc.clientId,
           invoices: [],
           other: [],
+          hasActiveAgreement: false,
         });
       }
       
       const group = clientMap.get(doc.clientId)!;
+      if (doc.isActiveAgreement) {
+        group.hasActiveAgreement = true;
+      }
       if (doc.docType === 'invoice' || doc.docType === 'receipt') {
         group.invoices.push(doc);
       } else {
@@ -150,11 +181,12 @@ export default function AdminDocuments() {
         title: uploadFormData.title + '.pdf',
         docType: uploadFormData.docType,
         visibility: "client_and_admin",
+        isActiveAgreement: uploadFormData.isActiveAgreement,
       });
       toast({ title: "Upload Complete", description: `${uploadFormData.title}.pdf uploaded successfully` });
       setUploadDialogOpen(false);
       setSelectedFile(null);
-      setUploadFormData({ clientId: "", title: "", docType: "other" });
+      setUploadFormData({ clientId: "", title: "", docType: "other", isActiveAgreement: false });
       refetch();
     } catch (error: any) {
       toast({ title: "Upload Failed", description: error.message, variant: "destructive" });
@@ -187,20 +219,51 @@ export default function AdminDocuments() {
     }
   };
 
+  const handleSetActiveAgreement = async (doc: Document, isActive: boolean) => {
+    try {
+      await updateDocumentMutation.mutateAsync({
+        documentId: doc.documentId,
+        data: { isActiveAgreement: isActive },
+      });
+      toast({ 
+        title: isActive ? "Active Agreement Set" : "Active Agreement Removed",
+        description: isActive 
+          ? `${doc.title} is now the active agreement for this client`
+          : `${doc.title} is no longer the active agreement`
+      });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
   const DocumentItem = ({ doc }: { doc: Document }) => (
     <div 
-      className="flex items-center justify-between p-3 bg-white rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50/30 transition-colors group"
+      className={`flex items-center justify-between p-3 bg-white rounded-lg border transition-colors group ${
+        doc.isActiveAgreement 
+          ? 'border-amber-300 bg-amber-50/30 hover:border-amber-400' 
+          : 'border-gray-100 hover:border-blue-200 hover:bg-blue-50/30'
+      }`}
       data-testid={`doc-${doc.documentId}`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className="h-8 w-8 rounded bg-red-50 flex items-center justify-center text-red-500 shrink-0">
-          <FileText size={16} />
+        <div className={`h-8 w-8 rounded flex items-center justify-center shrink-0 ${
+          doc.isActiveAgreement ? 'bg-amber-100 text-amber-600' : 'bg-red-50 text-red-500'
+        }`}>
+          {doc.isActiveAgreement ? <Star size={16} /> : <FileText size={16} />}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-gray-900 truncate" title={doc.title}>{doc.title}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-gray-900 truncate" title={doc.title}>{doc.title}</p>
+            {doc.isActiveAgreement && (
+              <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs" data-testid={`badge-active-${doc.documentId}`}>
+                Active Agreement
+              </Badge>
+            )}
+          </div>
           <p className="text-xs text-gray-500">
             {formatDate(doc.createdAt)}
             {doc.fileSizeBytes && ` • ${(doc.fileSizeBytes / 1024).toFixed(1)} KB`}
+            <span className="ml-2 text-gray-400 capitalize">{doc.docType}</span>
           </p>
         </div>
       </div>
@@ -223,6 +286,37 @@ export default function AdminDocuments() {
         >
           <Download size={16} />
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-8 w-8 text-gray-400 hover:text-gray-600"
+              data-testid={`button-more-${doc.documentId}`}
+            >
+              <MoreHorizontal size={16} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {doc.isActiveAgreement ? (
+              <DropdownMenuItem 
+                onClick={() => handleSetActiveAgreement(doc, false)}
+                data-testid={`menu-remove-active-${doc.documentId}`}
+              >
+                <Star className="h-4 w-4 mr-2" />
+                Remove Active Agreement
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem 
+                onClick={() => handleSetActiveAgreement(doc, true)}
+                data-testid={`menu-set-active-${doc.documentId}`}
+              >
+                <Star className="h-4 w-4 mr-2" />
+                Set as Active Agreement
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
@@ -304,13 +398,33 @@ export default function AdminDocuments() {
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="invoice">Invoice</SelectItem>
                     <SelectItem value="contract">Contract/Lease</SelectItem>
+                    <SelectItem value="invoice">Invoice</SelectItem>
                     <SelectItem value="receipt">Receipt</SelectItem>
                     <SelectItem value="notice">Notice</SelectItem>
                     <SelectItem value="other">Other</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="grid grid-cols-4 items-center gap-4">
+                <div className="text-right"></div>
+                <div className="col-span-3 flex items-center space-x-2">
+                  <Checkbox
+                    id="isActiveAgreement"
+                    checked={uploadFormData.isActiveAgreement}
+                    onCheckedChange={(checked) => 
+                      setUploadFormData({ ...uploadFormData, isActiveAgreement: checked as boolean })
+                    }
+                    data-testid="checkbox-active-agreement"
+                  />
+                  <Label htmlFor="isActiveAgreement" className="text-sm font-normal cursor-pointer">
+                    Set as Active Agreement
+                    <span className="block text-xs text-gray-500">
+                      This will be shown on the client's dashboard
+                    </span>
+                  </Label>
+                </div>
               </div>
             </div>
             <DialogFooter>
@@ -364,6 +478,11 @@ export default function AdminDocuments() {
                           )}
                           <User className="h-5 w-5 text-blue-500" />
                           <CardTitle className="text-lg">{group.clientName}</CardTitle>
+                          {group.hasActiveAgreement && (
+                            <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">
+                              Has Active Agreement
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex gap-4 text-sm text-gray-500">
                           <span>{group.invoices.length} invoices</span>

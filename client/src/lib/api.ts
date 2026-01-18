@@ -46,6 +46,7 @@ export interface Client {
   amountOwedCents?: number;
   lastPaymentAt?: string | null;
   status?: string;
+  notificationsEnabled?: boolean;
 }
 
 export interface Lease {
@@ -93,6 +94,7 @@ export interface Document {
   contentType: string | null;
   fileSizeBytes: number | null;
   createdAt: string;
+  isActiveAgreement?: boolean;
 }
 
 export interface ExternalAccount {
@@ -189,14 +191,15 @@ export function useAdminDocuments(clientId?: string) {
 
 export function useUploadDocument() {
   const queryClient = useQueryClient();
-  return useMutation<Document, Error, { file: File; title: string; docType: string; visibility: string; clientId?: string }>({
-    mutationFn: async ({ file, title, docType, visibility, clientId }) => {
+  return useMutation<Document, Error, { file: File; title: string; docType: string; visibility: string; clientId?: string; isActiveAgreement?: boolean }>({
+    mutationFn: async ({ file, title, docType, visibility, clientId, isActiveAgreement }) => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("title", title);
       formData.append("docType", docType);
       formData.append("visibility", visibility);
       if (clientId) formData.append("clientId", clientId);
+      if (isActiveAgreement) formData.append("isActiveAgreement", "true");
       
       const response = await fetch("/api/admin/documents/upload", {
         method: "POST",
