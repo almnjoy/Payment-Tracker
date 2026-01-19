@@ -1547,12 +1547,11 @@ export async function registerRoutes(
           portalUrl: portalUrl,
         };
 
-        // Build headers
+        // Build headers - use signupEmailToken with fallback to automationToken (same as test webhook)
         const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (settings?.automationToken) {
-          headers["X-Automation-Token"] = settings.automationToken;
-        } else {
-          console.warn("Automation webhook token not set");
+        const token = settings?.signupEmailToken || settings?.automationToken;
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
         }
 
         // Send webhook request
