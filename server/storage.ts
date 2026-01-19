@@ -44,6 +44,7 @@ import {
 export interface IStorage {
   // Users Profile
   getUserProfile(userId: string): Promise<UsersProfile | undefined>;
+  getUserProfileByClientId(clientId: string): Promise<UsersProfile | undefined>;
   upsertUserProfile(data: InsertUsersProfile): Promise<UsersProfile>;
 
   // Clients
@@ -113,6 +114,11 @@ export class DatabaseStorage implements IStorage {
   // ============================================
   async getUserProfile(userId: string): Promise<UsersProfile | undefined> {
     const [profile] = await db.select().from(usersProfile).where(eq(usersProfile.userId, userId));
+    return profile;
+  }
+
+  async getUserProfileByClientId(clientId: string): Promise<UsersProfile | undefined> {
+    const [profile] = await db.select().from(usersProfile).where(eq(usersProfile.clientId, clientId));
     return profile;
   }
 

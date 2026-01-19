@@ -140,6 +140,106 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// Utility to send Payment Received webhook with idempotency and toggle checks
+async function sendPaymentReceivedWebhook(
+  payment: { paymentId: string; clientId: string; amountCents: number; method: string; status: string; createdAt: Date | null; webhookSentAt?: Date | null },
+  baseUrl: string,
+  executionMode: "test" | "live" = "live"
+): Promise<{ sent: boolean; reason?: string }> {
+  try {
+    // 1. Idempotency check - don't send if already sent
+    if (payment.webhookSentAt) {
+      console.log(`[PaymentWebhook] Skipping - already sent at ${payment.webhookSentAt} for payment ${payment.paymentId}`);
+      return { sent: false, reason: "already_sent" };
+    }
+
+    // 2. Get automation settings
+    const settings = await storage.getAutomationSettings();
+    
+    // 3. Check global toggle
+    if (!settings?.paymentReceivedAlertsGlobalEnabled) {
+      console.log(`[PaymentWebhook] Skipping - global Payment Received Alerts toggle is OFF`);
+      return { sent: false, reason: "global_toggle_off" };
+    }
+    
+    // 4. Check if webhook is configured and enabled
+    if (!settings.paymentReceivedWebhookUrl) {
+      console.log(`[PaymentWebhook] Skipping - webhook URL not configured`);
+      return { sent: false, reason: "url_not_configured" };
+    }
+    
+    if (!settings.paymentReceivedEnabled) {
+      console.log(`[PaymentWebhook] Skipping - webhook is disabled in settings`);
+      return { sent: false, reason: "webhook_disabled" };
+    }
+
+    // 5. Get client info and check client notification toggle
+    const client = await storage.getClient(payment.clientId);
+    if (!client) {
+      console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} not found`);
+      return { sent: false, reason: "client_not_found" };
+    }
+
+    // 6. Check client notification toggle (on client record, not user profile)
+    if (!client.notificationsEnabled) {
+      console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} has notifications disabled`);
+      return { sent: false, reason: "client_notifications_off" };
+    }
+
+    // 7. Build payload
+    const payload = {
+      event: "client.payment.received",
+      clientId: payment.clientId,
+      clientName: client.displayName || "Unknown",
+      clientEmail: client.email || "",
+      payment: {
+        paymentId: payment.paymentId,
+        amount: payment.amountCents,
+        method: payment.method,
+        status: payment.status,
+        createdAt: payment.createdAt?.toISOString() || new Date().toISOString(),
+      },
+      portalUrl: baseUrl,
+      executionMode,
+    };
+
+    // 8. Build headers
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (settings.paymentReceivedToken) {
+      headers["Authorization"] = `Bearer ${settings.paymentReceivedToken}`;
+    }
+
+    console.log(`[PaymentWebhook] Sending to: ${settings.paymentReceivedWebhookUrl}`);
+    console.log(`[PaymentWebhook] Payload:`, JSON.stringify(payload, null, 2));
+
+    // 9. Send webhook
+    const response = await fetch(settings.paymentReceivedWebhookUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    console.log(`[PaymentWebhook] Response status: ${response.status}`);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "No response body");
+      console.error(`[PaymentWebhook] Failed: ${response.status} - ${errorText.substring(0, 200)}`);
+      return { sent: false, reason: `webhook_failed_${response.status}` };
+    }
+
+    // 10. Mark as sent in database
+    await db.update(payments)
+      .set({ webhookSentAt: new Date() })
+      .where(eq(payments.paymentId, payment.paymentId));
+
+    console.log(`[PaymentWebhook] Successfully sent for payment ${payment.paymentId}`);
+    return { sent: true };
+  } catch (error: any) {
+    console.error(`[PaymentWebhook] Error:`, error.message);
+    return { sent: false, reason: `error: ${error.message}` };
+  }
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express,
@@ -2111,6 +2211,17 @@ export async function registerRoutes(
           await storage.updateInvoice(req.body.invoiceId, { status: "paid" });
         }
 
+        // Fire webhook if payment is created as confirmed and has a client
+        if (payment.status === "confirmed" && payment.clientId) {
+          const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+          const host = req.headers["host"] || req.get("host") || "localhost:5000";
+          const baseUrl = `${proto}://${host}`;
+          
+          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+            console.error("[AdminPaymentCreate] Webhook error (non-blocking):", err.message);
+          });
+        }
+
         res.status(201).json(payment);
       } catch (error) {
         console.error("Error creating payment:", error);
@@ -2118,63 +2229,6 @@ export async function registerRoutes(
       }
     },
   );
-
-  // Helper function to send payment received webhook
-  async function sendPaymentReceivedWebhook(payment: any, client: any, req: Request) {
-    try {
-      const settings = await storage.getAutomationSettings();
-      
-      // Check if webhook is configured and enabled
-      if (!settings?.paymentReceivedWebhookUrl || !settings.paymentReceivedEnabled) {
-        console.log("[Webhook] Payment received webhook not configured or disabled");
-        return;
-      }
-      
-      // Check global toggle
-      if (!settings.paymentReceivedAlertsGlobalEnabled) {
-        console.log("[Webhook] Payment received alerts globally disabled");
-        return;
-      }
-      
-      const proto = req.headers["x-forwarded-proto"] || req.protocol;
-      const host = req.headers["host"];
-      const baseUrl = `${proto}://${host}`;
-      
-      const payload = {
-        event: "client.payment_received",
-        clientId: client.clientId,
-        clientName: client.displayName,
-        clientEmail: client.email,
-        payment: {
-          paymentId: payment.paymentId,
-          amount: payment.amountCents,
-          method: payment.method,
-          status: payment.status,
-          createdAt: payment.createdAt,
-        },
-        portalUrl: baseUrl,
-      };
-      
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (settings.paymentReceivedToken) {
-        headers["Authorization"] = `Bearer ${settings.paymentReceivedToken}`;
-      }
-      
-      console.log(`[Webhook] Sending payment received to ${settings.paymentReceivedWebhookUrl}`);
-      
-      const response = await fetch(settings.paymentReceivedWebhookUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      
-      console.log(`[Webhook] Payment received response: ${response.status}`);
-    } catch (error) {
-      console.error("[Webhook] Error sending payment received webhook:", error);
-    }
-  }
 
   // Update payment status (for payment verification)
   app.patch(
@@ -2198,12 +2252,15 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Payment not found" });
         }
 
-        // Fire payment received webhook if status is confirmed
+        // Fire payment received webhook if status is confirmed (non-blocking)
         if (status === "confirmed" && payment.clientId) {
-          const client = await storage.getClient(payment.clientId);
-          if (client) {
-            sendPaymentReceivedWebhook(payment, client, req);
-          }
+          const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+          const host = req.headers["host"] || req.get("host") || "localhost:5000";
+          const baseUrl = `${proto}://${host}`;
+          
+          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+            console.error("[PaymentStatusUpdate] Webhook error (non-blocking):", err.message);
+          });
         }
 
         res.json(payment);
@@ -3265,11 +3322,14 @@ export async function registerRoutes(
 
         console.log(`[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`);
 
-        // Fire payment received webhook for confirmed Stripe payment
-        const client = await storage.getClient(clientId);
-        if (client) {
-          sendPaymentReceivedWebhook(payment, client, req);
-        }
+        // Fire payment received webhook for confirmed Stripe payment (non-blocking)
+        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["host"] || req.get("host") || "localhost:5000";
+        const baseUrl = `${proto}://${host}`;
+        
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          console.error("[Stripe Confirm] Webhook error (non-blocking):", err.message);
+        });
 
         res.json({ 
           payment, 
@@ -5378,6 +5438,16 @@ export async function registerRoutes(
         });
 
         console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+
+        // Fire payment received webhook (non-blocking)
+        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["host"] || req.get("host") || "localhost:5000";
+        const baseUrl = `${proto}://${host}`;
+        
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          console.error("[StripeWebhook checkout.session.completed] Webhook error (non-blocking):", err.message);
+        });
+
         return res.json({ received: true, paymentId: payment.paymentId });
 
       } else if (event.type === "payment_intent.succeeded") {
@@ -5415,6 +5485,16 @@ export async function registerRoutes(
         });
 
         console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+
+        // Fire payment received webhook (non-blocking)
+        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["host"] || req.get("host") || "localhost:5000";
+        const baseUrl = `${proto}://${host}`;
+        
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          console.error("[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):", err.message);
+        });
+
         return res.json({ received: true, paymentId: payment.paymentId });
       }
 

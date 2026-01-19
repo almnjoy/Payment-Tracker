@@ -300,6 +300,7 @@ export const payments = pgTable("payments", {
   stripePaymentIntentId: varchar("stripe_payment_intent_id"),
   stripeChargeId: varchar("stripe_charge_id"),
   notes: text("notes"),
+  webhookSentAt: timestamp("webhook_sent_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

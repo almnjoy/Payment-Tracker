@@ -1,0 +1,69 @@
+Implement the Client Payment Received webhook trigger so n8n emails fire on real payments (not just test buttons).
+
+Context:
+- We already have Admin > Settings > Automations tiles, including:
+  - "Client Payment Received Alerts" with fields: webhookUrl + token
+- n8n expects an Authorization header: "Bearer <token>"
+- Test button works and hits n8n, but real payment submission does NOT call webhook.
+- We must only send webhook when notifications are enabled:
+  - Global admin setting: Payment Received Alerts toggle (on/off)
+  - Client portal setting: Enable/Disable notifications (on/off) per client/user
+- Keep secrets safe server-side. Token must not be exposed to browser.
+
+Goal:
+When a payment is created/confirmed (Stripe or manual methods like Cash App/Venmo/Bank/Other), the server sends a POST to the configured webhook URL with the correct JSON body and Authorization header.
+This should happen automatically as part of the payment creation/confirmation flow.
+
+Required behavior:
+1) Trigger points (server-side only):
+   A) Stripe payments:
+      - When /api/stripe/confirm-checkout succeeds and a payment record is created/confirmed, immediately fire webhook.
+      - Do not rely on client-side redirect query params.
+   B) Manual payment entry (Cash App/Venmo/Bank/Other):
+      - When the server creates the payment record (status reported or confirmed), fire webhook after the DB write succeeds.
+2) Idempotency:
+   - Do NOT send duplicate webhooks for the same payment.
+   - If you already have an idempotency check for Stripe payment creation, reuse it.
+   - Add a field on payment record like notificationSentAt or webhookSentAt (nullable timestamp) and only send if null, then update it after successful send.
+3) Toggle logic:
+   - If global admin Payment Received Alerts toggle is OFF, do not call webhook.
+   - If client notifications toggle is OFF for that client/user, do not call webhook.
+4) Token handling:
+   - If token is set in admin settings, send HTTP header:
+     Authorization: Bearer <token>
+   - If token is blank, send no Authorization header.
+5) Payload:
+POST JSON with the following structure (match the test payload we used in n8n):
+{
+  "event": "client.payment.received",
+  "clientId": "<CL-XXXXXX>",
+  "clientName": "<client name>",
+  "clientEmail": "<client email>",
+  "payment": {
+    "paymentId": "<payment id>",
+    "amount": <amount in cents OR dollars but be consistent with existing totals logic; include same unit you use everywhere>,
+    "method": "<stripe|cashapp|venmo|bank|other>",
+    "status": "<confirmed|reported|pendingVerification>",
+    "createdAt": "<ISO timestamp>"
+  },
+  "portalUrl": "<base portal url>",
+  "executionMode": "<test|live>"
+}
+6) Error handling:
+   - Webhook failures should not break payment creation.
+   - Log failures server-side with enough detail (status code, response text) and keep payment record intact.
+   - If webhook fails, do not set notificationSentAt so it can be retried later (manual or future retry job).
+
+Implementation notes:
+- Add a small server utility function: sendAutomationWebhook(type, payload)
+- Read webhookUrl/token/toggles from the same settings storage used by the signup webhook.
+- Use server fetch; set Content-Type: application/json.
+- Ensure the URL used is the configured webhook URL (test/prod depending on settings).
+- After successful webhook POST (2xx), update payment record notificationSentAt = now.
+
+Acceptance tests:
+- Submit a real Stripe test payment -> n8n webhook receives it with Authorization header and body fields populated -> email is sent.
+- Submit a manual Cash App payment entry -> n8n webhook receives it -> email is sent.
+- Turn off admin Payment Received Alerts toggle -> no webhook triggered.
+- Turn off client notifications -> no webhook triggered.
+- Same payment confirmed twice / refreshed -> webhook is only sent once.
