@@ -2635,6 +2635,7 @@ export async function registerRoutes(
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ["card"],
           mode: "payment",
+          client_reference_id: profile.clientId,
           line_items: [
             {
               price_data: {
@@ -2655,7 +2656,7 @@ export async function registerRoutes(
             note: note || "",
           },
           customer_email: client.email || undefined,
-          success_url: `${baseUrl}/client/payments?success=1`,
+          success_url: `${baseUrl}/client/payments?success=1&session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${baseUrl}/client/payments?canceled=1`,
         });
 
@@ -2667,6 +2668,105 @@ export async function registerRoutes(
         console.error("Error creating Stripe checkout session:", error);
         res.status(500).json({ 
           message: error.message || "Failed to create checkout session" 
+        });
+      }
+    },
+  );
+
+  // Confirm Stripe Checkout session and create payment record
+  app.post(
+    "/api/stripe/confirm-checkout",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const { sessionId } = req.body;
+
+        if (!sessionId) {
+          return res.status(400).json({ message: "Session ID is required" });
+        }
+
+        const secretKey = process.env.STRIPE_SECRET_KEY_TEST;
+        if (!secretKey) {
+          return res.status(500).json({ message: "Stripe is not configured" });
+        }
+
+        const stripe = new Stripe(secretKey);
+
+        // Retrieve the checkout session from Stripe
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        // Validate payment status
+        if (session.payment_status !== "paid") {
+          return res.status(400).json({ 
+            message: "Payment not completed",
+            paymentStatus: session.payment_status 
+          });
+        }
+
+        // Extract clientId from client_reference_id or metadata
+        const clientId = session.client_reference_id || session.metadata?.clientId;
+        if (!clientId) {
+          return res.status(400).json({ message: "Client ID not found in session" });
+        }
+
+        // Verify the authenticated user owns this client
+        const profile = (req as any).userProfile;
+        if (profile.clientId !== clientId) {
+          return res.status(403).json({ message: "Unauthorized - client mismatch" });
+        }
+
+        // Use payment_intent or session.id as idempotency key
+        const idempotencyKey = (session.payment_intent as string) || session.id;
+
+        // Check if payment already exists (idempotency) - key by payment_intent OR session.id
+        const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : null;
+        const existingPayments = await storage.getPaymentsByClient(clientId);
+        const existingPayment = existingPayments.find(p => {
+          // Check by payment intent if available
+          if (paymentIntentId && p.stripePaymentIntentId === paymentIntentId) {
+            return true;
+          }
+          // Check by session ID in notes as fallback
+          if (p.notes?.includes(`Session: ${session.id}`)) {
+            return true;
+          }
+          return false;
+        });
+
+        if (existingPayment) {
+          return res.json({ 
+            payment: existingPayment, 
+            alreadyExists: true 
+          });
+        }
+
+        // Create new payment record
+        const amountCents = session.amount_total || 0;
+        const noteText = session.metadata?.note 
+          ? `${session.metadata.note} (Session: ${session.id})`
+          : `Stripe Session: ${session.id}`;
+        
+        const payment = await storage.createPayment({
+          clientId,
+          amountCents,
+          method: "stripe",
+          status: "confirmed",
+          paidAt: new Date(),
+          notes: noteText,
+          stripePaymentIntentId: paymentIntentId,
+        });
+
+        console.log(`[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`);
+
+        res.json({ 
+          payment, 
+          alreadyExists: false 
+        });
+      } catch (error: any) {
+        console.error("Error confirming Stripe checkout:", error);
+        res.status(500).json({ 
+          message: error.message || "Failed to confirm checkout" 
         });
       }
     },

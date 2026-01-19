@@ -34,9 +34,9 @@ export default function ClientPayments() {
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: payments, isLoading: paymentsLoading } = useClientPayments(asClientId);
-  const { data: invoices, isLoading: invoicesLoading } = useClientInvoices(asClientId);
-  const { data: dashboardData, refetch: refetchDashboard } = useClientDashboard(asClientId);
+  const { data: payments, isLoading: paymentsLoading, error: paymentsError } = useClientPayments(asClientId);
+  const { data: invoices, isLoading: invoicesLoading, error: invoicesError } = useClientInvoices(asClientId);
+  const { data: dashboardData, refetch: refetchDashboard, error: dashboardError } = useClientDashboard(asClientId);
 
   const { data: paymentSettings } = useQuery<PaymentSettings>({
     queryKey: ["client", "payment-settings"],
@@ -53,29 +53,77 @@ export default function ClientPayments() {
   const [paymentNote, setPaymentNote] = useState("");
   const [useCustomAmount, setUseCustomAmount] = useState(false);
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
+
+  const sessionId = searchParams.get("session_id");
 
   // Handle Stripe return success/canceled
   useEffect(() => {
-    if (paymentSuccess) {
-      setShowSuccessBanner(true);
-      // Clear the URL params
-      window.history.replaceState({}, "", window.location.pathname);
-      // Refresh data after a short delay to allow webhook processing
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["client-payments"] });
-        queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
-        refetchDashboard();
-      }, 2000);
-    }
+    const confirmStripePayment = async () => {
+      if (paymentSuccess && sessionId && !confirmingPayment) {
+        setConfirmingPayment(true);
+        try {
+          const response = await fetch("/api/stripe/confirm-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ sessionId }),
+          });
+          
+          if (!response.ok) {
+            const error = await response.json();
+            console.error("Stripe confirm error:", error);
+            toast({ 
+              title: "Payment Confirmation Failed", 
+              description: error.message || "Could not confirm payment. Please contact support.",
+              variant: "destructive"
+            });
+          } else {
+            const result = await response.json();
+            console.log("Stripe payment confirmed:", result);
+            setShowSuccessBanner(true);
+            // Refresh payment data
+            queryClient.invalidateQueries({ queryKey: ["client-payments"] });
+            queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
+            refetchDashboard();
+          }
+        } catch (error) {
+          console.error("Failed to confirm Stripe payment:", error);
+          toast({ 
+            title: "Error", 
+            description: "Could not confirm payment. Please contact support.",
+            variant: "destructive"
+          });
+        } finally {
+          setConfirmingPayment(false);
+          // Clear URL params via history.replaceState so refresh doesn't re-run
+          const basePath = asClientId ? `/client/payments?asClientId=${asClientId}` : "/client/payments";
+          window.history.replaceState({}, "", basePath);
+        }
+      } else if (paymentSuccess && !sessionId) {
+        // Fallback for success without session_id (shouldn't happen with new flow)
+        setShowSuccessBanner(true);
+        window.history.replaceState({}, "", window.location.pathname);
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["client-payments"] });
+          queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
+          refetchDashboard();
+        }, 2000);
+      }
+    };
+    
+    confirmStripePayment();
+    
     if (paymentCanceled) {
       toast({ 
         title: "Payment Canceled", 
         description: "You can try again when you're ready.",
         variant: "default"
       });
-      window.history.replaceState({}, "", window.location.pathname);
+      const basePath = asClientId ? `/client/payments?asClientId=${asClientId}` : "/client/payments";
+      window.history.replaceState({}, "", basePath);
     }
-  }, [paymentSuccess, paymentCanceled, queryClient, refetchDashboard, toast]);
+  }, [paymentSuccess, paymentCanceled, sessionId, queryClient, refetchDashboard, toast, asClientId]);
 
   const submitPaymentMutation = useMutation({
     mutationFn: async (data: { amountCents: number; method: string; note: string }) => {
@@ -219,6 +267,38 @@ export default function ClientPayments() {
   ];
 
   const selectedMethodData = paymentMethods.find(m => m.id === selectedMethod);
+
+  // Show loader while confirming Stripe payment
+  if (confirmingPayment) {
+    return (
+      <Layout role="client" clientName={dashboardData?.client?.displayName}>
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-[#635BFF]" />
+          <p className="text-gray-600 font-medium">Confirming your payment...</p>
+          <p className="text-sm text-gray-500">Please wait while we verify your payment with Stripe.</p>
+        </div>
+      </Layout>
+    );
+  }
+
+  // Show error message if API fails
+  const hasError = paymentsError || invoicesError || dashboardError;
+  if (!isLoading && hasError) {
+    const errorMsg = (paymentsError as Error)?.message || (invoicesError as Error)?.message || (dashboardError as Error)?.message || "Unknown error";
+    console.error("Failed to load payments page data:", errorMsg);
+    return (
+      <Layout role="client" clientName={dashboardData?.client?.displayName}>
+        <div className="flex flex-col items-center justify-center h-64 gap-4">
+          <AlertCircle className="h-12 w-12 text-red-500" />
+          <p className="text-gray-900 font-medium">Unable to load payment data</p>
+          <p className="text-sm text-gray-500">Please try refreshing the page or contact support if the problem persists.</p>
+          <Button onClick={() => window.location.reload()} variant="outline">
+            Refresh Page
+          </Button>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout role="client" clientName={dashboardData?.client?.displayName}>
