@@ -19,7 +19,7 @@ import {
   plaidRecurringGroups,
   financeEntries,
   clientBillingItems,
-  clients,
+  clients as clientsTable,
   invoices,
   invoiceSettings,
   paymentSettings,
@@ -388,22 +388,116 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const clients = await storage.getAllClients();
+        const now = new Date();
+
+        // Get all active billing items
+        const allBillingItems = await db
+          .select()
+          .from(clientBillingItems)
+          .where(eq(clientBillingItems.status, "active"));
 
         // Get additional data for each client
         const enrichedClients = await Promise.all(
           clients.map(async (client) => {
-            const invoices = await storage.getInvoicesByClient(client.clientId);
             const payments = await storage.getPaymentsByClient(client.clientId);
-
-            const totalOwed = invoices
-              .filter((inv) => ["open", "sent", "overdue"].includes(inv.status))
-              .reduce((sum, inv) => sum + inv.amountCents, 0);
-
             const lastPayment = payments.length > 0 ? payments[0] : null;
+
+            // Inactive clients show zero amount owed
+            if (client.status === "inactive") {
+              return {
+                ...client,
+                amountOwedCents: 0,
+                lastPaymentAt: lastPayment?.paidAt || lastPayment?.createdAt,
+              };
+            }
+
+            // Get billing items for this client
+            const clientBills = allBillingItems.filter(
+              item => item.clientId === client.clientId
+            );
+
+            // Calculate total amount due based on billing items and frequency
+            // Logic: Count how many billing periods have passed where payment is due
+            let totalBillingDue = 0;
+            for (const bill of clientBills) {
+              // Parse dueDate as local date (YYYY-MM-DD string from DB)
+              const dueParts = bill.dueDate.split('-').map(Number);
+              const dueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
+              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+              
+              // Skip if first due date is in the future (bill not yet due)
+              if (dueDate > today) continue;
+              
+              if (bill.frequency === "one_time") {
+                // One-time bill: just the amount if due date has passed
+                totalBillingDue += bill.amountCents;
+              } else {
+                // Recurring: count periods where due date has passed
+                let periods = 0;
+                let currentDue = new Date(dueDate);
+                
+                // Count each period where the due date has been reached
+                while (currentDue <= today) {
+                  periods++;
+                  
+                  // Advance to next period
+                  switch (bill.frequency) {
+                    case "weekly":
+                      currentDue.setDate(currentDue.getDate() + 7);
+                      break;
+                    case "biweekly":
+                      currentDue.setDate(currentDue.getDate() + 14);
+                      break;
+                    case "monthly": {
+                      // Move to next month, same day (clamped to month end)
+                      const targetDay = dueDate.getDate();
+                      const nextMonth = currentDue.getMonth() + 1;
+                      const year = currentDue.getFullYear() + Math.floor(nextMonth / 12);
+                      const month = nextMonth % 12;
+                      const daysInMonth = new Date(year, month + 1, 0).getDate();
+                      currentDue = new Date(year, month, Math.min(targetDay, daysInMonth));
+                      break;
+                    }
+                    case "yearly": {
+                      // Move to next year, same month/day (clamped for Feb 29)
+                      const targetMonth = dueDate.getMonth();
+                      const targetDay = dueDate.getDate();
+                      const nextYear = currentDue.getFullYear() + 1;
+                      const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
+                      currentDue = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                      break;
+                    }
+                  }
+                }
+                totalBillingDue += bill.amountCents * periods;
+              }
+            }
+
+            // Calculate confirmed payments total
+            const confirmedPaymentsTotal = payments
+              .filter(p => p.status === "confirmed")
+              .reduce((sum, p) => sum + p.amountCents, 0);
+
+            // Amount owed = billing due - payments made (if negative, client is ahead)
+            const currentBalance = confirmedPaymentsTotal - totalBillingDue;
+            const amountOwed = currentBalance < 0 ? Math.abs(currentBalance) : 0;
+
+            // Auto-update status to "behind" if client owes money and is currently "active"
+            let updatedStatus = client.status;
+            if (currentBalance < 0 && client.status === "active") {
+              updatedStatus = "behind";
+              // Update in database
+              await db.update(clientsTable).set({ status: "behind" }).where(eq(clientsTable.clientId, client.clientId));
+            } else if (currentBalance >= 0 && client.status === "behind") {
+              // If they caught up, set back to active
+              updatedStatus = "active";
+              await db.update(clientsTable).set({ status: "active" }).where(eq(clientsTable.clientId, client.clientId));
+            }
 
             return {
               ...client,
-              amountOwedCents: totalOwed,
+              status: updatedStatus,
+              amountOwedCents: amountOwed,
               lastPaymentAt: lastPayment?.paidAt || lastPayment?.createdAt,
             };
           }),
@@ -1970,9 +2064,9 @@ export async function registerRoutes(
         }
 
         const updated = await db
-          .update(clients)
+          .update(clientsTable)
           .set({ status, updatedAt: new Date() })
-          .where(eq(clients.clientId, clientId))
+          .where(eq(clientsTable.clientId, clientId))
           .returning();
 
         if (updated.length === 0) {
