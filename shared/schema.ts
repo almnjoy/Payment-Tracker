@@ -193,7 +193,22 @@ export type PaymentSettings = typeof paymentSettings.$inferSelect;
 export const automationSettings = pgTable("automation_settings", {
   id: varchar("id").primaryKey().default("default"),
   adminUserId: varchar("admin_user_id").notNull(),
-  signupEmailWebhookUrl: text("signup_email_webhook_url").default("https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email"),
+  // Client Signup Email Webhook
+  signupEmailWebhookUrl: text("signup_email_webhook_url"),
+  signupEmailToken: text("signup_email_token"),
+  signupEmailEnabled: boolean("signup_email_enabled").default(false),
+  // Payment Received Alerts Webhook
+  paymentReceivedWebhookUrl: text("payment_received_webhook_url"),
+  paymentReceivedToken: text("payment_received_token"),
+  paymentReceivedEnabled: boolean("payment_received_enabled").default(false),
+  // Monthly Summaries Webhook
+  monthlySummaryWebhookUrl: text("monthly_summary_webhook_url"),
+  monthlySummaryToken: text("monthly_summary_token"),
+  monthlySummaryEnabled: boolean("monthly_summary_enabled").default(false),
+  // Global notification toggles
+  paymentReceivedAlertsGlobalEnabled: boolean("payment_received_alerts_global_enabled").default(true),
+  monthlySummaryGlobalEnabled: boolean("monthly_summary_global_enabled").default(true),
+  // Legacy field (deprecated, use signupEmailToken instead)
   automationToken: text("automation_token"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

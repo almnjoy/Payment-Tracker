@@ -1,0 +1,117 @@
+Update Admin > Settings to expand the Automations + Notifications system.
+
+GOALS
+1) Automations section should support multiple webhook dropdown menus (same visual style as existing Client Signup Email Webhook tile) but with title only, unless clicked to "drop down" additional informatuon.
+2) Each automation tile must have:
+   - Webhook URL (editable)
+   - Token (editable, optional)
+   - Enabled toggle for that automation (separate from global notifications)
+   - A small “Expected Payload” code snippet (copy-friendly) showing the JSON body structure
+3) Add 2 new automation tiles (in addition to the existing Signup Email one):
+   A) Client Payment Received Alerts (NEW)
+   B) Monthly Summaries (NEW)
+4) Add notification on/off logic:
+   - Admin global “Payment Received Alerts” toggle should prevent firing those webhooks even if configured
+   - Client portal has its own notifications toggle; if client disables, do not fire client notification webhooks for that client
+   - Remove/ignore Overdue Reminders for now (remove from UI and do not implement)
+5) Build the configuration + backend wiring endpoints to call these webhooks when events happen.
+
+DETAILS / UI
+- Admin > Settings > Automations section:
+  - Render 3 drop down options:
+    1) Client Signup Email Webhook (existing, keep working)
+    2) Client Payment Received Alerts (new)
+    3) Monthly Summaries (new)
+  - Each tile includes:
+    - Title + short description
+    - “Webhook URL:” value (or “Not set”)
+    - “Token:” value (or “Not set”)
+    - “Enabled:” toggle
+    - “Edit” button opens a modal with form fields:
+        Webhook URL input
+        Token input
+        Enabled toggle
+        Save / Cancel
+    - Under the fields show “Expected Payload” with a code block.
+
+Expected payload snippets:
+
+1) Client Signup Email Webhook (already working, just display snippet):
+{
+  "clientName": "John Doe",
+  "clientEmail": "john@example.com",
+  "clientId": "CL-XXXXXX",
+  "portalUrl": "https://example.com"
+}
+
+2) Client Payment Received Alerts (new):
+{
+  "event": "client.payment_received",
+  "clientId": "CL-XXXXXX",
+  "clientName": "John Doe",
+  "clientEmail": "john@example.com",
+  "payment": {
+    "paymentId": "PAY-XXXX",
+    "amount": 1000,
+    "method": "stripe",
+    "status": "confirmed",
+    "createdAt": "2026-01-19T12:34:56Z"
+  },
+  "portalUrl": "https://example.com"
+}
+
+3) Monthly Summaries (new):
+{
+  "event": "admin.monthly_summary",
+  "period": {
+    "start": "2026-01-01",
+    "end": "2026-01-31"
+  },
+  "totals": {
+    "income": 0,
+    "bills": 0,
+    "debts": 0,
+    "holdings": 0,
+    "other": 0
+  },
+  "portalUrl": "https://example.com"
+}
+
+BACKEND / DATA MODEL
+- Store automation settings in DB (not frontend):
+  - signupEmailWebhookUrl, signupEmailToken, signupEmailEnabled
+  - paymentReceivedWebhookUrl, paymentReceivedToken, paymentReceivedEnabled
+  - monthlySummaryWebhookUrl, monthlySummaryToken, monthlySummaryEnabled
+
+- Store notification toggles:
+  - Admin settings:
+      paymentReceivedAlertsEnabled (global)
+      monthlySummaryEnabled (global)
+  - Client portal profile setting:
+      clientNotificationsEnabled boolean (per client/portal user)
+
+WEBHOOK AUTH / TOKEN
+- Ensure the “Token” is actually sent:
+  - Send as HTTP header: Authorization: Bearer <token>
+
+EVENT WIRING
+- Payment Received Alerts:
+  - When a payment becomes confirmed (including Stripe confirm checkout or webhook confirmed), trigger webhook IF:
+      admin global paymentReceivedAlertsEnabled is true
+      AND automation tile paymentReceivedEnabled is true
+      AND paymentReceivedWebhookUrl is set
+  - Also trigger client-side notification webhook only if the clientNotificationsEnabled is true for that client/portal user
+  - Payload should include the payment details and client info shown above and additions if needed.
+
+- Monthly Summaries:
+  - Just create the configuration and a placeholder button to generate it from the admin settings.
+  - Do not implement real scheduling yet.
+
+ADMIN UI - Notifications section
+- Keep “Payment Received Alerts” toggle
+- Edit “Daily Summary” toggle to “Monthly Summaries”
+- Remove “Overdue Reminders” from the UI entirely.
+
+TESTING
+- Add “Test Webhook” button in each automation tile modal that sends a sample payload to the configured URL (server-side) and returns success/error to the UI.
+- Log webhook response status codes server-side for debugging.

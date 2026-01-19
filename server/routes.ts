@@ -1186,15 +1186,41 @@ export async function registerRoutes(
         if (!settings) {
           return res.json({
             id: null,
-            signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
-            hasAutomationToken: false,
+            // Client Signup Email
+            signupEmailWebhookUrl: null,
+            signupEmailEnabled: false,
+            hasSignupEmailToken: false,
+            // Payment Received Alerts
+            paymentReceivedWebhookUrl: null,
+            paymentReceivedEnabled: false,
+            hasPaymentReceivedToken: false,
+            // Monthly Summary
+            monthlySummaryWebhookUrl: null,
+            monthlySummaryEnabled: false,
+            hasMonthlySummaryToken: false,
+            // Global toggles
+            paymentReceivedAlertsGlobalEnabled: true,
+            monthlySummaryGlobalEnabled: true,
           });
         }
-        // Don't expose the actual token - just indicate if it's set
+        // Return settings with token presence indicators (not actual tokens)
         res.json({
           id: settings.id,
+          // Client Signup Email
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
-          hasAutomationToken: !!settings.automationToken,
+          signupEmailEnabled: settings.signupEmailEnabled ?? false,
+          hasSignupEmailToken: !!(settings.signupEmailToken || settings.automationToken),
+          // Payment Received Alerts
+          paymentReceivedWebhookUrl: settings.paymentReceivedWebhookUrl,
+          paymentReceivedEnabled: settings.paymentReceivedEnabled ?? false,
+          hasPaymentReceivedToken: !!settings.paymentReceivedToken,
+          // Monthly Summary
+          monthlySummaryWebhookUrl: settings.monthlySummaryWebhookUrl,
+          monthlySummaryEnabled: settings.monthlySummaryEnabled ?? false,
+          hasMonthlySummaryToken: !!settings.monthlySummaryToken,
+          // Global toggles
+          paymentReceivedAlertsGlobalEnabled: settings.paymentReceivedAlertsGlobalEnabled ?? true,
+          monthlySummaryGlobalEnabled: settings.monthlySummaryGlobalEnabled ?? true,
         });
       } catch (error) {
         console.error("Error fetching automation settings:", error);
@@ -1210,23 +1236,167 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
-        const { signupEmailWebhookUrl, automationToken } = req.body;
+        const {
+          signupEmailWebhookUrl,
+          signupEmailToken,
+          signupEmailEnabled,
+          paymentReceivedWebhookUrl,
+          paymentReceivedToken,
+          paymentReceivedEnabled,
+          monthlySummaryWebhookUrl,
+          monthlySummaryToken,
+          monthlySummaryEnabled,
+          paymentReceivedAlertsGlobalEnabled,
+          monthlySummaryGlobalEnabled,
+        } = req.body;
         
-        const settings = await storage.upsertAutomationSettings({
-          adminUserId: userId!,
-          signupEmailWebhookUrl: signupEmailWebhookUrl ?? null,
-          automationToken: automationToken ?? null,
-        });
+        // Build update object with only provided fields
+        const updateData: any = { adminUserId: userId! };
         
-        // Don't expose the actual token in response - just indicate if it's set
+        if (signupEmailWebhookUrl !== undefined) updateData.signupEmailWebhookUrl = signupEmailWebhookUrl;
+        if (signupEmailToken !== undefined) updateData.signupEmailToken = signupEmailToken;
+        if (signupEmailEnabled !== undefined) updateData.signupEmailEnabled = signupEmailEnabled;
+        if (paymentReceivedWebhookUrl !== undefined) updateData.paymentReceivedWebhookUrl = paymentReceivedWebhookUrl;
+        if (paymentReceivedToken !== undefined) updateData.paymentReceivedToken = paymentReceivedToken;
+        if (paymentReceivedEnabled !== undefined) updateData.paymentReceivedEnabled = paymentReceivedEnabled;
+        if (monthlySummaryWebhookUrl !== undefined) updateData.monthlySummaryWebhookUrl = monthlySummaryWebhookUrl;
+        if (monthlySummaryToken !== undefined) updateData.monthlySummaryToken = monthlySummaryToken;
+        if (monthlySummaryEnabled !== undefined) updateData.monthlySummaryEnabled = monthlySummaryEnabled;
+        if (paymentReceivedAlertsGlobalEnabled !== undefined) updateData.paymentReceivedAlertsGlobalEnabled = paymentReceivedAlertsGlobalEnabled;
+        if (monthlySummaryGlobalEnabled !== undefined) updateData.monthlySummaryGlobalEnabled = monthlySummaryGlobalEnabled;
+        
+        const settings = await storage.upsertAutomationSettings(updateData);
+        
         res.json({
           id: settings.id,
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
-          hasAutomationToken: !!settings.automationToken,
+          signupEmailEnabled: settings.signupEmailEnabled ?? false,
+          hasSignupEmailToken: !!(settings.signupEmailToken || settings.automationToken),
+          paymentReceivedWebhookUrl: settings.paymentReceivedWebhookUrl,
+          paymentReceivedEnabled: settings.paymentReceivedEnabled ?? false,
+          hasPaymentReceivedToken: !!settings.paymentReceivedToken,
+          monthlySummaryWebhookUrl: settings.monthlySummaryWebhookUrl,
+          monthlySummaryEnabled: settings.monthlySummaryEnabled ?? false,
+          hasMonthlySummaryToken: !!settings.monthlySummaryToken,
+          paymentReceivedAlertsGlobalEnabled: settings.paymentReceivedAlertsGlobalEnabled ?? true,
+          monthlySummaryGlobalEnabled: settings.monthlySummaryGlobalEnabled ?? true,
         });
       } catch (error) {
         console.error("Error updating automation settings:", error);
         res.status(500).json({ message: "Failed to update automation settings" });
+      }
+    },
+  );
+
+  // Test webhook endpoint
+  app.post(
+    "/api/admin/test-webhook",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const { webhookType } = req.body;
+        const settings = await storage.getAutomationSettings();
+        
+        let webhookUrl: string | null = null;
+        let token: string | null = null;
+        let payload: any = {};
+        
+        const baseUrl = process.env.REPLIT_DEV_DOMAIN 
+          ? `https://${process.env.REPLIT_DEV_DOMAIN}` 
+          : process.env.REPLIT_DOMAINS 
+            ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}` 
+            : "http://localhost:5000";
+        
+        switch (webhookType) {
+          case "signupEmail":
+            webhookUrl = settings?.signupEmailWebhookUrl || null;
+            token = settings?.signupEmailToken || settings?.automationToken || null;
+            payload = {
+              clientName: "Test Client",
+              clientEmail: "test@example.com",
+              clientId: "CL-TEST123",
+              portalUrl: `${baseUrl}/auth/register`,
+            };
+            break;
+          case "paymentReceived":
+            webhookUrl = settings?.paymentReceivedWebhookUrl || null;
+            token = settings?.paymentReceivedToken || null;
+            payload = {
+              event: "client.payment_received",
+              clientId: "CL-TEST123",
+              clientName: "Test Client",
+              clientEmail: "test@example.com",
+              payment: {
+                paymentId: "PAY-TEST123",
+                amount: 1000,
+                method: "stripe",
+                status: "confirmed",
+                createdAt: new Date().toISOString(),
+              },
+              portalUrl: baseUrl,
+            };
+            break;
+          case "monthlySummary":
+            webhookUrl = settings?.monthlySummaryWebhookUrl || null;
+            token = settings?.monthlySummaryToken || null;
+            const now = new Date();
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            payload = {
+              event: "admin.monthly_summary",
+              period: {
+                start: startOfMonth.toISOString().split('T')[0],
+                end: endOfMonth.toISOString().split('T')[0],
+              },
+              totals: {
+                income: 0,
+                bills: 0,
+                debts: 0,
+                holdings: 0,
+                other: 0,
+              },
+              portalUrl: baseUrl,
+            };
+            break;
+          default:
+            return res.status(400).json({ message: "Invalid webhook type" });
+        }
+        
+        if (!webhookUrl) {
+          return res.status(400).json({ message: "Webhook URL not configured" });
+        }
+        
+        // Send test webhook
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        
+        console.log(`[Test Webhook] Sending ${webhookType} to ${webhookUrl}`);
+        
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        
+        console.log(`[Test Webhook] Response status: ${response.status}`);
+        
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "No response body");
+          return res.status(response.status).json({ 
+            message: `Webhook returned ${response.status}`,
+            details: errorText.substring(0, 200),
+          });
+        }
+        
+        res.json({ success: true, status: response.status });
+      } catch (error: any) {
+        console.error("Error testing webhook:", error);
+        res.status(500).json({ message: error.message || "Failed to test webhook" });
       }
     },
   );
@@ -1686,6 +1856,63 @@ export async function registerRoutes(
     },
   );
 
+  // Helper function to send payment received webhook
+  async function sendPaymentReceivedWebhook(payment: any, client: any, req: Request) {
+    try {
+      const settings = await storage.getAutomationSettings();
+      
+      // Check if webhook is configured and enabled
+      if (!settings?.paymentReceivedWebhookUrl || !settings.paymentReceivedEnabled) {
+        console.log("[Webhook] Payment received webhook not configured or disabled");
+        return;
+      }
+      
+      // Check global toggle
+      if (!settings.paymentReceivedAlertsGlobalEnabled) {
+        console.log("[Webhook] Payment received alerts globally disabled");
+        return;
+      }
+      
+      const proto = req.headers["x-forwarded-proto"] || req.protocol;
+      const host = req.headers["host"];
+      const baseUrl = `${proto}://${host}`;
+      
+      const payload = {
+        event: "client.payment_received",
+        clientId: client.clientId,
+        clientName: client.displayName,
+        clientEmail: client.email,
+        payment: {
+          paymentId: payment.paymentId,
+          amount: payment.amountCents,
+          method: payment.method,
+          status: payment.status,
+          createdAt: payment.createdAt,
+        },
+        portalUrl: baseUrl,
+      };
+      
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (settings.paymentReceivedToken) {
+        headers["Authorization"] = `Bearer ${settings.paymentReceivedToken}`;
+      }
+      
+      console.log(`[Webhook] Sending payment received to ${settings.paymentReceivedWebhookUrl}`);
+      
+      const response = await fetch(settings.paymentReceivedWebhookUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      
+      console.log(`[Webhook] Payment received response: ${response.status}`);
+    } catch (error) {
+      console.error("[Webhook] Error sending payment received webhook:", error);
+    }
+  }
+
   // Update payment status (for payment verification)
   app.patch(
     "/api/admin/payments/:paymentId/status",
@@ -1706,6 +1933,14 @@ export async function registerRoutes(
         const payment = await storage.updatePaymentStatus(paymentId, status);
         if (!payment) {
           return res.status(404).json({ message: "Payment not found" });
+        }
+
+        // Fire payment received webhook if status is confirmed
+        if (status === "confirmed" && payment.clientId) {
+          const client = await storage.getClient(payment.clientId);
+          if (client) {
+            sendPaymentReceivedWebhook(payment, client, req);
+          }
         }
 
         res.json(payment);
@@ -2766,6 +3001,12 @@ export async function registerRoutes(
         });
 
         console.log(`[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`);
+
+        // Fire payment received webhook for confirmed Stripe payment
+        const client = await storage.getClient(clientId);
+        if (client) {
+          sendPaymentReceivedWebhook(payment, client, req);
+        }
 
         res.json({ 
           payment, 

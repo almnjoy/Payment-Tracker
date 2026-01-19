@@ -7,8 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { CreditCard, Plus, Trash2, RefreshCw, Loader2, DollarSign, Wallet, Building2, Save, ExternalLink, Zap, Mail } from "lucide-react";
+import { CreditCard, Plus, Trash2, RefreshCw, Loader2, DollarSign, Wallet, Building2, Save, ExternalLink, Zap, Mail, ChevronDown, ChevronRight, Bell, Calendar, Copy, Play } from "lucide-react";
 import { usePlaidLink } from "react-plaid-link";
 import { 
   useAdminPlaidItems, 
@@ -323,7 +324,139 @@ function PaymentSettingsCard() {
 interface AutomationSettings {
   id: string | null;
   signupEmailWebhookUrl: string | null;
-  hasAutomationToken: boolean;
+  signupEmailEnabled: boolean;
+  hasSignupEmailToken: boolean;
+  paymentReceivedWebhookUrl: string | null;
+  paymentReceivedEnabled: boolean;
+  hasPaymentReceivedToken: boolean;
+  monthlySummaryWebhookUrl: string | null;
+  monthlySummaryEnabled: boolean;
+  hasMonthlySummaryToken: boolean;
+  paymentReceivedAlertsGlobalEnabled: boolean;
+  monthlySummaryGlobalEnabled: boolean;
+}
+
+const PAYLOAD_SNIPPETS = {
+  signupEmail: `{
+  "clientName": "John Doe",
+  "clientEmail": "john@example.com",
+  "clientId": "CL-XXXXXX",
+  "portalUrl": "https://example.com"
+}`,
+  paymentReceived: `{
+  "event": "client.payment_received",
+  "clientId": "CL-XXXXXX",
+  "clientName": "John Doe",
+  "clientEmail": "john@example.com",
+  "payment": {
+    "paymentId": "PAY-XXXX",
+    "amount": 1000,
+    "method": "stripe",
+    "status": "confirmed",
+    "createdAt": "2026-01-19T12:34:56Z"
+  },
+  "portalUrl": "https://example.com"
+}`,
+  monthlySummary: `{
+  "event": "admin.monthly_summary",
+  "period": {
+    "start": "2026-01-01",
+    "end": "2026-01-31"
+  },
+  "totals": {
+    "income": 0,
+    "bills": 0,
+    "debts": 0,
+    "holdings": 0,
+    "other": 0
+  },
+  "portalUrl": "https://example.com"
+}`,
+};
+
+interface WebhookTileProps {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  webhookUrl: string | null;
+  hasToken: boolean;
+  enabled: boolean;
+  webhookType: string;
+  payloadSnippet: string;
+  onEdit: () => void;
+}
+
+function WebhookTile({ title, description, icon, webhookUrl, hasToken, enabled, webhookType, payloadSnippet, onEdit }: WebhookTileProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const { toast } = useToast();
+
+  const copyPayload = () => {
+    navigator.clipboard.writeText(payloadSnippet);
+    toast({ title: "Copied", description: "Payload copied to clipboard" });
+  };
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <CollapsibleTrigger asChild>
+          <button className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors text-left">
+            <div className="flex items-center gap-3">
+              {icon}
+              <div>
+                <h4 className="font-medium text-gray-900">{title}</h4>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {enabled ? (
+                    <Badge className="bg-green-50 text-green-700 border-green-200 text-xs">Enabled</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-gray-500 text-xs">Disabled</Badge>
+                  )}
+                  {webhookUrl ? (
+                    <span className="text-xs text-gray-500 truncate max-w-[200px]">{webhookUrl}</span>
+                  ) : (
+                    <span className="text-xs text-gray-400">Not configured</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {isOpen ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="px-4 pb-4 pt-2 border-t border-gray-100 bg-gray-50/50">
+            <p className="text-sm text-gray-600 mb-3">{description}</p>
+            <div className="space-y-2 text-sm mb-4">
+              <p className="text-gray-600">
+                <span className="font-medium">Webhook URL:</span>{" "}
+                <span className="text-gray-900 break-all">{webhookUrl || "Not set"}</span>
+              </p>
+              <p className="text-gray-600">
+                <span className="font-medium">Token:</span>{" "}
+                <span className="text-gray-900">{hasToken ? "••••••••" : "Not set"}</span>
+              </p>
+              <p className="text-gray-600">
+                <span className="font-medium">Enabled:</span>{" "}
+                <span className="text-gray-900">{enabled ? "Yes" : "No"}</span>
+              </p>
+            </div>
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-medium text-gray-700">Expected Payload</Label>
+                <Button variant="ghost" size="sm" onClick={copyPayload} className="h-7 text-xs">
+                  <Copy className="h-3 w-3 mr-1" /> Copy
+                </Button>
+              </div>
+              <pre className="bg-gray-900 text-green-400 p-3 rounded-md text-xs overflow-x-auto font-mono">
+                {payloadSnippet}
+              </pre>
+            </div>
+            <Button variant="outline" size="sm" onClick={onEdit} data-testid={`button-edit-${webhookType}`}>
+              Edit Configuration
+            </Button>
+          </div>
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
+  );
 }
 
 interface StripeStatus {
@@ -480,14 +613,9 @@ function StripeGatewayCard() {
   );
 }
 
-function AutomationSettingsCard() {
+function NotificationsCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState({
-    signupEmailWebhookUrl: "https://n8n.srv1077528.hstgr.cloud/webhook-test/client-signup-email",
-    automationToken: "", // For new token entry only - never populated from server
-  });
 
   const { data: settings, isLoading } = useQuery<AutomationSettings>({
     queryKey: ["admin", "automation-settings"],
@@ -498,18 +626,101 @@ function AutomationSettingsCard() {
     },
   });
 
-  useEffect(() => {
-    if (settings) {
-      setFormData(prev => ({
-        ...prev,
-        signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
-        // Don't populate automationToken from server - it's never returned
-      }));
-    }
-  }, [settings]);
+  const saveMutation = useMutation({
+    mutationFn: async (data: Record<string, any>) => {
+      const response = await fetch("/api/admin/automation-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error("Failed to save");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "automation-settings"] });
+      toast({ title: "Saved", description: "Notification preferences updated." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleToggle = (field: string, value: boolean) => {
+    saveMutation.mutate({ [field]: value });
+  };
+
+  if (isLoading) {
+    return (
+      <Card className="border-gray-200 shadow-sm">
+        <CardHeader>
+          <CardTitle>Notifications</CardTitle>
+        </CardHeader>
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="border-gray-200 shadow-sm">
+      <CardHeader>
+        <CardTitle>Notifications</CardTitle>
+        <CardDescription>Control what alerts you and your clients receive.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label className="text-base">Payment Received Alerts</Label>
+            <p className="text-sm text-gray-500">Get notified when a client makes a payment (requires Payment Received webhook)</p>
+          </div>
+          <Switch 
+            checked={settings?.paymentReceivedAlertsGlobalEnabled ?? true}
+            onCheckedChange={(checked) => handleToggle("paymentReceivedAlertsGlobalEnabled", checked)}
+            disabled={saveMutation.isPending}
+            data-testid="switch-payment-alerts-global"
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label className="text-base">Monthly Summary</Label>
+            <p className="text-sm text-gray-500">Receive a monthly breakdown of activity (requires Monthly Summary webhook)</p>
+          </div>
+          <Switch 
+            checked={settings?.monthlySummaryGlobalEnabled ?? true}
+            onCheckedChange={(checked) => handleToggle("monthlySummaryGlobalEnabled", checked)}
+            disabled={saveMutation.isPending}
+            data-testid="switch-monthly-summary-global"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AutomationSettingsCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editingWebhook, setEditingWebhook] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    webhookUrl: "",
+    token: "",
+    enabled: false,
+  });
+  const [testingWebhook, setTestingWebhook] = useState<string | null>(null);
+
+  const { data: settings, isLoading } = useQuery<AutomationSettings>({
+    queryKey: ["admin", "automation-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/automation-settings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch automation settings");
+      return response.json();
+    },
+  });
 
   const saveMutation = useMutation({
-    mutationFn: async (data: { signupEmailWebhookUrl: string | null; automationToken: string | null }) => {
+    mutationFn: async (data: Record<string, any>) => {
       const response = await fetch("/api/admin/automation-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -522,30 +733,101 @@ function AutomationSettingsCard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin", "automation-settings"] });
       toast({ title: "Settings Saved", description: "Automation settings have been updated." });
-      setIsEditing(false);
-      // Clear the token field after save
-      setFormData(prev => ({ ...prev, automationToken: "" }));
+      setEditingWebhook(null);
+      setFormData({ webhookUrl: "", token: "", enabled: false });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
 
-  const handleSave = () => {
-    saveMutation.mutate({
-      signupEmailWebhookUrl: formData.signupEmailWebhookUrl || null,
-      automationToken: formData.automationToken || null,
-    });
+  const testMutation = useMutation({
+    mutationFn: async (webhookType: string) => {
+      setTestingWebhook(webhookType);
+      const response = await fetch("/api/admin/test-webhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ webhookType }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Test failed");
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Test Successful", description: "Webhook received the test payload." });
+      setTestingWebhook(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Test Failed", description: error.message, variant: "destructive" });
+      setTestingWebhook(null);
+    },
+  });
+
+  const openEditModal = (type: string) => {
+    if (!settings) return;
+    
+    switch (type) {
+      case "signupEmail":
+        setFormData({
+          webhookUrl: settings.signupEmailWebhookUrl || "",
+          token: "",
+          enabled: settings.signupEmailEnabled,
+        });
+        break;
+      case "paymentReceived":
+        setFormData({
+          webhookUrl: settings.paymentReceivedWebhookUrl || "",
+          token: "",
+          enabled: settings.paymentReceivedEnabled,
+        });
+        break;
+      case "monthlySummary":
+        setFormData({
+          webhookUrl: settings.monthlySummaryWebhookUrl || "",
+          token: "",
+          enabled: settings.monthlySummaryEnabled,
+        });
+        break;
+    }
+    setEditingWebhook(type);
   };
 
-  const handleCancel = () => {
-    if (settings) {
-      setFormData({
-        signupEmailWebhookUrl: settings.signupEmailWebhookUrl || "",
-        automationToken: "", // Reset token field
-      });
+  const handleSave = () => {
+    if (!editingWebhook) return;
+    
+    const updateData: Record<string, any> = {};
+    
+    switch (editingWebhook) {
+      case "signupEmail":
+        updateData.signupEmailWebhookUrl = formData.webhookUrl || null;
+        if (formData.token) updateData.signupEmailToken = formData.token;
+        updateData.signupEmailEnabled = formData.enabled;
+        break;
+      case "paymentReceived":
+        updateData.paymentReceivedWebhookUrl = formData.webhookUrl || null;
+        if (formData.token) updateData.paymentReceivedToken = formData.token;
+        updateData.paymentReceivedEnabled = formData.enabled;
+        break;
+      case "monthlySummary":
+        updateData.monthlySummaryWebhookUrl = formData.webhookUrl || null;
+        if (formData.token) updateData.monthlySummaryToken = formData.token;
+        updateData.monthlySummaryEnabled = formData.enabled;
+        break;
     }
-    setIsEditing(false);
+    
+    saveMutation.mutate(updateData);
+  };
+
+  const getEditModalTitle = () => {
+    switch (editingWebhook) {
+      case "signupEmail": return "Client Signup Email Webhook";
+      case "paymentReceived": return "Payment Received Alerts Webhook";
+      case "monthlySummary": return "Monthly Summaries Webhook";
+      default: return "Edit Webhook";
+    }
   };
 
   if (isLoading) {
@@ -562,68 +844,116 @@ function AutomationSettingsCard() {
   }
 
   return (
-    <Card className="border-gray-200 shadow-sm">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
+    <>
+      <Card className="border-gray-200 shadow-sm">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2"><Zap className="h-5 w-5 text-yellow-500" /> Automations</CardTitle>
           <CardDescription>Configure webhooks and automated workflows (n8n, Zapier, etc.)</CardDescription>
-        </div>
-        {isEditing ? (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleCancel} disabled={saveMutation.isPending}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-automation-settings">
-              {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-              Save
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <WebhookTile
+            title="Client Signup Email Webhook"
+            description="When you click 'Send Signup Email' on a client's page, a POST request will be sent with the client's details."
+            icon={<Mail className="h-5 w-5 text-purple-600" />}
+            webhookUrl={settings?.signupEmailWebhookUrl || null}
+            hasToken={settings?.hasSignupEmailToken || false}
+            enabled={settings?.signupEmailEnabled || false}
+            webhookType="signupEmail"
+            payloadSnippet={PAYLOAD_SNIPPETS.signupEmail}
+            onEdit={() => openEditModal("signupEmail")}
+          />
+          <WebhookTile
+            title="Payment Received Alerts"
+            description="Triggered when a client payment is confirmed (via Stripe or manual confirmation). Requires global notification toggle to be enabled."
+            icon={<Bell className="h-5 w-5 text-green-600" />}
+            webhookUrl={settings?.paymentReceivedWebhookUrl || null}
+            hasToken={settings?.hasPaymentReceivedToken || false}
+            enabled={settings?.paymentReceivedEnabled || false}
+            webhookType="paymentReceived"
+            payloadSnippet={PAYLOAD_SNIPPETS.paymentReceived}
+            onEdit={() => openEditModal("paymentReceived")}
+          />
+          <WebhookTile
+            title="Monthly Summaries"
+            description="Send a monthly summary of financial data to your automation platform. Use the 'Generate Now' button to trigger manually."
+            icon={<Calendar className="h-5 w-5 text-blue-600" />}
+            webhookUrl={settings?.monthlySummaryWebhookUrl || null}
+            hasToken={settings?.hasMonthlySummaryToken || false}
+            enabled={settings?.monthlySummaryEnabled || false}
+            webhookType="monthlySummary"
+            payloadSnippet={PAYLOAD_SNIPPETS.monthlySummary}
+            onEdit={() => openEditModal("monthlySummary")}
+          />
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!editingWebhook} onOpenChange={(open) => !open && setEditingWebhook(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{getEditModalTitle()}</DialogTitle>
+            <DialogDescription>Configure the webhook URL, authentication token, and enable/disable the automation.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Webhook URL</Label>
+              <Input
+                placeholder="https://n8n.example.com/webhook/..."
+                value={formData.webhookUrl}
+                onChange={(e) => setFormData({ ...formData, webhookUrl: e.target.value })}
+                data-testid="input-webhook-url"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Token (sent as Authorization: Bearer header)</Label>
+              <Input
+                type="password"
+                placeholder="Leave blank to keep existing token"
+                value={formData.token}
+                onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                data-testid="input-webhook-token"
+              />
+              <p className="text-xs text-gray-500">Leave blank to keep the existing token unchanged.</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label>Enabled</Label>
+              <Switch
+                checked={formData.enabled}
+                onCheckedChange={(checked) => setFormData({ ...formData, enabled: checked })}
+                data-testid="switch-webhook-enabled"
+              />
+            </div>
+            <div className="pt-2">
+              <Label className="text-sm font-medium text-gray-700 mb-2 block">Expected Payload</Label>
+              <pre className="bg-gray-900 text-green-400 p-3 rounded-md text-xs overflow-x-auto font-mono max-h-40">
+                {editingWebhook ? PAYLOAD_SNIPPETS[editingWebhook as keyof typeof PAYLOAD_SNIPPETS] : ""}
+              </pre>
+            </div>
+          </div>
+          <DialogFooter className="flex justify-between sm:justify-between">
+            <Button 
+              variant="outline" 
+              onClick={() => editingWebhook && testMutation.mutate(editingWebhook)}
+              disabled={!formData.webhookUrl || testingWebhook === editingWebhook}
+              data-testid="button-test-webhook"
+            >
+              {testingWebhook === editingWebhook ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Test Webhook
             </Button>
-          </div>
-        ) : (
-          <Button variant="outline" onClick={() => setIsEditing(true)} data-testid="button-edit-automation-settings">Edit</Button>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-4 p-4 bg-purple-50/50 rounded-lg border border-purple-100">
-          <div className="flex items-center gap-2">
-            <Mail className="h-5 w-5 text-purple-600" />
-            <h4 className="font-semibold text-gray-900">Client Signup Email Webhook</h4>
-          </div>
-          <p className="text-sm text-gray-600">
-            When you click "Send Signup Email" on a client's page, a POST request will be sent to this URL with the client's details.
-          </p>
-          {isEditing ? (
-            <div className="space-y-3">
-              <div>
-                <Label className="text-sm text-gray-600">n8n Signup Email Webhook URL</Label>
-                <Input
-                  placeholder="https://n8n.example.com/webhook/client-signup"
-                  value={formData.signupEmailWebhookUrl || ""}
-                  onChange={(e) => setFormData({ ...formData, signupEmailWebhookUrl: e.target.value })}
-                  data-testid="input-signup-webhook-url"
-                />
-              </div>
-              <div>
-                <Label className="text-sm text-gray-600">Automation Token (optional, sent as X-Automation-Token header)</Label>
-                <Input
-                  placeholder="your-secret-token"
-                  type="password"
-                  value={formData.automationToken || ""}
-                  onChange={(e) => setFormData({ ...formData, automationToken: e.target.value })}
-                  data-testid="input-automation-token"
-                />
-              </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setEditingWebhook(null)}>Cancel</Button>
+              <Button onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-webhook">
+                {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                Save
+              </Button>
             </div>
-          ) : (
-            <div className="space-y-1 text-sm">
-              <p className="text-gray-600">
-                Webhook URL: <span className="font-medium text-gray-900 break-all">{settings?.signupEmailWebhookUrl || "Not configured"}</span>
-              </p>
-              <p className="text-gray-600">
-                Token: <span className="font-medium text-gray-900">{settings?.hasAutomationToken ? "••••••••" : "Not set"}</span>
-              </p>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -769,35 +1099,7 @@ export default function AdminSettings() {
 
         <AutomationSettingsCard />
 
-        <Card className="border-gray-200 shadow-sm">
-           <CardHeader>
-              <CardTitle>Notifications</CardTitle>
-              <CardDescription>Control what alerts you and your clients receive.</CardDescription>
-           </CardHeader>
-           <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                 <div className="space-y-0.5">
-                    <Label className="text-base">Payment Received Alerts</Label>
-                    <p className="text-sm text-gray-500">Get notified when a client makes a payment</p>
-                 </div>
-                 <Switch defaultChecked />
-              </div>
-              <div className="flex items-center justify-between">
-                 <div className="space-y-0.5">
-                    <Label className="text-base">Overdue Reminders</Label>
-                    <p className="text-sm text-gray-500">Automatically email clients about overdue invoices</p>
-                 </div>
-                 <Switch defaultChecked />
-              </div>
-              <div className="flex items-center justify-between">
-                 <div className="space-y-0.5">
-                    <Label className="text-base">Daily Summary</Label>
-                    <p className="text-sm text-gray-500">Receive a daily breakdown of activity</p>
-                 </div>
-                 <Switch />
-              </div>
-           </CardContent>
-        </Card>
+        <NotificationsCard />
       </div>
     </Layout>
   );
