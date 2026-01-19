@@ -9,6 +9,7 @@ import {
 import multer from "multer";
 import { plaidClient } from "./plaid/client";
 import { CountryCode, Products } from "plaid";
+import Stripe from "stripe";
 import { db } from "./db";
 import { z } from "zod";
 import {
@@ -4464,6 +4465,77 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error updating finance entry:", error);
         res.status(500).json({ message: "Failed to update finance entry" });
+      }
+    },
+  );
+
+  // ============================================
+  // STRIPE CONFIGURATION
+  // ============================================
+
+  // Get Stripe configuration status (does NOT expose secret key)
+  app.get(
+    "/api/admin/stripe/status",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const secretKey = process.env.STRIPE_SECRET_KEY_TEST;
+        const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY_TEST;
+
+        // Mask the publishable key for display (show first 7 and last 4 chars)
+        let maskedPublishableKey: string | null = null;
+        if (publishableKey && publishableKey.length > 12) {
+          maskedPublishableKey = `${publishableKey.slice(0, 12)}...${publishableKey.slice(-4)}`;
+        } else if (publishableKey) {
+          maskedPublishableKey = publishableKey.slice(0, 4) + "...";
+        }
+
+        res.json({
+          mode: "Test",
+          secretKeyPresent: !!secretKey,
+          publishableKeyPresent: !!publishableKey,
+          maskedPublishableKey,
+        });
+      } catch (error) {
+        console.error("Error getting Stripe status:", error);
+        res.status(500).json({ message: "Failed to get Stripe status" });
+      }
+    },
+  );
+
+  // Test Stripe connection (server-side only, never exposes secret)
+  app.post(
+    "/api/admin/stripe/test",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const secretKey = process.env.STRIPE_SECRET_KEY_TEST;
+
+        if (!secretKey) {
+          return res.status(400).json({
+            success: false,
+            message: "Stripe secret key is not configured",
+          });
+        }
+
+        const stripe = new Stripe(secretKey);
+
+        // Make a simple API call to verify the key works
+        const account = await stripe.accounts.retrieve();
+
+        res.json({
+          success: true,
+          message: `Connected to Stripe account: ${account.settings?.dashboard?.display_name || account.id}`,
+          accountId: account.id,
+        });
+      } catch (error: any) {
+        console.error("Stripe connection test failed:", error);
+        res.status(400).json({
+          success: false,
+          message: error.message || "Failed to connect to Stripe",
+        });
       }
     },
   );

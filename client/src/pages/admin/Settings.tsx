@@ -326,6 +326,160 @@ interface AutomationSettings {
   hasAutomationToken: boolean;
 }
 
+interface StripeStatus {
+  mode: string;
+  secretKeyPresent: boolean;
+  publishableKeyPresent: boolean;
+  maskedPublishableKey: string | null;
+}
+
+function StripeGatewayCard() {
+  const { toast } = useToast();
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const { data: status, isLoading } = useQuery<StripeStatus>({
+    queryKey: ["admin", "stripe-status"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/stripe/status", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch Stripe status");
+      return response.json();
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/admin/stripe/test", {
+        method: "POST",
+        credentials: "include",
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setTestResult(data);
+      if (data.success) {
+        toast({ title: "Connection Successful", description: data.message });
+      } else {
+        toast({ title: "Connection Failed", description: data.message, variant: "destructive" });
+      }
+    },
+    onError: (error: Error) => {
+      setTestResult({ success: false, message: error.message });
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <Card className="border-gray-200 shadow-sm overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-gray-900 to-gray-800 text-white">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/10 rounded-lg">
+              <CreditCard className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <CardTitle className="text-white">Payment Gateway</CardTitle>
+              <CardDescription className="text-gray-300">Manage Stripe connection and payment processing.</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const bothKeysPresent = status?.secretKeyPresent && status?.publishableKeyPresent;
+
+  return (
+    <Card className="border-gray-200 shadow-sm overflow-hidden">
+      <CardHeader className="bg-gradient-to-r from-gray-900 to-gray-800 text-white">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-white/10 rounded-lg">
+            <CreditCard className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <CardTitle className="text-white">Payment Gateway</CardTitle>
+            <CardDescription className="text-gray-300">Manage Stripe connection and payment processing.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-white">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 bg-[#635BFF] rounded-lg flex items-center justify-center font-bold text-white text-xl">S</div>
+            <div>
+              <h4 className="font-bold text-gray-900">Stripe</h4>
+              <p className="text-sm text-gray-500">
+                {status?.maskedPublishableKey || "No publishable key configured"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+              status?.mode === "Test" 
+                ? "bg-amber-50 text-amber-700 border-amber-200" 
+                : "bg-green-50 text-green-700 border-green-200"
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${status?.mode === "Test" ? "bg-amber-500" : "bg-green-500"}`}></span>
+              {status?.mode || "Test"} Mode
+            </div>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="p-4 bg-gray-50 rounded-lg border border-gray-100">
+            <p className="text-sm font-medium text-gray-900 mb-1">Publishable Key</p>
+            <div className="flex items-center gap-2">
+              <Badge variant={status?.publishableKeyPresent ? "default" : "destructive"} className={status?.publishableKeyPresent ? "bg-green-100 text-green-700 border-green-200" : ""}>
+                {status?.publishableKeyPresent ? "Present" : "Missing"}
+              </Badge>
+              {status?.maskedPublishableKey && (
+                <span className="text-xs text-gray-500 font-mono">{status.maskedPublishableKey}</span>
+              )}
+            </div>
+          </div>
+          <div className="p-4 bg-gray-50 rounded-lg border border-gray-100">
+            <p className="text-sm font-medium text-gray-900 mb-1">Secret Key</p>
+            <Badge variant={status?.secretKeyPresent ? "default" : "destructive"} className={status?.secretKeyPresent ? "bg-green-100 text-green-700 border-green-200" : ""}>
+              {status?.secretKeyPresent ? "Present" : "Missing"}
+            </Badge>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <div>
+            {testResult && (
+              <p className={`text-sm ${testResult.success ? "text-green-600" : "text-red-600"}`}>
+                {testResult.message}
+              </p>
+            )}
+          </div>
+          <Button
+            onClick={() => testMutation.mutate()}
+            disabled={testMutation.isPending || !bothKeysPresent}
+            variant="outline"
+            data-testid="button-test-stripe"
+          >
+            {testMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Test Stripe Connection
+          </Button>
+        </div>
+
+        {!bothKeysPresent && (
+          <p className="text-xs text-gray-500">
+            Configure STRIPE_SECRET_KEY_TEST and STRIPE_PUBLISHABLE_KEY_TEST in Replit Secrets to enable connection testing.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AutomationSettingsCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -609,48 +763,7 @@ export default function AdminSettings() {
            </CardContent>
         </Card>
 
-        <Card className="border-gray-200 shadow-sm overflow-hidden">
-          <CardHeader className="bg-gradient-to-r from-gray-900 to-gray-800 text-white">
-            <div className="flex items-center gap-3">
-               <div className="p-2 bg-white/10 rounded-lg">
-                  <CreditCard className="h-6 w-6 text-white" />
-               </div>
-               <div>
-                 <CardTitle className="text-white">Payment Gateway</CardTitle>
-                 <CardDescription className="text-gray-300">Manage Stripe connection and payment processing.</CardDescription>
-               </div>
-            </div>
-          </CardHeader>
-          <CardContent className="p-6">
-             <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-white">
-                <div className="flex items-center gap-4">
-                   <div className="h-12 w-12 bg-[#635BFF] rounded-lg flex items-center justify-center font-bold text-white text-xl">S</div>
-                   <div>
-                      <h4 className="font-bold text-gray-900">Stripe Payments</h4>
-                      <p className="text-sm text-gray-500">Connected account: Quick IT Projects Inc.</p>
-                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                   <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium border border-green-200">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                      Live
-                   </div>
-                   <Button variant="outline" size="sm">Manage</Button>
-                </div>
-             </div>
-             
-             <div className="grid md:grid-cols-2 gap-4 mt-4">
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-100">
-                   <p className="text-sm font-medium text-gray-900 mb-1">Currency</p>
-                   <p className="text-sm text-gray-500">USD - US Dollar</p>
-                </div>
-                <div className="p-4 bg-gray-50 rounded-lg border border-gray-100">
-                   <p className="text-sm font-medium text-gray-900 mb-1">Payout Schedule</p>
-                   <p className="text-sm text-gray-500">Automatic - Daily</p>
-                </div>
-             </div>
-          </CardContent>
-        </Card>
+        <StripeGatewayCard />
 
         <PaymentSettingsCard />
 
