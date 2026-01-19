@@ -24,6 +24,7 @@ import {
   invoices,
   invoiceSettings,
   paymentSettings,
+  payments,
   documents,
   usersProfile,
   generatePlaidItemId,
@@ -4468,6 +4469,128 @@ export async function registerRoutes(
       }
     },
   );
+
+  // ============================================
+  // STRIPE WEBHOOK (Public - no auth required, uses signature verification)
+  // ============================================
+
+  app.post("/api/stripe/webhook", async (req: Request, res: Response) => {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_THIN_SECRET_TEST;
+
+    if (!webhookSecret) {
+      console.error("Stripe webhook secret not configured");
+      return res.status(500).json({ error: "Webhook secret not configured" });
+    }
+
+    const signature = req.headers["stripe-signature"];
+    if (!signature) {
+      return res.status(400).json({ error: "Missing stripe-signature header" });
+    }
+
+    let event: Stripe.Event;
+    try {
+      const rawBody = req.rawBody as Buffer;
+      // Stripe.webhooks.constructEvent is a static method that doesn't need API key
+      event = Stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+    } catch (err: any) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).json({ error: `Webhook Error: ${err.message}` });
+    }
+
+    console.log(`Received Stripe webhook event: ${event.type} (id: ${event.id})`);
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object as Stripe.Checkout.Session;
+
+        // Get clientId from metadata
+        const clientId = session.metadata?.clientId;
+        if (!clientId) {
+          console.error("No clientId in checkout session metadata");
+          return res.status(400).json({ error: "Missing clientId in metadata" });
+        }
+
+        // Use session.id for idempotency since payment_intent might be null for some payment methods
+        const idempotencyKey = session.id;
+
+        // Check if payment already exists using session id or payment intent
+        const existingPayments = await db
+          .select()
+          .from(payments)
+          .where(
+            or(
+              eq(payments.stripePaymentIntentId, idempotencyKey),
+              session.payment_intent ? eq(payments.stripePaymentIntentId, session.payment_intent as string) : sql`false`
+            )
+          )
+          .limit(1);
+
+        if (existingPayments.length > 0) {
+          console.log("Payment already recorded for this checkout session");
+          return res.json({ received: true, status: "already_processed" });
+        }
+
+        // Create payment record - use session.id as fallback if payment_intent is null
+        const amountCents = session.amount_total || 0;
+        const payment = await storage.createPayment({
+          clientId,
+          amountCents,
+          method: "stripe",
+          status: "confirmed",
+          paidAt: new Date(),
+          stripePaymentIntentId: (session.payment_intent as string) || session.id,
+          stripeChargeId: null,
+          notes: `Stripe checkout - ${session.customer_email || "Guest"} (event: ${event.id})`,
+        });
+
+        console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+        return res.json({ received: true, paymentId: payment.paymentId });
+
+      } else if (event.type === "payment_intent.succeeded") {
+        const paymentIntent = event.data.object as Stripe.PaymentIntent;
+
+        // Get clientId from metadata
+        const clientId = paymentIntent.metadata?.clientId;
+        if (!clientId) {
+          console.log("No clientId in payment_intent metadata - skipping");
+          return res.json({ received: true, status: "skipped_no_client" });
+        }
+
+        // Check if payment already exists (idempotency)
+        const existingPayments = await db
+          .select()
+          .from(payments)
+          .where(eq(payments.stripePaymentIntentId, paymentIntent.id))
+          .limit(1);
+
+        if (existingPayments.length > 0) {
+          console.log("Payment already recorded for this payment intent");
+          return res.json({ received: true, status: "already_processed" });
+        }
+
+        // Create payment record
+        const payment = await storage.createPayment({
+          clientId,
+          amountCents: paymentIntent.amount,
+          method: "stripe",
+          status: "confirmed",
+          paidAt: new Date(),
+          stripePaymentIntentId: paymentIntent.id,
+          stripeChargeId: paymentIntent.latest_charge as string || null,
+          notes: `Stripe payment (event: ${event.id})`,
+        });
+
+        console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+        return res.json({ received: true, paymentId: payment.paymentId });
+      }
+
+      // Acknowledge other events we don't handle
+      return res.json({ received: true, status: "event_type_not_handled" });
+    } catch (error) {
+      console.error("Error processing webhook:", error);
+      return res.status(500).json({ error: "Error processing webhook" });
+    }
+  });
 
   // ============================================
   // STRIPE CONFIGURATION
