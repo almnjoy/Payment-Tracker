@@ -2450,6 +2450,84 @@ export async function registerRoutes(
     },
   );
 
+  // Client create Stripe Checkout session
+  app.post(
+    "/api/payments/stripe/checkout",
+    isAuthenticated,
+    isClient,
+    async (req: Request, res: Response) => {
+      try {
+        const profile = (req as any).userProfile;
+
+        if (!profile.clientId) {
+          return res.status(403).json({ message: "No client profile linked" });
+        }
+
+        const secretKey = process.env.STRIPE_SECRET_KEY_TEST;
+        if (!secretKey) {
+          return res.status(500).json({ message: "Stripe is not configured" });
+        }
+
+        const { amountCents, note } = req.body;
+
+        if (!amountCents || amountCents <= 0) {
+          return res.status(400).json({ message: "Invalid payment amount" });
+        }
+
+        // Get client info for metadata
+        const client = await storage.getClient(profile.clientId);
+        if (!client) {
+          return res.status(404).json({ message: "Client not found" });
+        }
+
+        const stripe = new Stripe(secretKey);
+
+        // Determine the base URL for redirects
+        const baseUrl = process.env.REPL_SLUG
+          ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER?.toLowerCase()}.repl.co`
+          : `http://localhost:${process.env.PORT || 5000}`;
+
+        // Create Stripe Checkout Session
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: `Payment - ${client.displayName || "Client"}`,
+                  description: note || `Payment to Quick IT Projects`,
+                },
+                unit_amount: amountCents,
+              },
+              quantity: 1,
+            },
+          ],
+          metadata: {
+            clientId: profile.clientId,
+            clientEmail: client.email || "",
+            portalUserId: profile.userId,
+            note: note || "",
+          },
+          customer_email: client.email || undefined,
+          success_url: `${baseUrl}/client/payments?success=1`,
+          cancel_url: `${baseUrl}/client/payments?canceled=1`,
+        });
+
+        res.json({ 
+          checkoutUrl: session.url,
+          sessionId: session.id,
+        });
+      } catch (error: any) {
+        console.error("Error creating Stripe checkout session:", error);
+        res.status(500).json({ 
+          message: error.message || "Failed to create checkout session" 
+        });
+      }
+    },
+  );
+
   // ============================================
   // CLIENT: PROFILE UPDATE
   // ============================================

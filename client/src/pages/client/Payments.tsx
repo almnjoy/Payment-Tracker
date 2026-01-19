@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Download, CheckCircle, Clock, Loader2, Eye, ArrowLeft, DollarSign, ExternalLink, CreditCard, Building2, MoreHorizontal } from "lucide-react";
+import { Download, CheckCircle, Clock, Loader2, Eye, ArrowLeft, DollarSign, ExternalLink, CreditCard, Building2, MoreHorizontal, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { useClientPayments, useClientInvoices, useClientDashboard, formatCents, formatDate } from "@/lib/api";
 import { useLocation } from "wouter";
@@ -28,12 +29,14 @@ export default function ClientPayments() {
   const searchParams = new URLSearchParams(window.location.search);
   const asClientId = searchParams.get("asClientId") || undefined;
   const isImpersonating = !!asClientId;
+  const paymentSuccess = searchParams.get("success") === "1";
+  const paymentCanceled = searchParams.get("canceled") === "1";
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: payments, isLoading: paymentsLoading } = useClientPayments(asClientId);
   const { data: invoices, isLoading: invoicesLoading } = useClientInvoices(asClientId);
-  const { data: dashboardData } = useClientDashboard(asClientId);
+  const { data: dashboardData, refetch: refetchDashboard } = useClientDashboard(asClientId);
 
   const { data: paymentSettings } = useQuery<PaymentSettings>({
     queryKey: ["client", "payment-settings"],
@@ -48,6 +51,31 @@ export default function ClientPayments() {
   const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentNote, setPaymentNote] = useState("");
+  const [useCustomAmount, setUseCustomAmount] = useState(false);
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
+
+  // Handle Stripe return success/canceled
+  useEffect(() => {
+    if (paymentSuccess) {
+      setShowSuccessBanner(true);
+      // Clear the URL params
+      window.history.replaceState({}, "", window.location.pathname);
+      // Refresh data after a short delay to allow webhook processing
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["client-payments"] });
+        queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
+        refetchDashboard();
+      }, 2000);
+    }
+    if (paymentCanceled) {
+      toast({ 
+        title: "Payment Canceled", 
+        description: "You can try again when you're ready.",
+        variant: "default"
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [paymentSuccess, paymentCanceled, queryClient, refetchDashboard, toast]);
 
   const submitPaymentMutation = useMutation({
     mutationFn: async (data: { amountCents: number; method: string; note: string }) => {
@@ -74,6 +102,30 @@ export default function ClientPayments() {
       setSelectedMethod(null);
       setPaymentAmount("");
       setPaymentNote("");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const stripeCheckoutMutation = useMutation({
+    mutationFn: async (data: { amountCents: number; note?: string }) => {
+      const response = await fetch("/api/payments/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to create checkout session");
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+      }
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -150,12 +202,11 @@ export default function ClientPayments() {
     },
     {
       id: "stripe",
-      name: "Stripe",
-      icon: "S",
+      name: "Card Payment",
+      icon: <CreditCard className="h-5 w-5" />,
       color: "bg-[#635BFF]",
-      bgColor: "bg-purple-50 border-purple-200",
-      available: false,
-      message: paymentSettings?.stripePlaceholderMessage || "Coming soon!",
+      bgColor: "bg-purple-50 hover:bg-purple-100 border-purple-200",
+      available: true,
     },
     {
       id: "other",
@@ -172,6 +223,29 @@ export default function ClientPayments() {
   return (
     <Layout role="client" clientName={dashboardData?.client?.displayName}>
       <div className="space-y-6">
+        {showSuccessBanner && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3"
+            data-testid="payment-success-banner"
+          >
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <div className="flex-1">
+              <p className="font-medium text-green-900">Payment Successful!</p>
+              <p className="text-sm text-green-700">Your payment is being processed. It will appear in your history shortly.</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSuccessBanner(false)}
+              className="text-green-700 hover:text-green-900"
+            >
+              Dismiss
+            </Button>
+          </motion.div>
+        )}
+
         {isImpersonating && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between" data-testid="impersonation-banner">
             <div className="flex items-center gap-3">
@@ -316,38 +390,102 @@ export default function ClientPayments() {
                       Record a payment made via check, cash, or other method.
                     </p>
                   )}
+
+                  {selectedMethod === "stripe" && (
+                    <div className="space-y-3">
+                      <p className="text-sm text-gray-600">
+                        Pay securely with your credit or debit card via Stripe.
+                      </p>
+                      <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+                        <p className="text-sm font-medium text-purple-900">
+                          Amount Due: <span className="text-lg">{formatCents(dashboardData?.amountDueCents || 0)}</span>
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="grid gap-4">
-                  <div>
-                    <Label htmlFor="amount">Payment Amount ($)</Label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                      <Input
-                        id="amount"
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        placeholder="0.00"
-                        className="pl-9"
-                        value={paymentAmount}
-                        onChange={(e) => setPaymentAmount(e.target.value)}
-                        data-testid="input-payment-amount"
+                {selectedMethod === "stripe" ? (
+                  <div className="grid gap-4">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="customAmount" className="flex-1">Pay custom amount</Label>
+                      <Switch
+                        id="customAmount"
+                        checked={useCustomAmount}
+                        onCheckedChange={(checked) => {
+                          setUseCustomAmount(checked);
+                          if (!checked) {
+                            setPaymentAmount("");
+                          }
+                        }}
+                        data-testid="switch-custom-amount"
+                      />
+                    </div>
+
+                    {useCustomAmount && (
+                      <div>
+                        <Label htmlFor="stripeAmount">Custom Amount ($)</Label>
+                        <div className="relative">
+                          <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                          <Input
+                            id="stripeAmount"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="0.00"
+                            className="pl-9"
+                            value={paymentAmount}
+                            onChange={(e) => setPaymentAmount(e.target.value)}
+                            data-testid="input-stripe-amount"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <Label htmlFor="stripeNote">Note (optional)</Label>
+                      <Textarea
+                        id="stripeNote"
+                        placeholder="Add any details about this payment..."
+                        value={paymentNote}
+                        onChange={(e) => setPaymentNote(e.target.value)}
+                        rows={2}
+                        data-testid="input-stripe-note"
                       />
                     </div>
                   </div>
+                ) : (
+                  <div className="grid gap-4">
+                    <div>
+                      <Label htmlFor="amount">Payment Amount ($)</Label>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                        <Input
+                          id="amount"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          placeholder="0.00"
+                          className="pl-9"
+                          value={paymentAmount}
+                          onChange={(e) => setPaymentAmount(e.target.value)}
+                          data-testid="input-payment-amount"
+                        />
+                      </div>
+                    </div>
 
-                  <div>
-                    <Label htmlFor="note">Note (optional)</Label>
-                    <Textarea
-                      id="note"
-                      placeholder="Add any details about this payment..."
-                      value={paymentNote}
-                      onChange={(e) => setPaymentNote(e.target.value)}
-                      data-testid="input-payment-note"
-                    />
+                    <div>
+                      <Label htmlFor="note">Note (optional)</Label>
+                      <Textarea
+                        id="note"
+                        placeholder="Add any details about this payment..."
+                        value={paymentNote}
+                        onChange={(e) => setPaymentNote(e.target.value)}
+                        data-testid="input-payment-note"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -357,10 +495,11 @@ export default function ClientPayments() {
                 setSelectedMethod(null);
                 setPaymentAmount("");
                 setPaymentNote("");
+                setUseCustomAmount(false);
               }}>
                 Cancel
               </Button>
-              {selectedMethod && (
+              {selectedMethod && selectedMethod !== "stripe" && (
                 <Button 
                   onClick={handleSubmitPayment}
                   disabled={submitPaymentMutation.isPending || !paymentAmount}
@@ -373,6 +512,35 @@ export default function ClientPayments() {
                     <CheckCircle className="h-4 w-4 mr-2" />
                   )}
                   Confirm Payment
+                </Button>
+              )}
+              {selectedMethod === "stripe" && (
+                <Button 
+                  onClick={() => {
+                    const amountCents = useCustomAmount 
+                      ? Math.round(parseFloat(paymentAmount) * 100) 
+                      : (dashboardData?.amountDueCents || 0);
+                    
+                    if (amountCents <= 0) {
+                      toast({ title: "Error", description: "Please enter a valid amount", variant: "destructive" });
+                      return;
+                    }
+                    
+                    stripeCheckoutMutation.mutate({
+                      amountCents,
+                      note: paymentNote || undefined,
+                    });
+                  }}
+                  disabled={stripeCheckoutMutation.isPending || (useCustomAmount && !paymentAmount) || (!useCustomAmount && (dashboardData?.amountDueCents || 0) <= 0)}
+                  className="bg-[#635BFF] hover:bg-[#5449d6] text-white"
+                  data-testid="button-stripe-checkout"
+                >
+                  {stripeCheckoutMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <CreditCard className="h-4 w-4 mr-2" />
+                  )}
+                  Continue to Card Payment
                 </Button>
               )}
             </DialogFooter>
