@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { User, Mail, Phone, MapPin, Loader2, Eye, ArrowLeft, Calendar, Hash, Building, Bell, Save, X, ExternalLink } from "lucide-react";
+import { User, Mail, Phone, MapPin, Loader2, Eye, ArrowLeft, Calendar, Hash, Building, Bell, Save, X, ExternalLink, Shield } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useClientDashboard, formatDate } from "@/lib/api";
 import { useLocation } from "wouter";
@@ -400,6 +400,68 @@ export default function ClientProfile() {
                 <ExternalLink className="h-4 w-4 mr-2" />
                 Account Settings
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-gray-200 shadow-sm" data-testid="card-privacy-data-handling">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5" />
+              Privacy & Data Handling
+            </CardTitle>
+            <CardDescription>How we handle your information.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-800">What we store:</p>
+              <ul className="list-disc list-inside space-y-1 ml-2">
+                <li>Basic profile info (name, email, phone, address)</li>
+                <li>Documents uploaded to your account</li>
+                <li>Payment history entries</li>
+              </ul>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-800">Payments:</p>
+              <p>
+                External payments (Cash App, Venmo, bank transfers) are tracked for record-keeping but are not processed through this portal.
+              </p>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-800">Access:</p>
+              <p>
+                You can only see your own account data. Admins may access your account for support and billing purposes.
+              </p>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-800">Emails:</p>
+              <p>
+                Email notifications are optional and can be disabled using the toggle above.
+              </p>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-800">Questions?</p>
+              <p>
+                Contact us at <span className="font-medium text-gray-800">hello@quickitprojects.com</span>
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-gray-100">
+              <p className="text-xs text-gray-400 text-center">
+                This portal is provided as-is during current implementation phase. Version v1.0.0
+              </p>
             </div>
           </CardContent>
         </Card>
