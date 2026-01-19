@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 
 import LoginPage from "@/pages/auth/LoginPage";
 import RegisterPage from "@/pages/auth/RegisterPage";
+import LoggedOut from "@/pages/LoggedOut";
 
 import ClientDashboard from "@/pages/client/Dashboard";
 import ClientPayments from "@/pages/client/Payments";
@@ -30,6 +31,7 @@ function Router() {
       {/* Public Routes */}
       <Route path="/" component={LoginPage} />
       <Route path="/register" component={RegisterPage} />
+      <Route path="/logged-out" component={LoggedOut} />
       <Route path="/forgot-password" component={LoginPage} /> {/* Placeholder */}
       
       {/* Client Routes */}

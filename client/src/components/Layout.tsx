@@ -77,8 +77,10 @@ export function Layout({ children, role, clientName }: LayoutProps) {
     }
   ];
 
+  const { logout } = useAuth();
+  
   const handleLogout = () => {
-    setLocation("/");
+    logout();
   };
 
   return (

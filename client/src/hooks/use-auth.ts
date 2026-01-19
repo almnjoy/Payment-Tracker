@@ -4,6 +4,9 @@ import type { User } from "@shared/models/auth";
 async function fetchUser(): Promise<User | null> {
   const response = await fetch("/api/auth/user", {
     credentials: "include",
+    headers: {
+      "Cache-Control": "no-cache",
+    },
   });
 
   if (response.status === 401) {
@@ -17,7 +20,9 @@ async function fetchUser(): Promise<User | null> {
   return response.json();
 }
 
-async function logout(): Promise<void> {
+async function performLogout(): Promise<void> {
+  localStorage.removeItem("auth-state");
+  sessionStorage.clear();
   window.location.href = "/api/logout";
 }
 
@@ -28,11 +33,13 @@ export function useAuth() {
     queryFn: fetchUser,
     retry: false,
     staleTime: 1000 * 60 * 5, // 5 minutes
+    gcTime: 0, // Don't cache user data after component unmounts
   });
 
   const logoutMutation = useMutation({
-    mutationFn: logout,
-    onSuccess: () => {
+    mutationFn: performLogout,
+    onMutate: () => {
+      queryClient.clear();
       queryClient.setQueryData(["/api/auth/user"], null);
     },
   });

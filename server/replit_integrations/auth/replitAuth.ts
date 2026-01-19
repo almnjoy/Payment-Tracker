@@ -119,13 +119,37 @@ export async function setupAuth(app: Express) {
   });
 
   app.get("/api/logout", (req, res) => {
+    // Set cache control headers to prevent back/forward cache from restoring session
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0",
+    });
+    
+    // First logout from passport
     req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+      // Then destroy the session completely
+      req.session.destroy((err) => {
+        if (err) {
+          console.error("Error destroying session:", err);
+        }
+        
+        // Clear the session cookie
+        res.clearCookie("connect.sid", {
+          path: "/",
+          httpOnly: true,
+          secure: true,
+        });
+        
+        // Redirect to Replit's end session endpoint, then to /logged-out page
+        const loggedOutUrl = `${req.protocol}://${req.hostname}/logged-out`;
+        res.redirect(
+          client.buildEndSessionUrl(config, {
+            client_id: process.env.REPL_ID!,
+            post_logout_redirect_uri: loggedOutUrl,
+          }).href
+        );
+      });
     });
   });
 }
