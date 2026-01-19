@@ -1,0 +1,74 @@
+Perform a security hardening pass focused on preventing any cross-client data leakage and locking down all API routes.
+
+GOAL
+Before production, ensure:
+- Client portal users can ONLY access data for their linked clientId
+- Non-admins cannot access admin APIs
+- No endpoint trusts clientId passed from the browser for client-scoped data
+- All webhooks and secrets remain server-side
+- Add basic rate limiting on sensitive routes
+
+REQUIREMENTS
+
+1) Centralize auth + authorization guards
+Create reusable middleware/helpers:
+- requireAuth: user must be logged in
+- requireAdmin: user.role === "admin"
+- requireClientLinked: user has linkedClientId (or clientPortalUserId mapping)
+- getLinkedClientId(req): returns clientId for logged-in user, never from query/body
+
+Apply these guards consistently to every route:
+- /api/admin/* -> requireAdmin
+- /api/client/* -> requireClientLinked
+
+2) Remove clientId trust from client routes
+Audit all /api/client/* endpoints:
+- If any accepts clientId from query/body, ignore it and replace with server-derived linked clientId.
+- Ensure DB queries always include WHERE clientId = linkedClientId for client endpoints.
+
+3) Admin routes validation
+Audit /api/admin/*:
+- Ensure every route requires requireAdmin.
+- Ensure admin can only mark Active Agreement for a given client and enforce one active agreement per client on server-side (not only UI).
+
+4) Document access controls
+- Ensure document download/preview endpoints verify:
+  - admin: allowed
+  - client: document.clientId must match linked clientId
+- Avoid exposing raw storage URLs if they bypass auth; if using signed URLs, ensure they are short-lived.
+
+5) Payments access controls
+- Client payment history endpoint must filter by linked clientId only.
+- Admin payment history can view all, or per client.
+- Ensure Stripe confirm endpoint creates payment for the correct clientId derived from stripe client_reference_id / metadata, and does not accept clientId from the browser.
+
+6) Webhook security
+- n8n webhook tokens must be stored server-side (DB settings or env).
+- Any request to n8n from the app must be server-side.
+- Never return webhook tokens to frontend.
+
+7) Rate limiting (basic)
+Add minimal in-memory rate limiting for:
+- signup linking endpoint (client signup code submission)
+- login/signup endpoints if applicable
+- any webhook trigger test endpoints
+
+8) Logging hygiene
+- Do not log secrets/tokens.
+- Redact Authorization headers.
+- Avoid logging full payloads containing PII.
+- Keep enough logs to debug (route + status code + ids).
+
+9) Add automated “security self-test” checklist
+Create a small internal test route admin-only or a script that runs checks such as:
+- Client A cannot fetch Client B documents/payments/dashboard even if passing different clientId
+- Non-admin cannot hit /api/admin endpoints
+Return results clearly.
+
+DELIVERABLE
+- A short SECURITY.md file in the repo describing:
+  - auth model
+  - data isolation rules
+  - which routes are admin vs client
+  - how signup linking prevents leakage
+- No UI changes required in this prompt except where needed to remove clientId parameters.
