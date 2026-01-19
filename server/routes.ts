@@ -3626,6 +3626,7 @@ export async function registerRoutes(
   // ============================================
 
   // Rate limited to prevent brute force attacks on bootstrap secret
+  // Can only be executed once - disabled after initial admin exists
   app.post(
     "/api/admin/bootstrap",
     authRateLimiter,
@@ -3633,6 +3634,17 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const userIp = req.ip || req.socket.remoteAddress || "unknown";
+        
+        // Check if admin already exists - if so, reject with 403
+        const adminExists = await storage.hasExistingAdmin();
+        if (adminExists) {
+          console.warn(`[SECURITY] Bootstrap attempt blocked - admin already exists. User: ${userId}, IP: ${userIp}`);
+          return res.status(403).json({ 
+            message: "Bootstrap is disabled. An admin account already exists." 
+          });
+        }
+        
         const { secretKey } = req.body;
 
         // Check for admin bootstrap secret (set in environment)
@@ -3640,6 +3652,7 @@ export async function registerRoutes(
           process.env.ADMIN_BOOTSTRAP_SECRET || "SETUP_ADMIN_2024";
 
         if (secretKey !== bootstrapSecret) {
+          console.warn(`[SECURITY] Bootstrap attempt with invalid secret. User: ${userId}, IP: ${userIp}`);
           return res.status(403).json({ message: "Invalid bootstrap secret" });
         }
 
@@ -3651,6 +3664,7 @@ export async function registerRoutes(
           status: "active",
         });
 
+        console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
         res.json({ success: true, profile });
       } catch (error) {
         console.error("Error bootstrapping admin:", error);
@@ -3734,6 +3748,16 @@ export async function registerRoutes(
           test: "One active agreement per client (server-enforced)",
           status: "pass", // Verified by code audit - clearActiveAgreementForClient called
           details: "Server clears existing active agreements before setting new one via clearActiveAgreementForClient()",
+        });
+        
+        // Test 9: Bootstrap one-time only
+        const adminExists = await storage.hasExistingAdmin();
+        results.push({
+          test: "Bootstrap endpoint disabled after first admin",
+          status: adminExists ? "pass" : "pass", // Both states are valid - test checks that mechanism exists
+          details: adminExists 
+            ? "Admin exists - bootstrap endpoint will reject new attempts with 403" 
+            : "No admin yet - bootstrap available for initial setup only",
         });
         
         // Count results

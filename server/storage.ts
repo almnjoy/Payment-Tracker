@@ -106,6 +106,9 @@ export interface IStorage {
   updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined>;
   clearActiveAgreementForClient(clientId: string): Promise<void>;
   getActiveAgreementForClient(clientId: string): Promise<Document | undefined>;
+  
+  // Admin utilities
+  hasExistingAdmin(): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -467,6 +470,18 @@ export class DatabaseStorage implements IStorage {
       .from(documents)
       .where(and(eq(documents.clientId, clientId), eq(documents.isActiveAgreement, true)));
     return doc;
+  }
+
+  // ============================================
+  // ADMIN UTILITIES
+  // ============================================
+  async hasExistingAdmin(): Promise<boolean> {
+    const [admin] = await db
+      .select()
+      .from(usersProfile)
+      .where(eq(usersProfile.role, "admin"))
+      .limit(1);
+    return !!admin;
   }
 }
 

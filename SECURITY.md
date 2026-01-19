@@ -54,7 +54,7 @@ function getLinkedClientId(req: Request): string | null {
 | `/api/admin/bootstrap` | Yes | No* | **Yes (10/15min)** |
 | `/api/admin/security-test` | Yes | Yes | No |
 
-*Bootstrap requires secret key validation
+*Bootstrap requires secret key validation AND is disabled after first admin exists (returns 403)
 
 ### Client Routes (`/api/client/*`)
 | Endpoint | Auth Required | Client Link Required | Uses Server ClientId |
