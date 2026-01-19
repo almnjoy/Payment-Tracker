@@ -2626,10 +2626,18 @@ export async function registerRoutes(
 
         const stripe = new Stripe(secretKey);
 
-        // Determine the base URL for redirects
-        const baseUrl = process.env.REPL_SLUG
-          ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER?.toLowerCase()}.repl.co`
-          : `http://localhost:${process.env.PORT || 5000}`;
+        // Determine the base URL dynamically from the incoming request
+        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["host"] || req.get("host") || "localhost:5000";
+        const baseUrl = `${proto}://${host}`;
+        
+        const successUrl = `${baseUrl}/client/payments?success=1&session_id={CHECKOUT_SESSION_ID}`;
+        const cancelUrl = `${baseUrl}/client/payments?canceled=1`;
+        
+        // Log for debugging
+        console.log("[Stripe Checkout] Derived baseUrl:", baseUrl);
+        console.log("[Stripe Checkout] success_url:", successUrl);
+        console.log("[Stripe Checkout] cancel_url:", cancelUrl);
 
         // Create Stripe Checkout Session
         const session = await stripe.checkout.sessions.create({
@@ -2656,8 +2664,8 @@ export async function registerRoutes(
             note: note || "",
           },
           customer_email: client.email || undefined,
-          success_url: `${baseUrl}/client/payments?success=1&session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${baseUrl}/client/payments?canceled=1`,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
         });
 
         res.json({ 
