@@ -122,12 +122,18 @@ res.json({
 
 ### Implementation
 ```typescript
+// Uses default keyGenerator for proper IPv6 handling
 const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  keyGenerator: (req) => `${req.ip}-auth`,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 requests per window
+  message: { message: "Too many attempts. Please try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
 });
 ```
+
+Note: Security self-test endpoint reports static code-audit assertions, not runtime validation.
 
 ## Stripe Integration Security
 
