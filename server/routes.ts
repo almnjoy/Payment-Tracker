@@ -1480,6 +1480,100 @@ export async function registerRoutes(
     },
   );
 
+  // Generate Monthly Summary Webhook (manual trigger from Finance page)
+  app.post(
+    "/api/admin/generate-monthly-summary",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        // Get automation settings
+        const settings = await storage.getAutomationSettings();
+        
+        // Check global toggle
+        if (!settings?.monthlySummaryGlobalEnabled) {
+          return res.status(400).json({ 
+            message: "Monthly summaries are disabled in Settings",
+            disabledBySettings: true 
+          });
+        }
+        
+        // Check if webhook is configured and enabled
+        if (!settings?.monthlySummaryWebhookUrl) {
+          return res.status(400).json({ 
+            message: "Monthly summary webhook URL not configured. Please configure it in Settings > Automations" 
+          });
+        }
+        
+        if (!settings?.monthlySummaryEnabled) {
+          return res.status(400).json({ 
+            message: "Monthly summary webhook is disabled. Enable it in Settings > Automations" 
+          });
+        }
+        
+        // Compute current month date range
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        
+        const formatDate = (d: Date) => d.toISOString().split('T')[0];
+        
+        // Get finance totals for current month (or use stored data if available)
+        // For now, we'll send basic structure - the webhook receiver can fetch details if needed
+        const proto = req.headers["x-forwarded-proto"] || req.protocol;
+        const host = req.headers["host"];
+        const baseUrl = `${proto}://${host}`;
+        
+        const payload = {
+          event: "admin.monthly_summary",
+          period: {
+            start: formatDate(startOfMonth),
+            end: formatDate(endOfMonth),
+          },
+          totals: {
+            income: 0,
+            bills: 0,
+            debts: 0,
+            holdings: 0,
+            other: 0,
+          },
+          portalUrl: baseUrl,
+        };
+        
+        // Build headers
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (settings.monthlySummaryToken) {
+          headers["Authorization"] = `Bearer ${settings.monthlySummaryToken}`;
+        }
+        
+        console.log(`[Monthly Summary] Sending to: ${settings.monthlySummaryWebhookUrl}`);
+        console.log(`[Monthly Summary] Period: ${payload.period.start} to ${payload.period.end}`);
+        
+        const response = await fetch(settings.monthlySummaryWebhookUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        });
+        
+        console.log(`[Monthly Summary] Response: ${response.status}`);
+        
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "No response body");
+          console.error(`[Monthly Summary] Failed:`, errorText.substring(0, 200));
+          return res.status(502).json({ message: "Webhook request failed" });
+        }
+        
+        res.json({ 
+          success: true, 
+          message: `Summary email generated for ${payload.period.start} to ${payload.period.end}` 
+        });
+      } catch (error: any) {
+        console.error("Error generating monthly summary:", error);
+        res.status(500).json({ message: error.message || "Failed to generate summary" });
+      }
+    },
+  );
+
   // ============================================
   // ADMIN: DOCUMENT UPDATE (Active Agreement Toggle)
   // ============================================

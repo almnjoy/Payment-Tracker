@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight, Pencil, RotateCcw } from "lucide-react";
+import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight, Pencil, RotateCcw, Mail } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
 import { 
   useAdminPlaidSyncStatus, 
   useAdminPlaidFinanceTotals, 
@@ -97,6 +98,33 @@ export default function FinanceTracker() {
   const [transactionSearch, setTransactionSearch] = useState("");
   
   const { toast } = useToast();
+  
+  // Generate Summary Email mutation
+  const generateSummaryMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/admin/generate-monthly-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to generate summary");
+      }
+      return data;
+    },
+    onSuccess: (data) => {
+      toast({ title: "Summary Sent", description: data.message });
+    },
+    onError: (error: Error) => {
+      toast({ 
+        title: "Error", 
+        description: error.message, 
+        variant: "destructive" 
+      });
+    },
+  });
+  
   const syncStatus = useAdminPlaidSyncStatus();
   const financeTotals = useAdminPlaidFinanceTotals(selectedPeriod);
   const entries = useAdminFinanceEntries(activeTab);
@@ -304,12 +332,27 @@ export default function FinanceTracker() {
             <p className="text-gray-500">Track and organize your financial records.</p>
           </div>
           
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="btn-primary-orange" data-testid="button-add-entry">
-                <Plus className="mr-2 h-4 w-4" /> Add Entry
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline"
+              onClick={() => generateSummaryMutation.mutate()}
+              disabled={generateSummaryMutation.isPending}
+              data-testid="button-generate-summary"
+            >
+              {generateSummaryMutation.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Mail className="mr-2 h-4 w-4" />
+              )}
+              Generate Summary Email
+            </Button>
+            
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="btn-primary-orange" data-testid="button-add-entry">
+                  <Plus className="mr-2 h-4 w-4" /> Add Entry
+                </Button>
+              </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Add New {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Entry</DialogTitle>
@@ -1232,6 +1275,7 @@ export default function FinanceTracker() {
           )}
         </DialogContent>
       </Dialog>
+      </div>
     </Layout>
   );
 }
