@@ -3,20 +3,58 @@ import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import { Filter, Loader2, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, RefreshCw, Building } from "lucide-react";
-import { useAdminPlaidSpendingSummary, useSyncPlaidTransactions, formatCents } from "@/lib/api";
+import { Filter, Loader2, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, RefreshCw, Building, ChevronRight } from "lucide-react";
+import { useAdminPlaidSpendingSummary, useSyncPlaidTransactions, formatCents, SpendingSummaryTransaction } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { format } from "date-fns";
 
 const COLORS = ['#007BFF', '#FF6A00', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
+type FilterType = 'inflow' | 'outflow' | 'all' | 'category' | 'merchant';
+
+interface TransactionFilter {
+  type: FilterType;
+  value?: string;
+  title: string;
+}
+
 export default function SpendingHabits() {
   const [dateRange, setDateRange] = useState("30");
+  const [transactionModalOpen, setTransactionModalOpen] = useState(false);
+  const [filter, setFilter] = useState<TransactionFilter | null>(null);
   const { toast } = useToast();
   
   const { data: summary, isLoading, refetch } = useAdminPlaidSpendingSummary(parseInt(dateRange));
   const syncTransactions = useSyncPlaidTransactions();
+
+  const getFilteredTransactions = (): SpendingSummaryTransaction[] => {
+    if (!summary?.transactions || !filter) return [];
+    
+    switch (filter.type) {
+      case 'inflow':
+        return summary.transactions.filter(t => t.amount < 0);
+      case 'outflow':
+        return summary.transactions.filter(t => t.amount > 0);
+      case 'category':
+        return summary.transactions.filter(t => t.category === filter.value);
+      case 'merchant':
+        return summary.transactions.filter(t => t.merchantName === filter.value);
+      case 'all':
+      default:
+        return summary.transactions;
+    }
+  };
+
+  const openTransactionModal = (type: FilterType, value?: string, title?: string) => {
+    setFilter({ type, value, title: title || type });
+    setTransactionModalOpen(true);
+  };
 
   const handleSync = async () => {
     try {
@@ -85,7 +123,11 @@ export default function SpendingHabits() {
         ) : summary && summary.transaction_count > 0 ? (
           <>
             <div className="grid md:grid-cols-4 gap-4">
-              <Card className="border-gray-200 shadow-sm">
+              <Card 
+                className="border-gray-200 shadow-sm cursor-pointer hover:shadow-md hover:border-green-300 transition-all"
+                onClick={() => openTransactionModal('inflow', undefined, 'Total Inflow')}
+                data-testid="card-inflow"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
@@ -101,7 +143,11 @@ export default function SpendingHabits() {
                 </CardContent>
               </Card>
               
-              <Card className="border-gray-200 shadow-sm">
+              <Card 
+                className="border-gray-200 shadow-sm cursor-pointer hover:shadow-md hover:border-red-300 transition-all"
+                onClick={() => openTransactionModal('outflow', undefined, 'Total Outflow')}
+                data-testid="card-outflow"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
@@ -117,7 +163,11 @@ export default function SpendingHabits() {
                 </CardContent>
               </Card>
               
-              <Card className="border-gray-200 shadow-sm">
+              <Card 
+                className="border-gray-200 shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
+                onClick={() => openTransactionModal('all', undefined, 'Net Cash Flow')}
+                data-testid="card-net-flow"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
@@ -137,7 +187,11 @@ export default function SpendingHabits() {
                 </CardContent>
               </Card>
               
-              <Card className="border-gray-200 shadow-sm">
+              <Card 
+                className="border-gray-200 shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
+                onClick={() => openTransactionModal('all', undefined, 'All Transactions')}
+                data-testid="card-transactions"
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
@@ -158,33 +212,59 @@ export default function SpendingHabits() {
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
                   <CardTitle>Spending by Category</CardTitle>
-                  <CardDescription>Distribution of expenses for the selected period.</CardDescription>
+                  <CardDescription>Click a category to see its transactions</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {chartData.length > 0 ? (
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={chartData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={60}
-                            outerRadius={100}
-                            paddingAngle={5}
-                            dataKey="value"
+                    <div className="space-y-4">
+                      <div className="h-[200px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={chartData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={50}
+                              outerRadius={80}
+                              paddingAngle={3}
+                              dataKey="value"
+                            >
+                              {chartData.map((entry, index) => (
+                                <Cell 
+                                  key={`cell-${index}`} 
+                                  fill={COLORS[index % COLORS.length]} 
+                                  className="cursor-pointer"
+                                  onClick={() => openTransactionModal('category', entry.name, entry.name)}
+                                  data-testid={`pie-slice-${index}`}
+                                />
+                              ))}
+                            </Pie>
+                            <RechartsTooltip 
+                              contentStyle={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #f0f0f0' }}
+                              formatter={(value: number) => [`$${value.toLocaleString()}`, 'Amount']}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="space-y-1">
+                        {chartData.slice(0, 5).map((category, index) => (
+                          <div 
+                            key={category.name}
+                            className="flex items-center justify-between p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100 transition-colors"
+                            onClick={() => openTransactionModal('category', category.name, category.name)}
+                            data-testid={`pie-legend-${index}`}
                           >
-                            {chartData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <RechartsTooltip 
-                            contentStyle={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #f0f0f0' }}
-                            formatter={(value: number) => [`$${value.toLocaleString()}`, 'Amount']}
-                          />
-                          <Legend />
-                        </PieChart>
-                      </ResponsiveContainer>
+                            <div className="flex items-center gap-2">
+                              <div 
+                                className="h-2 w-2 rounded-full" 
+                                style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                              />
+                              <span className="text-sm text-gray-900">{category.name}</span>
+                            </div>
+                            <span className="text-sm font-medium text-gray-700">${category.value.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ) : (
                     <div className="text-center py-8 text-gray-400">
@@ -197,26 +277,30 @@ export default function SpendingHabits() {
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
                   <CardTitle>Top Merchants</CardTitle>
-                  <CardDescription>Highest spending by merchant.</CardDescription>
+                  <CardDescription>Click a merchant to see its transactions</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {topMerchants.length > 0 ? (
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart 
-                          data={topMerchants.map(m => ({ name: m.name.slice(0, 15), amount: m.amount_cents / 100 }))}
-                          layout="vertical"
-                          margin={{ left: 10, right: 30 }}
+                    <div className="space-y-2">
+                      {topMerchants.map((merchant, index) => (
+                        <div 
+                          key={merchant.name}
+                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                          onClick={() => openTransactionModal('merchant', merchant.name, merchant.name)}
+                          data-testid={`merchant-${index}`}
                         >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis type="number" tickFormatter={(v) => `$${v}`} />
-                          <YAxis type="category" dataKey="name" width={100} />
-                          <RechartsTooltip 
-                            formatter={(value: number) => [`$${value.toLocaleString()}`, 'Amount']}
-                          />
-                          <Bar dataKey="amount" fill="#007BFF" radius={[0, 4, 4, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-sm font-bold">
+                              {index + 1}
+                            </div>
+                            <span className="font-medium text-gray-900">{merchant.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{formatCents(merchant.amount_cents)}</span>
+                            <ChevronRight className="h-4 w-4 text-gray-400" />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <div className="text-center py-8 text-gray-400">
@@ -230,11 +314,17 @@ export default function SpendingHabits() {
             <Card className="border-gray-200 shadow-sm">
               <CardHeader>
                 <CardTitle>Category Breakdown</CardTitle>
+                <CardDescription>Click a category to see its transactions</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   {summary.categories.map((category, index) => (
-                    <div key={category.name} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg" data-testid={`category-${index}`}>
+                    <div 
+                      key={category.name} 
+                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors" 
+                      data-testid={`category-${index}`}
+                      onClick={() => openTransactionModal('category', category.name, category.name)}
+                    >
                       <div className="flex items-center gap-3">
                         <div 
                           className="h-3 w-3 rounded-full" 
@@ -242,7 +332,10 @@ export default function SpendingHabits() {
                         />
                         <span className="font-medium text-gray-900">{category.name}</span>
                       </div>
-                      <span className="font-bold text-gray-900">{formatCents(category.value)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-gray-900">{formatCents(category.value)}</span>
+                        <ChevronRight className="h-4 w-4 text-gray-400" />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -266,6 +359,58 @@ export default function SpendingHabits() {
           </Card>
         )}
       </div>
+
+      <Dialog open={transactionModalOpen} onOpenChange={setTransactionModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>{filter?.title} Transactions</DialogTitle>
+            <DialogDescription>
+              {getFilteredTransactions().length} transactions for the selected {dateRange}-day period
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Merchant</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {getFilteredTransactions().map((txn) => (
+                  <TableRow key={txn.transactionId}>
+                    <TableCell className="text-sm text-gray-500">
+                      {format(new Date(txn.date), 'MMM d, yyyy')}
+                    </TableCell>
+                    <TableCell className="font-medium">{txn.name}</TableCell>
+                    <TableCell className="text-sm text-gray-600">
+                      {txn.merchantName || '-'}
+                    </TableCell>
+                    <TableCell>
+                      {txn.category && (
+                        <Badge variant="secondary" className="text-xs">
+                          {txn.category}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className={`text-right font-medium ${txn.amount < 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {txn.amount < 0 ? '+' : '-'}${Math.abs(txn.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {getFilteredTransactions().length === 0 && (
+              <div className="text-center py-8 text-gray-500">
+                No transactions found for this filter.
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

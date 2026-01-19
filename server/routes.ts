@@ -3791,6 +3791,14 @@ export async function registerRoutes(
           net_cash_flow: totalInflow - totalOutflow,
           total_inflow: totalInflow,
           total_outflow: totalOutflow,
+          transactions: transactions.map(t => ({
+            transactionId: t.transactionId,
+            date: t.date,
+            name: t.name,
+            merchantName: t.merchantName,
+            amount: t.amountCents,
+            category: t.categoryPrimary,
+          })),
         });
       } catch (error) {
         console.error("Error fetching spending summary:", error);

@@ -455,6 +455,15 @@ export interface TypedPlaidTransaction {
   effective_type: string;
 }
 
+export interface SpendingSummaryTransaction {
+  transactionId: string;
+  date: string;
+  name: string;
+  merchantName: string | null;
+  amount: number;
+  category: string | null;
+}
+
 export interface PlaidSpendingSummary {
   categories: { name: string; value: number }[];
   top_merchants: { name: string; amount_cents: number }[];
@@ -462,6 +471,7 @@ export interface PlaidSpendingSummary {
   net_cash_flow: number;
   total_inflow: number;
   total_outflow: number;
+  transactions: SpendingSummaryTransaction[];
 }
 
 export interface PlaidTransaction {
