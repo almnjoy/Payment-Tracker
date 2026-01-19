@@ -2,11 +2,12 @@ import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, Calendar, FileText, ArrowRight, Loader2, Receipt, Eye, ArrowLeft, CheckCircle, Download } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DollarSign, Calendar, FileText, ArrowRight, Loader2, Receipt, Eye, ArrowLeft, CheckCircle, Download, XCircle, Clock } from "lucide-react";
 import { PDFViewerModal } from "@/components/PDFViewerModal";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { useClientDashboard, useClientFinanceEntries, formatCents, formatDate } from "@/lib/api";
+import { useClientDashboard, useClientFinanceEntries, formatCents, formatDate, BillingDetail } from "@/lib/api";
 import { useLocation } from "wouter";
 
 export default function ClientDashboard() {
@@ -15,6 +16,7 @@ export default function ClientDashboard() {
   const asClientId = searchParams.get("asClientId") || undefined;
   const isImpersonating = !!asClientId;
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [billingDialogOpen, setBillingDialogOpen] = useState(false);
   
   const { data, isLoading, error } = useClientDashboard(asClientId);
   const { data: financeEntries } = useClientFinanceEntries(asClientId);
@@ -74,7 +76,11 @@ export default function ClientDashboard() {
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <Card className="border-l-4 border-l-orange-500 shadow-sm hover:shadow-md transition-shadow">
+            <Card 
+              className="border-l-4 border-l-orange-500 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => setBillingDialogOpen(true)}
+              data-testid="card-amount-due"
+            >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-gray-500">
                   Current Amount Due
@@ -86,8 +92,9 @@ export default function ClientDashboard() {
                   {formatCents(amountDueCents)}
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {nextDueDate ? `Due by ${formatDate(nextDueDate)}` : 'No outstanding balance'}
+                  {nextDueDate ? `Next due: ${formatDate(nextDueDate)}` : 'No outstanding balance'}
                 </p>
+                <p className="text-xs text-blue-600 mt-1 hover:underline">Click to view details</p>
               </CardContent>
             </Card>
           </motion.div>
@@ -280,6 +287,99 @@ export default function ClientDashboard() {
           downloadUrl={`/api/client/documents/${activeAgreement.documentId}/download${asClientId ? `?asClientId=${asClientId}` : ''}`}
         />
       )}
+
+      <Dialog open={billingDialogOpen} onOpenChange={setBillingDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-orange-500" />
+              Billing Details
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg border border-orange-200">
+              <span className="font-medium text-gray-700">Current Amount Due</span>
+              <span className="text-xl font-bold text-orange-600">{formatCents(amountDueCents)}</span>
+            </div>
+
+            {data.billingDetails && data.billingDetails.length > 0 ? (
+              <div className="space-y-3">
+                <h4 className="font-medium text-gray-900">Your Bills</h4>
+                {data.billingDetails.map((bill: BillingDetail) => (
+                  <div 
+                    key={bill.id} 
+                    className={`p-4 rounded-lg border ${bill.isPaid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}
+                    data-testid={`billing-item-${bill.id}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h5 className="font-medium text-gray-900">{bill.title}</h5>
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {bill.frequency === 'one_time' ? 'One-time' : bill.frequency}
+                          </Badge>
+                        </div>
+                        <p className="text-lg font-bold mt-1">{formatCents(bill.amountCents)}</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {bill.isPaid ? (
+                          <Badge className="bg-green-600">
+                            <CheckCircle className="h-3 w-3 mr-1" /> Paid
+                          </Badge>
+                        ) : (
+                          <Badge variant="destructive">
+                            <XCircle className="h-3 w-3 mr-1" /> Unpaid
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-gray-200 text-sm space-y-1">
+                      <div className="flex items-center gap-2 text-gray-600">
+                        <Calendar className="h-4 w-4" />
+                        <span>Current period due: {formatDate(bill.currentPeriodDue)}</span>
+                      </div>
+                      {bill.nextBillingDate && (
+                        <div className="flex items-center gap-2 text-blue-600">
+                          <Clock className="h-4 w-4" />
+                          <span>Next billing date: {formatDate(bill.nextBillingDate)}</span>
+                        </div>
+                      )}
+                      {bill.isPaid && bill.coveringPayment && (
+                        <div className="flex items-center gap-2 text-green-600">
+                          <CheckCircle className="h-4 w-4" />
+                          <span>
+                            Covered by payment of {formatCents(bill.coveringPayment.amountCents)} on {formatDate(bill.coveringPayment.paidAt)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <Receipt className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <p>No active bills found</p>
+                <p className="text-sm">Bills will appear here when assigned by the administrator.</p>
+              </div>
+            )}
+
+            {amountDueCents > 0 && (
+              <Button 
+                className="w-full btn-primary-orange"
+                onClick={() => {
+                  setBillingDialogOpen(false);
+                  navigate(`/client/payments${asClientId ? `?asClientId=${asClientId}` : ''}`);
+                }}
+                data-testid="button-pay-now-dialog"
+              >
+                Pay Now
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

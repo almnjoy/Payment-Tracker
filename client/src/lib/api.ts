@@ -113,6 +113,22 @@ export interface AdminStats {
   activeClients: number;
 }
 
+export interface BillingDetail {
+  id: string;
+  title: string;
+  type: string;
+  amountCents: number;
+  frequency: string;
+  isPaid: boolean;
+  currentPeriodDue: string;
+  nextBillingDate: string | null;
+  coveringPayment: {
+    paymentId: string;
+    amountCents: number;
+    paidAt: string;
+  } | null;
+}
+
 export interface ClientDashboard {
   client: Client | null;
   amountDueCents: number;
@@ -121,7 +137,7 @@ export interface ClientDashboard {
   activeLease: Lease | null;
   activeAgreement: Document | null;
   recentDocuments: Document[];
-  openInvoicesCount: number;
+  billingDetails: BillingDetail[];
 }
 
 export interface InviteVerifyResponse {

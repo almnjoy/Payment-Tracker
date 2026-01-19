@@ -2332,13 +2332,157 @@ export async function registerRoutes(
           "client_and_admin",
         );
 
-        const openInvoices = invoices.filter((inv) =>
-          ["open", "sent", "overdue"].includes(inv.status),
-        );
-        const amountDueCents = openInvoices.reduce(
-          (sum, inv) => sum + inv.amountCents,
-          0,
-        );
+        // Get active billing items for this client
+        const billingItems = await db
+          .select()
+          .from(clientBillingItems)
+          .where(
+            and(
+              eq(clientBillingItems.clientId, profile.clientId),
+              eq(clientBillingItems.status, "active")
+            )
+          );
+
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        // Calculate amount due based on billing items (same logic as admin side)
+        let totalBillingDue = 0;
+        const billingDetails: Array<{
+          id: string;
+          title: string;
+          type: string;
+          amountCents: number;
+          frequency: string;
+          isPaid: boolean;
+          currentPeriodDue: string;
+          nextBillingDate: string | null;
+          coveringPayment: { paymentId: string; amountCents: number; paidAt: string } | null;
+        }> = [];
+
+        // Get confirmed payments total for balance calculation
+        const confirmedPayments = payments.filter(p => p.status === "confirmed");
+        const confirmedPaymentsTotal = confirmedPayments.reduce((sum, p) => sum + p.amountCents, 0);
+
+        for (const bill of billingItems) {
+          // Parse dueDate as local date
+          const dueParts = bill.dueDate.split('-').map(Number);
+          const firstDueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
+          
+          let periods = 0;
+          let currentPeriodDue = new Date(firstDueDate);
+          let nextBillingDate: Date | null = null;
+
+          if (bill.frequency === "one_time") {
+            if (firstDueDate <= today) {
+              periods = 1;
+              currentPeriodDue = firstDueDate;
+              nextBillingDate = null; // No next date for one-time
+            } else {
+              // Not yet due
+              nextBillingDate = firstDueDate;
+            }
+          } else {
+            // Recurring: find current period and next billing date
+            let iterDate = new Date(firstDueDate);
+            let lastDue = new Date(firstDueDate);
+            
+            while (iterDate <= today) {
+              periods++;
+              lastDue = new Date(iterDate);
+              
+              // Advance to next period
+              switch (bill.frequency) {
+                case "weekly":
+                  iterDate.setDate(iterDate.getDate() + 7);
+                  break;
+                case "biweekly":
+                  iterDate.setDate(iterDate.getDate() + 14);
+                  break;
+                case "monthly": {
+                  const targetDay = firstDueDate.getDate();
+                  const nextMonth = iterDate.getMonth() + 1;
+                  const year = iterDate.getFullYear() + Math.floor(nextMonth / 12);
+                  const month = nextMonth % 12;
+                  const daysInMonth = new Date(year, month + 1, 0).getDate();
+                  iterDate = new Date(year, month, Math.min(targetDay, daysInMonth));
+                  break;
+                }
+                case "yearly": {
+                  const targetMonth = firstDueDate.getMonth();
+                  const targetDay = firstDueDate.getDate();
+                  const nextYear = iterDate.getFullYear() + 1;
+                  const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
+                  iterDate = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                  break;
+                }
+              }
+            }
+            
+            currentPeriodDue = lastDue;
+            nextBillingDate = iterDate; // First date after today
+          }
+
+          const totalForBill = bill.amountCents * periods;
+          totalBillingDue += totalForBill;
+
+          billingDetails.push({
+            id: bill.id,
+            title: bill.title,
+            type: bill.type || "other",
+            amountCents: bill.amountCents,
+            frequency: bill.frequency || "one_time",
+            isPaid: false, // Will update below
+            currentPeriodDue: currentPeriodDue.toISOString().split('T')[0],
+            nextBillingDate: nextBillingDate ? nextBillingDate.toISOString().split('T')[0] : null,
+            coveringPayment: null,
+          });
+        }
+
+        // Calculate amount owed
+        const currentBalance = confirmedPaymentsTotal - totalBillingDue;
+        const amountDueCents = currentBalance < 0 ? Math.abs(currentBalance) : 0;
+
+        // Determine paid/unpaid status for each bill based on remaining balance
+        // If client has paid enough to cover all bills, mark them as paid
+        let remainingCredit = confirmedPaymentsTotal;
+        
+        // Sort bills by due date (earliest first)
+        billingDetails.sort((a, b) => a.currentPeriodDue.localeCompare(b.currentPeriodDue));
+
+        // Find covering payments for each bill
+        for (const detail of billingDetails) {
+          if (remainingCredit >= detail.amountCents) {
+            detail.isPaid = true;
+            remainingCredit -= detail.amountCents;
+            
+            // Find the most recent payment that could have covered this
+            const matchingPayment = confirmedPayments.find(p => {
+              const paymentDate = p.paidAt || p.createdAt;
+              if (!paymentDate) return false;
+              const paidDate = new Date(paymentDate);
+              const dueDate = new Date(detail.currentPeriodDue);
+              return paidDate >= dueDate || p.amountCents >= detail.amountCents;
+            }) || confirmedPayments[0];
+            
+            if (matchingPayment) {
+              const paidAtDate = matchingPayment.paidAt || matchingPayment.createdAt;
+              detail.coveringPayment = {
+                paymentId: matchingPayment.paymentId,
+                amountCents: matchingPayment.amountCents,
+                paidAt: paidAtDate ? new Date(paidAtDate).toISOString() : new Date().toISOString(),
+              };
+            }
+          }
+        }
+
+        // Find next due date from billing items
+        const upcomingDueDates = billingDetails
+          .filter(b => b.nextBillingDate)
+          .map(b => b.nextBillingDate!)
+          .sort();
+        const nextDueDate = upcomingDueDates.length > 0 ? upcomingDueDates[0] : null;
+
         const lastPayment = payments.length > 0 ? payments[0] : null;
         const activeLease = leases.find((l) => l.status === "active");
         const activeAgreement = documents.find((d: any) => d.isActiveAgreement === true);
@@ -2346,12 +2490,12 @@ export async function registerRoutes(
         res.json({
           client,
           amountDueCents,
-          nextDueDate: openInvoices.length > 0 ? openInvoices[0].dueDate : null,
+          nextDueDate,
           lastPayment,
           activeLease,
           activeAgreement,
           recentDocuments: documents.slice(0, 5),
-          openInvoicesCount: openInvoices.length,
+          billingDetails,
         });
       } catch (error) {
         console.error("Error fetching client dashboard:", error);
