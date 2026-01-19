@@ -101,11 +101,22 @@ export default function FinanceTracker() {
   
   // Generate Summary Email mutation
   const generateSummaryMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ timeframe }: { timeframe: TimePeriod }) => {
+      // Compute date range based on timeframe
+      const periodDays: Record<TimePeriod, number> = { weekly: 7, biweekly: 14, monthly: 30, yearly: 365 };
+      const days = periodDays[timeframe];
+      const endDate = new Date();
+      const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      
       const response = await fetch("/api/admin/generate-monthly-summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
+        body: JSON.stringify({
+          timeframe,
+          start: startDate.toISOString().split("T")[0],
+          end: endDate.toISOString().split("T")[0],
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -326,34 +337,36 @@ export default function FinanceTracker() {
   return (
     <Layout role="admin">
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-gray-900">Finance Tracker</h2>
             <p className="text-gray-500">Track and organize your financial records.</p>
           </div>
           
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button 
               variant="outline"
-              onClick={() => generateSummaryMutation.mutate()}
+              size="default"
+              onClick={() => generateSummaryMutation.mutate({ timeframe: selectedPeriod })}
               disabled={generateSummaryMutation.isPending}
               data-testid="button-generate-summary"
             >
               {generateSummaryMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
               ) : (
-                <Mail className="mr-2 h-4 w-4" />
+                <Mail className="h-4 w-4 mr-2" />
               )}
               Generate Summary Email
             </Button>
             
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button className="btn-primary-orange" data-testid="button-add-entry">
-                  <Plus className="mr-2 h-4 w-4" /> Add Entry
-                </Button>
-              </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <Button className="btn-primary-orange" onClick={() => setDialogOpen(true)} data-testid="button-add-entry">
+              <Plus className="h-4 w-4 mr-2" /> Add Entry
+            </Button>
+          </div>
+        </div>
+        
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Add New {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Entry</DialogTitle>
                 <DialogDescription>
@@ -472,7 +485,6 @@ export default function FinanceTracker() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
 
         <Tabs defaultValue="income" onValueChange={setActiveTab} className="space-y-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1275,7 +1287,6 @@ export default function FinanceTracker() {
           )}
         </DialogContent>
       </Dialog>
-      </div>
     </Layout>
   );
 }

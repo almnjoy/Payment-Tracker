@@ -1487,6 +1487,8 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const userId = getUserId(req);
+        
         // Get automation settings
         const settings = await storage.getAutomationSettings();
         
@@ -1511,15 +1513,188 @@ export async function registerRoutes(
           });
         }
         
-        // Compute current month date range
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        // Get timeframe and dates from request body
+        const { timeframe = "monthly", start, end } = req.body;
         
-        const formatDate = (d: Date) => d.toISOString().split('T')[0];
+        // Compute date range from timeframe or use provided dates
+        let startDate: string;
+        let endDate: string;
         
-        // Get finance totals for current month (or use stored data if available)
-        // For now, we'll send basic structure - the webhook receiver can fetch details if needed
+        if (start && end) {
+          startDate = start;
+          endDate = end;
+        } else {
+          const periodDays: Record<string, number> = { weekly: 7, biweekly: 14, monthly: 30, yearly: 365 };
+          const days = periodDays[timeframe] || 30;
+          const endD = new Date();
+          const startD = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+          startDate = startD.toISOString().split("T")[0];
+          endDate = endD.toISOString().split("T")[0];
+        }
+        
+        console.log(`[Monthly Summary] Computing totals for period: ${startDate} to ${endDate} (timeframe: ${timeframe})`);
+        
+        // Map timeframe to TimePeriod for recurrence multipliers
+        const selectedPeriod = (["weekly", "biweekly", "monthly", "yearly"].includes(timeframe) ? timeframe : "monthly") as TimePeriod;
+        
+        // ===== 1. Manual Finance Entries =====
+        // Match UI logic: query ALL entries for admin, then filter using same logic as UI
+        const manualEntries = await db
+          .select()
+          .from(financeEntries)
+          .where(eq(financeEntries.adminUserId, userId!));
+        
+        console.log(`[Monthly Summary] Found ${manualEntries.length} total manual finance entries`);
+        
+        // Map category groups to totals keys
+        const categoryToKey: Record<string, string> = {
+          income: "income",
+          bills: "bills", 
+          debts: "debts",
+          holdings: "holdings",
+          other: "other",
+        };
+        
+        // Calculate manual entry totals with same logic as UI:
+        // - One-time entries: only count if within period range (isOneTimeInRange)
+        // - Recurring entries: always count with multiplier
+        const manualTotals = { income: 0, bills: 0, debts: 0, holdings: 0, other: 0 };
+        let includedCount = 0;
+        let skippedOneTimeCount = 0;
+        
+        for (const entry of manualEntries) {
+          const key = categoryToKey[entry.categoryGroup] || "other";
+          const recurrence = (entry.recurrence || "one_time") as RecurrenceType;
+          const isOneTime = !entry.recurrence || entry.recurrence === "one_time";
+          
+          if (isOneTime) {
+            // One-time entries only count if within date range
+            if (!entry.date || !isOneTimeInRange(entry.date, selectedPeriod)) {
+              skippedOneTimeCount++;
+              continue;
+            }
+            (manualTotals as any)[key] += Math.abs(entry.amountCents);
+            includedCount++;
+          } else {
+            // Recurring entries get multiplied
+            const multiplier = getRecurrenceMultiplier(recurrence, selectedPeriod);
+            (manualTotals as any)[key] += Math.round(Math.abs(entry.amountCents) * multiplier);
+            includedCount++;
+          }
+        }
+        console.log(`[Monthly Summary] Manual entries: ${includedCount} included, ${skippedOneTimeCount} one-time entries out of range`);
+        console.log(`[Monthly Summary] Manual entry totals:`, manualTotals);
+        
+        // ===== 2. Assigned Plaid Transactions =====
+        // Get all items for this admin
+        const items = await db
+          .select()
+          .from(plaidItems)
+          .where(eq(plaidItems.adminUserId, userId!));
+        
+        const itemIds = items.map((i) => i.itemId);
+        
+        let plaidTotals = { income: 0, bills: 0, debts: 0, holdings: 0, other: 0 };
+        
+        if (itemIds.length > 0) {
+          // Get all accounts to build default type map
+          const accounts = await db
+            .select()
+            .from(plaidAccounts)
+            .where(inArray(plaidAccounts.itemId, itemIds));
+          
+          const accountDefaultMap = new Map<string, string | null>();
+          accounts.forEach((a) => {
+            accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
+          });
+          
+          // Get recurring groups
+          const groups = await db
+            .select()
+            .from(plaidRecurringGroups)
+            .where(eq(plaidRecurringGroups.adminUserId, userId!));
+          
+          const groupMap = new Map<string, typeof groups[0]>();
+          groups.forEach((g) => {
+            groupMap.set(g.groupId, g);
+          });
+          
+          // Get transactions in date range
+          const transactions = await db
+            .select()
+            .from(plaidTransactions)
+            .where(
+              and(
+                gte(plaidTransactions.date, startDate),
+                lte(plaidTransactions.date, endDate),
+                inArray(plaidTransactions.itemId, itemIds)
+              )
+            );
+          
+          // Calculate effective type - ONLY count transactions with assigned types
+          const typedTransactions = transactions.map((t) => {
+            const group = t.recurringGroupId ? groupMap.get(t.recurringGroupId) : null;
+            return {
+              ...t,
+              effectiveType: t.overrideFinanceType || (group?.financeType) || accountDefaultMap.get(t.plaidAccountId) || null,
+              effectiveRecurrence: (t.overrideRecurrence || group?.recurrence || "one_time") as RecurrenceType,
+            };
+          }).filter((t) => t.effectiveType !== null);
+          
+          console.log(`[Monthly Summary] Found ${transactions.length} Plaid transactions, ${typedTransactions.length} with assigned types`);
+          
+          // Sum by category with recurrence multipliers
+          const plaidCategoryMap: Record<string, string> = {
+            income: "income",
+            bill: "bills",
+            debt: "debts",
+            holding: "holdings",
+            other: "other",
+          };
+          
+          for (const t of typedTransactions) {
+            const key = plaidCategoryMap[t.effectiveType!] || "other";
+            let amount = Math.abs(t.amountCents);
+            if (t.effectiveRecurrence !== "one_time") {
+              amount *= getRecurrenceMultiplier(t.effectiveRecurrence, selectedPeriod);
+            }
+            (plaidTotals as any)[key] += amount;
+          }
+          console.log(`[Monthly Summary] Plaid totals:`, plaidTotals);
+        } else {
+          console.log(`[Monthly Summary] No Plaid items linked`);
+        }
+        
+        // ===== 3. Client Billing Items (Derived Income) =====
+        // Match UI logic exactly: query active billing items filtered by monthly frequency
+        // This matches the /api/admin/billing-items endpoint that the UI uses
+        const billingItemsList = await db
+          .select()
+          .from(clientBillingItems)
+          .where(
+            and(
+              eq(clientBillingItems.status, "active"),
+              eq(clientBillingItems.frequency, "monthly")
+            )
+          );
+        
+        let billingIncome = 0;
+        for (const item of billingItemsList) {
+          billingIncome += Math.abs(item.amountCents);
+        }
+        console.log(`[Monthly Summary] Billing items income: ${billingIncome} from ${billingItemsList.length} monthly active items`);
+        
+        // ===== 4. Combine all totals =====
+        const finalTotals = {
+          income: Math.round(manualTotals.income + plaidTotals.income + billingIncome),
+          bills: Math.round(manualTotals.bills + plaidTotals.bills),
+          debts: Math.round(manualTotals.debts + plaidTotals.debts),
+          holdings: Math.round(manualTotals.holdings + plaidTotals.holdings),
+          other: Math.round(manualTotals.other + plaidTotals.other),
+        };
+        
+        console.log(`[Monthly Summary] Final totals:`, finalTotals);
+        
         const proto = req.headers["x-forwarded-proto"] || req.protocol;
         const host = req.headers["host"];
         const baseUrl = `${proto}://${host}`;
@@ -1527,17 +1702,12 @@ export async function registerRoutes(
         const payload = {
           event: "admin.monthly_summary",
           period: {
-            start: formatDate(startOfMonth),
-            end: formatDate(endOfMonth),
+            start: startDate,
+            end: endDate,
           },
-          totals: {
-            income: 0,
-            bills: 0,
-            debts: 0,
-            holdings: 0,
-            other: 0,
-          },
+          totals: finalTotals,
           portalUrl: baseUrl,
+          executionMode: "live",
         };
         
         // Build headers
@@ -1547,7 +1717,6 @@ export async function registerRoutes(
         }
         
         console.log(`[Monthly Summary] Sending to: ${settings.monthlySummaryWebhookUrl}`);
-        console.log(`[Monthly Summary] Period: ${payload.period.start} to ${payload.period.end}`);
         
         const response = await fetch(settings.monthlySummaryWebhookUrl, {
           method: "POST",
@@ -1565,7 +1734,7 @@ export async function registerRoutes(
         
         res.json({ 
           success: true, 
-          message: `Summary email generated for ${payload.period.start} to ${payload.period.end}` 
+          message: `Summary email generated for ${startDate} to ${endDate}` 
         });
       } catch (error: any) {
         console.error("Error generating monthly summary:", error);

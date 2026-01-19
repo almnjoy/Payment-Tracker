@@ -1,0 +1,68 @@
+Finance Tracker page: fix layout regression + send REAL totals in Monthly Summary webhook
+
+ISSUE A (UI):
+After adding the "Generate Summary Email" button, the Finance Tracker page layout broke (header elements are misaligned, spacing/positioning looks wrong).
+
+Fix:
+- Keep existing Finance Tracker header layout and spacing.
+- Put buttons in the header row neatly (Generate Summary Email + Add Entry) without shifting the left title block.
+- Use the same styling as other header actions across the app (rounded, consistent height).
+- On desktop: header should be a single row: [Title + subtitle] on left, [buttons] on right.
+- On mobile: stack nicely (title then buttons below) with good spacing.
+- Do NOT change the rest of the page layout.
+
+ISSUE B (data):
+Clicking "Generate Summary Email" triggers the webhook successfully, but payload totals are all 0.
+We need to send the correct totals derived from the Finance Tracker data that is already displayed (manual entries + selected Plaid entries + client rent if applicable).
+
+REQUIREMENTS FOR TOTALS:
+1) Use the SAME logic used to render totals in the UI tiles/summary section.
+- If the UI shows Income/Bills/Debts/Holdings totals, reuse that computed data.
+- Do not hardcode zeros.
+- Totals must reflect the current timeframe selected on the page (monthly/bi-weekly/last 30 days etc. whatever the selector is currently set to).
+
+2) Scope rules (very important):
+- Plaid transactions ONLY count toward a category if the user has assigned them a type/category (income/bill/debt/holding).
+- Unassigned Plaid transactions should NOT be included in any totals.
+- Manual entries always count.
+
+3) Backend endpoint:
+- Update POST /api/admin/automations/monthly-summary (or whatever endpoint the button calls)
+- It must compute totals using the same server-side data source that the UI uses:
+  - manual finance entries table
+  - plaid assigned transactions table (only those with category/type set)
+  - any other system entries that appear in totals today (ex: client rent if included)
+- Use the selected timeframe.
+- If the endpoint currently does not know the selected timeframe, update the button to POST it:
+  {
+    "timeframe": "monthly|biweekly|last30|custom",
+    "start": "YYYY-MM-DD",
+    "end": "YYYY-MM-DD"
+  }
+  Then the server uses those dates to compute totals.
+
+4) Payload format to n8n must contain real totals:
+{
+  "event": "admin.monthly_summary",
+  "period": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
+  "totals": {
+    "income": <number>,
+    "bills": <number>,
+    "debts": <number>,
+    "holdings": <number>,
+    "other": <number>
+  },
+  "portalUrl": "<current base url>",
+  "executionMode": "live"
+}
+
+5) Debugging:
+- Add server logs when generating summary:
+  - period start/end
+  - counts of records used per category
+  - totals per category
+- If totals are still zero, the logs should make it obvious whether the query returned 0 rows or if the category filter is wrong.
+
+DELIVERABLE:
+- Finance Tracker header layout looks normal again.
+- Clicking Generate Summary Email sends correct totals that match what is displayed on the page (and respects the “only user-assigned Plaid counts” rule).
