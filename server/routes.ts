@@ -2215,17 +2215,63 @@ export async function registerRoutes(
           .filter((p) => p.status === "confirmed")
           .reduce((sum, p) => sum + p.amountCents, 0);
 
-        // Calculate Outstanding Balance using same logic as Client Details:
-        // For each active client: billingItemsTotal - confirmedPaymentsTotal
-        // Negative value means client owes money
+        // Calculate Outstanding Balance using same logic as Client List:
+        // Count billing periods that have become due, then subtract confirmed payments
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
         let totalOutstandingCents = 0;
         for (const client of activeClients) {
           const clientBills = allBillingItems.filter(
             item => item.clientId === client.clientId
           );
-          const clientBillingTotal = clientBills.reduce(
-            (sum: number, item) => sum + (item.amountCents || 0), 0
-          );
+          
+          // Calculate total billing due using period-based logic
+          let clientBillingDue = 0;
+          for (const bill of clientBills) {
+            const dueParts = bill.dueDate.split('-').map(Number);
+            const dueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
+            
+            // Skip if due date is in the future
+            if (dueDate > today) continue;
+            
+            if (bill.frequency === "one_time") {
+              clientBillingDue += bill.amountCents;
+            } else {
+              let periods = 0;
+              let currentDue = new Date(dueDate);
+              
+              while (currentDue <= today) {
+                periods++;
+                switch (bill.frequency) {
+                  case "weekly":
+                    currentDue.setDate(currentDue.getDate() + 7);
+                    break;
+                  case "biweekly":
+                    currentDue.setDate(currentDue.getDate() + 14);
+                    break;
+                  case "monthly": {
+                    const targetDay = dueDate.getDate();
+                    const nextMonth = currentDue.getMonth() + 1;
+                    const year = currentDue.getFullYear() + Math.floor(nextMonth / 12);
+                    const month = nextMonth % 12;
+                    const daysInMonth = new Date(year, month + 1, 0).getDate();
+                    currentDue = new Date(year, month, Math.min(targetDay, daysInMonth));
+                    break;
+                  }
+                  case "yearly": {
+                    const targetMonth = dueDate.getMonth();
+                    const targetDay = dueDate.getDate();
+                    const nextYear = currentDue.getFullYear() + 1;
+                    const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
+                    currentDue = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                    break;
+                  }
+                }
+              }
+              clientBillingDue += bill.amountCents * periods;
+            }
+          }
           
           const clientConfirmedPayments = activePayments.filter(
             p => p.clientId === client.clientId && p.status === 'confirmed'
@@ -2234,11 +2280,10 @@ export async function registerRoutes(
             (sum, p) => sum + p.amountCents, 0
           );
           
-          // currentBalance = confirmedPayments - billingItems (negative = owes)
-          const clientBalance = clientPaymentsTotal - clientBillingTotal;
-          // Add to total outstanding (only if client owes money, i.e., balance < 0)
-          if (clientBalance < 0) {
-            totalOutstandingCents += clientBalance; // Accumulate negative amounts
+          // Amount owed = billing due - payments (positive = owes)
+          const amountOwed = clientBillingDue - clientPaymentsTotal;
+          if (amountOwed > 0) {
+            totalOutstandingCents += amountOwed;
           }
         }
 

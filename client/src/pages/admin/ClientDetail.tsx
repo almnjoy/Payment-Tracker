@@ -269,11 +269,61 @@ export default function ClientDetail() {
   const documents = client.documents || [];
   const invoices = client.invoices || [];
   
-  // Calculate balance from billing items minus confirmed payments
+  // Calculate balance from billing items (with due date/period logic) minus confirmed payments
   // Positive balance = client has overpaid, Negative balance = client owes money
-  const billingItemsTotal = (billingItems || [])
-    .filter(item => item.status === 'active')
-    .reduce((sum, item) => sum + (item.amountCents || 0), 0);
+  const calculateBillingDue = () => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let total = 0;
+    
+    for (const bill of (billingItems || []).filter(item => item.status === 'active')) {
+      const dueParts = bill.dueDate.split('-').map(Number);
+      const dueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
+      
+      // Skip if due date is in the future
+      if (dueDate > today) continue;
+      
+      if (bill.frequency === "one_time") {
+        total += bill.amountCents;
+      } else {
+        let periods = 0;
+        let currentDue = new Date(dueDate);
+        
+        while (currentDue <= today) {
+          periods++;
+          switch (bill.frequency) {
+            case "weekly":
+              currentDue.setDate(currentDue.getDate() + 7);
+              break;
+            case "biweekly":
+              currentDue.setDate(currentDue.getDate() + 14);
+              break;
+            case "monthly": {
+              const targetDay = dueDate.getDate();
+              const nextMonth = currentDue.getMonth() + 1;
+              const year = currentDue.getFullYear() + Math.floor(nextMonth / 12);
+              const month = nextMonth % 12;
+              const daysInMonth = new Date(year, month + 1, 0).getDate();
+              currentDue = new Date(year, month, Math.min(targetDay, daysInMonth));
+              break;
+            }
+            case "yearly": {
+              const targetMonth = dueDate.getMonth();
+              const targetDay = dueDate.getDate();
+              const nextYear = currentDue.getFullYear() + 1;
+              const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
+              currentDue = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+              break;
+            }
+          }
+        }
+        total += bill.amountCents * periods;
+      }
+    }
+    return total;
+  };
+  
+  const billingItemsTotal = calculateBillingDue();
   
   const confirmedPaymentsTotal = payments
     .filter(p => p.status === 'confirmed')
