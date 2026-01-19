@@ -39,10 +39,12 @@ export default function ClientDashboard() {
     );
   }
 
+  // Data is now available
+
   const { amountDueCents, nextDueDate, lastPayment, activeLease, activeAgreement, client } = data;
 
   return (
-    <Layout role="client">
+    <Layout role="client" clientName={client?.displayName}>
       <div className="space-y-6">
         {isImpersonating && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between" data-testid="impersonation-banner">

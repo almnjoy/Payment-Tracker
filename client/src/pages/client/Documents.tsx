@@ -64,7 +64,7 @@ export default function ClientDocuments() {
   };
 
   return (
-    <Layout role="client">
+    <Layout role="client" clientName={dashboardData?.client?.displayName}>
       <div className="space-y-6">
         {isImpersonating && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between" data-testid="impersonation-banner">
@@ -72,7 +72,7 @@ export default function ClientDocuments() {
               <Eye className="h-5 w-5 text-amber-600" />
               <div>
                 <p className="font-medium text-amber-900">Admin Preview Mode</p>
-                <p className="text-sm text-amber-700">Viewing documents for <strong>{dashboardData?.client?.displayName || 'Client'}</strong></p>
+                <p className="text-sm text-amber-700">You are viewing this portal as <strong>{dashboardData?.client?.displayName || 'Client'}</strong></p>
               </div>
             </div>
             <Button 

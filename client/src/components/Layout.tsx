@@ -18,24 +18,36 @@ import {
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { MOCK_USER } from "@/lib/mockData";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 
 interface LayoutProps {
   children: React.ReactNode;
   role: "client" | "admin";
+  clientName?: string;
 }
 
-export function Layout({ children, role }: LayoutProps) {
+export function Layout({ children, role, clientName }: LayoutProps) {
   const [location, setLocation] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { user } = useAuth();
+  
+  // Check for admin impersonation mode
+  const searchParams = new URLSearchParams(window.location.search);
+  const asClientId = searchParams.get("asClientId");
+  const isImpersonating = !!asClientId;
+  
+  // Helper to build href with asClientId for client pages
+  const buildClientHref = (path: string) => {
+    return asClientId ? `${path}?asClientId=${asClientId}` : path;
+  };
 
   // Client Links (No grouping needed for now)
   const clientLinks = [
-    { icon: LayoutDashboard, label: "Dashboard", href: "/client/dashboard" },
-    { icon: CreditCard, label: "Payments", href: "/client/payments" },
-    { icon: FileText, label: "Documents", href: "/client/documents" },
-    { icon: User, label: "Profile", href: "/client/profile" },
+    { icon: LayoutDashboard, label: "Dashboard", href: buildClientHref("/client/dashboard") },
+    { icon: CreditCard, label: "Payments", href: buildClientHref("/client/payments") },
+    { icon: FileText, label: "Documents", href: buildClientHref("/client/documents") },
+    { icon: User, label: "Profile", href: buildClientHref("/client/profile") },
   ];
 
   // Admin Links with Grouping
@@ -158,14 +170,14 @@ export function Layout({ children, role }: LayoutProps) {
         <div className="p-4 border-t border-gray-100">
           <div className="flex items-center gap-3 px-3 py-2 mb-2">
             <Avatar className="h-9 w-9 border border-gray-200">
-              <AvatarImage src={role === "admin" ? "" : MOCK_USER.avatar} />
+              <AvatarImage src={user?.profileImageUrl || ""} />
               <AvatarFallback className="bg-primary/10 text-primary font-bold">
-                {role === "admin" ? "AD" : "SM"}
+                {role === "admin" ? "AD" : (user?.firstName?.[0] || "U")}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-gray-900 truncate">
-                {role === "admin" ? "Administrator" : MOCK_USER.name}
+                {role === "admin" ? "Administrator" : (clientName || user?.firstName || "User")}
               </p>
               <p className="text-xs text-gray-500 truncate capitalize">
                 {role}
