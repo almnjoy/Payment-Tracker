@@ -108,18 +108,18 @@ export function Layout({ children, role }: LayoutProps) {
               const Icon = link.icon;
               const isActive = location === link.href;
               return (
-                <Link key={link.href} href={link.href}>
-                  <a 
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
-                      isActive 
-                        ? "bg-primary/10 text-primary" 
-                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                    )}
-                  >
-                    <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
-                    {link.label}
-                  </a>
+                <Link 
+                  key={link.href} 
+                  href={link.href}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
+                    isActive 
+                      ? "bg-primary/10 text-primary" 
+                      : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                  )}
+                >
+                  <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
+                  {link.label}
                 </Link>
               );
             })
@@ -135,18 +135,18 @@ export function Layout({ children, role }: LayoutProps) {
                   const Icon = link.icon;
                   const isActive = location === link.href;
                   return (
-                    <Link key={link.href} href={link.href}>
-                      <a 
-                        className={cn(
-                          "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
-                          isActive 
-                            ? "bg-primary/10 text-primary" 
-                            : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                        )}
-                      >
-                        <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
-                        {link.label}
-                      </a>
+                    <Link 
+                      key={link.href} 
+                      href={link.href}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
+                        isActive 
+                          ? "bg-primary/10 text-primary" 
+                          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                      )}
+                    >
+                      <Icon size={18} className={isActive ? "text-primary" : "text-gray-500"} />
+                      {link.label}
                     </Link>
                   );
                 })}
