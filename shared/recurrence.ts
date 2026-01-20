@@ -1,9 +1,11 @@
-export type RecurrenceType = "one_time" | "weekly" | "biweekly" | "monthly" | "yearly";
+export type RecurrenceType = "one_time" | "static" | "weekly" | "biweekly" | "monthly" | "yearly";
 export type TimePeriod = "weekly" | "biweekly" | "monthly" | "yearly";
 
 // Exact deterministic multipliers - no averaging or approximation
+// Static entries always return 1 (no scaling) regardless of timeframe
 const MULTIPLIER_TABLE: Record<RecurrenceType, Record<TimePeriod, number>> = {
   one_time: { weekly: 1, biweekly: 1, monthly: 1, yearly: 1 },
+  static: { weekly: 1, biweekly: 1, monthly: 1, yearly: 1 },
   weekly: { weekly: 1, biweekly: 2, monthly: 4, yearly: 52 },
   biweekly: { weekly: 0.5, biweekly: 1, monthly: 2, yearly: 26 },
   monthly: { weekly: 0.25, biweekly: 0.5, monthly: 1, yearly: 12 },
@@ -14,18 +16,25 @@ export function getRecurrenceMultiplier(
   entryRecurrence: RecurrenceType | null | undefined,
   selectedPeriod: TimePeriod
 ): number {
-  if (!entryRecurrence || entryRecurrence === "one_time") {
+  // Static and one-time entries always return 1 (no scaling)
+  if (!entryRecurrence || entryRecurrence === "one_time" || entryRecurrence === "static") {
     return 1;
   }
   
   return MULTIPLIER_TABLE[entryRecurrence]?.[selectedPeriod] ?? 1;
 }
 
+// Check if a recurrence type is static (snapshot value, never scaled)
+export function isStaticRecurrence(recurrence: RecurrenceType | null | undefined): boolean {
+  return recurrence === "static";
+}
+
 export function getMultiplierLabel(
   entryRecurrence: RecurrenceType | null | undefined,
   selectedPeriod: TimePeriod
 ): string | null {
-  if (!entryRecurrence || entryRecurrence === "one_time") {
+  // Static entries never show multiplier labels (they're snapshot values)
+  if (!entryRecurrence || entryRecurrence === "one_time" || entryRecurrence === "static") {
     return null;
   }
   
@@ -104,6 +113,7 @@ export function formatRecurrence(recurrence: RecurrenceType | null | undefined):
   
   const labels: Record<RecurrenceType, string> = {
     one_time: "One-time",
+    static: "Static",
     weekly: "Weekly",
     biweekly: "Bi-Weekly",
     monthly: "Monthly",
@@ -111,4 +121,15 @@ export function formatRecurrence(recurrence: RecurrenceType | null | undefined):
   };
   
   return labels[recurrence] || "One-time";
+}
+
+// Categories that should default to static frequency
+export const STATIC_DEFAULT_CATEGORIES = ["debt", "holding", "other"];
+
+// Get the default recurrence for a category
+export function getDefaultRecurrenceForCategory(categoryGroup: string): RecurrenceType | "one_time" {
+  if (STATIC_DEFAULT_CATEGORIES.includes(categoryGroup)) {
+    return "static";
+  }
+  return "one_time";
 }
