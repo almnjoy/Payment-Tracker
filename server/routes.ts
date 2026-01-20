@@ -13,6 +13,8 @@ import Stripe from "stripe";
 import { db } from "./db";
 import { z } from "zod";
 import rateLimit from "express-rate-limit";
+import cors from "cors";
+import { getBaseUrl, getAllowedOrigins } from "./utils/baseUrl";
 import {
   plaidItems,
   plaidAccounts,
@@ -308,6 +310,30 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  // ============================================
+  // CORS CONFIGURATION
+  // ============================================
+  const allowedOrigins = getAllowedOrigins();
+  app.use(cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, etc)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else if (process.env.NODE_ENV !== "production") {
+        // In development, allow all origins
+        callback(null, true);
+      } else {
+        console.warn(`[CORS] Blocked request from origin: ${origin}`);
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  }));
+
   // ============================================
   // AUTH + PROFILE
   // ============================================
@@ -1470,11 +1496,7 @@ export async function registerRoutes(
         let token: string | null = null;
         let payload: any = {};
         
-        const baseUrl = process.env.REPLIT_DEV_DOMAIN 
-          ? `https://${process.env.REPLIT_DEV_DOMAIN}` 
-          : process.env.REPLIT_DOMAINS 
-            ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}` 
-            : "http://localhost:5000";
+        const baseUrl = getBaseUrl(req);
         
         switch (webhookType) {
           case "signupEmail":
@@ -1601,11 +1623,7 @@ export async function registerRoutes(
         }
 
         // Build payload
-        const baseUrl = process.env.REPLIT_DEV_DOMAIN 
-          ? `https://${process.env.REPLIT_DEV_DOMAIN}` 
-          : process.env.REPLIT_DOMAINS 
-            ? `https://${process.env.REPLIT_DOMAINS.split(',')[0]}` 
-            : "http://localhost:5000";
+        const baseUrl = getBaseUrl(req);
         
         const portalUrl = `${baseUrl}/auth/register`;
         const payload = {
@@ -1862,9 +1880,7 @@ export async function registerRoutes(
         
         console.log(`[Monthly Summary] Final totals:`, finalTotals);
         
-        const proto = req.headers["x-forwarded-proto"] || req.protocol;
-        const host = req.headers["host"];
-        const baseUrl = `${proto}://${host}`;
+        const baseUrl = getBaseUrl(req);
         
         const payload = {
           event: "admin.monthly_summary",
@@ -2280,9 +2296,7 @@ export async function registerRoutes(
 
         // Fire webhook if payment is created as confirmed and has a client
         if (payment.status === "confirmed" && payment.clientId) {
-          const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-          const host = req.headers["host"] || req.get("host") || "localhost:5000";
-          const baseUrl = `${proto}://${host}`;
+          const baseUrl = getBaseUrl(req);
           
           sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
             console.error("[AdminPaymentCreate] Webhook error (non-blocking):", err.message);
@@ -2321,9 +2335,7 @@ export async function registerRoutes(
 
         // Fire payment received webhook if status is confirmed (non-blocking)
         if (status === "confirmed" && payment.clientId) {
-          const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-          const host = req.headers["host"] || req.get("host") || "localhost:5000";
-          const baseUrl = `${proto}://${host}`;
+          const baseUrl = getBaseUrl(req);
           
           sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
             console.error("[PaymentStatusUpdate] Webhook error (non-blocking):", err.message);
@@ -3248,16 +3260,14 @@ export async function registerRoutes(
 
         const stripe = new Stripe(secretKey);
 
-        // Determine the base URL dynamically from the incoming request
-        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-        const host = req.headers["host"] || req.get("host") || "localhost:5000";
-        const baseUrl = `${proto}://${host}`;
+        // Use centralized base URL (prefers APP_BASE_URL for production custom domain)
+        const baseUrl = getBaseUrl(req);
         
         const successUrl = `${baseUrl}/client/payments?success=1&session_id={CHECKOUT_SESSION_ID}`;
         const cancelUrl = `${baseUrl}/client/payments?canceled=1`;
         
         // Log for debugging
-        console.log("[Stripe Checkout] Derived baseUrl:", baseUrl);
+        console.log("[Stripe Checkout] Using baseUrl:", baseUrl);
         console.log("[Stripe Checkout] success_url:", successUrl);
         console.log("[Stripe Checkout] cancel_url:", cancelUrl);
 
@@ -3390,9 +3400,7 @@ export async function registerRoutes(
         console.log(`[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`);
 
         // Fire payment received webhook for confirmed Stripe payment (non-blocking)
-        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-        const host = req.headers["host"] || req.get("host") || "localhost:5000";
-        const baseUrl = `${proto}://${host}`;
+        const baseUrl = getBaseUrl(req);
         
         sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
           console.error("[Stripe Confirm] Webhook error (non-blocking):", err.message);
@@ -5631,9 +5639,7 @@ export async function registerRoutes(
         console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
 
         // Fire payment received webhook (non-blocking)
-        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-        const host = req.headers["host"] || req.get("host") || "localhost:5000";
-        const baseUrl = `${proto}://${host}`;
+        const baseUrl = getBaseUrl(req);
         
         sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
           console.error("[StripeWebhook checkout.session.completed] Webhook error (non-blocking):", err.message);
@@ -5678,9 +5684,7 @@ export async function registerRoutes(
         console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
 
         // Fire payment received webhook (non-blocking)
-        const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-        const host = req.headers["host"] || req.get("host") || "localhost:5000";
-        const baseUrl = `${proto}://${host}`;
+        const baseUrl = getBaseUrl(req);
         
         sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
           console.error("[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):", err.message);
@@ -5764,6 +5768,141 @@ export async function registerRoutes(
           success: false,
           message: error.message || "Failed to connect to Stripe",
         });
+      }
+    },
+  );
+
+  // ============================================
+  // PRODUCTION READINESS CHECK (Admin Only)
+  // ============================================
+  app.get(
+    "/api/admin/production-readiness",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const checks: Array<{ name: string; status: "ok" | "warning" | "error"; value: string }> = [];
+        
+        // 1. Base URL configuration
+        const appBaseUrl = process.env.APP_BASE_URL;
+        const derivedBaseUrl = getBaseUrl(req);
+        checks.push({
+          name: "APP_BASE_URL",
+          status: appBaseUrl ? "ok" : "warning",
+          value: appBaseUrl || "(not set - using request headers)",
+        });
+        checks.push({
+          name: "Derived Base URL",
+          status: "ok",
+          value: derivedBaseUrl,
+        });
+        checks.push({
+          name: "Request Host",
+          status: "ok",
+          value: req.headers["host"] || "unknown",
+        });
+        
+        // 2. Cookie settings
+        checks.push({
+          name: "Cookie Secure",
+          status: "ok",
+          value: "true",
+        });
+        checks.push({
+          name: "Cookie SameSite",
+          status: "ok",
+          value: "lax",
+        });
+        checks.push({
+          name: "Cookie HttpOnly",
+          status: "ok",
+          value: "true",
+        });
+        
+        // 3. CORS configuration
+        const allowedOrigins = getAllowedOrigins();
+        checks.push({
+          name: "CORS Allowed Origins",
+          status: allowedOrigins.length > 0 ? "ok" : "warning",
+          value: allowedOrigins.join(", ") || "(all in development)",
+        });
+        
+        // 4. Environment
+        checks.push({
+          name: "NODE_ENV",
+          status: process.env.NODE_ENV === "production" ? "ok" : "warning",
+          value: process.env.NODE_ENV || "development",
+        });
+        
+        // 5. Stripe configuration (no secrets exposed)
+        const stripeSecretPresent = !!process.env.STRIPE_SECRET_KEY_TEST;
+        const stripePublishablePresent = !!process.env.STRIPE_PUBLISHABLE_KEY_TEST;
+        checks.push({
+          name: "Stripe Mode",
+          status: "ok",
+          value: "Test",
+        });
+        checks.push({
+          name: "Stripe Secret Key",
+          status: stripeSecretPresent ? "ok" : "error",
+          value: stripeSecretPresent ? "configured" : "NOT CONFIGURED",
+        });
+        checks.push({
+          name: "Stripe Publishable Key",
+          status: stripePublishablePresent ? "ok" : "warning",
+          value: stripePublishablePresent ? "configured" : "not configured",
+        });
+        
+        // 6. Plaid configuration (no secrets exposed)
+        const plaidEnv = process.env.PLAID_ENV || "sandbox";
+        checks.push({
+          name: "Plaid Environment",
+          status: plaidEnv === "production" ? "ok" : "warning",
+          value: plaidEnv,
+        });
+        checks.push({
+          name: "Plaid Client ID",
+          status: !!process.env.PLAID_CLIENT_ID ? "ok" : "warning",
+          value: process.env.PLAID_CLIENT_ID ? "configured" : "not configured",
+        });
+        checks.push({
+          name: "Plaid Secret",
+          status: !!process.env.PLAID_SECRET ? "ok" : "warning",
+          value: process.env.PLAID_SECRET ? "configured" : "not configured",
+        });
+        
+        // 7. Database
+        checks.push({
+          name: "Database",
+          status: !!process.env.DATABASE_URL ? "ok" : "error",
+          value: process.env.DATABASE_URL ? "configured" : "NOT CONFIGURED",
+        });
+        
+        // 8. Session Secret
+        checks.push({
+          name: "Session Secret",
+          status: !!process.env.SESSION_SECRET ? "ok" : "error",
+          value: process.env.SESSION_SECRET ? "configured" : "NOT CONFIGURED",
+        });
+        
+        // Summary
+        const errorCount = checks.filter(c => c.status === "error").length;
+        const warningCount = checks.filter(c => c.status === "warning").length;
+        
+        res.json({
+          summary: {
+            total: checks.length,
+            ok: checks.filter(c => c.status === "ok").length,
+            warnings: warningCount,
+            errors: errorCount,
+            overallStatus: errorCount > 0 ? "NOT_READY" : warningCount > 0 ? "READY_WITH_WARNINGS" : "READY",
+          },
+          checks,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error("Error checking production readiness:", error);
+        res.status(500).json({ message: "Failed to check production readiness" });
       }
     },
   );

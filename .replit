@@ -45,3 +45,8 @@ integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.
 
 [objectStorage]
 defaultBucketID = "replit-objstore-5f31faf8-0551-461b-bdc6-a51b1e473c5d"
+
+[userenv]
+
+[userenv.production]
+APP_BASE_URL = "https://portal.quickitprojects.com"

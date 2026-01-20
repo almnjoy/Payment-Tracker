@@ -8,6 +8,13 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 
+function getBaseUrlForAuth(req: any): string {
+  if (process.env.APP_BASE_URL) {
+    return process.env.APP_BASE_URL;
+  }
+  return `${req.protocol}://${req.hostname}`;
+}
+
 const getOidcConfig = memoize(
   async () => {
     return await client.discovery(
@@ -27,6 +34,7 @@ export function getSession() {
     ttl: sessionTtl,
     tableName: "sessions",
   });
+  const isProduction = process.env.NODE_ENV === "production";
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
@@ -35,6 +43,7 @@ export function getSession() {
     cookie: {
       httpOnly: true,
       secure: true,
+      sameSite: "lax" as const,
       maxAge: sessionTtl,
     },
   });
@@ -142,7 +151,8 @@ export async function setupAuth(app: Express) {
         });
         
         // Redirect to Replit's end session endpoint, then to /logged-out page
-        const loggedOutUrl = `${req.protocol}://${req.hostname}/logged-out`;
+        const baseUrl = getBaseUrlForAuth(req);
+        const loggedOutUrl = `${baseUrl}/logged-out`;
         res.redirect(
           client.buildEndSessionUrl(config, {
             client_id: process.env.REPL_ID!,

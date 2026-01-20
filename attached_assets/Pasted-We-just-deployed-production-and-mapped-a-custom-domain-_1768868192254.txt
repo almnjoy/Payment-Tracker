@@ -1,0 +1,43 @@
+We just deployed production and mapped a custom domain: https://portal.quickitprojects.com
+Please do a “custom domain readiness” pass so everything works correctly under the new domain.
+
+1) Base URL / canonical host
+- Add/confirm APP_BASE_URL is used everywhere links are generated:
+  - Stripe success_url + cancel_url
+  - portalUrl included in n8n webhook payloads
+  - any “Open Portal” links in emails
+- In production, APP_BASE_URL should be https://portal.quickitprojects.com
+- Ensure no references remain to the temporary replit dev/workspace URLs.
+- Add a small helper getBaseUrl(req) that prefers APP_BASE_URL and falls back to req headers in dev.
+
+2) Session + cookies under custom domain (fix common login/logout issues)
+- Ensure session cookies work on portal.quickitprojects.com:
+  - cookie.secure = true in production (https)
+  - cookie.sameSite = "lax"
+  - cookie.httpOnly = true
+- Ensure logout fully clears session on the custom domain (no auto-login loop).
+
+3) CORS / CSRF correctness
+- Lock CORS in production to allow only:
+  - https://portal.quickitprojects.com
+- Ensure credentials settings match your auth (cookie sessions).
+- Ensure state-changing routes are protected from cross-origin requests.
+
+4) Stripe & webhook configuration sanity
+- Confirm Stripe redirect uses portal.quickitprojects.com (not workspace.dpalleman.repl.co)
+- Confirm Stripe webhooks are still verified and endpoint is reachable on the new domain.
+- Confirm n8n webhooks are called server-side and portalUrl in payload uses the new domain.
+
+5) Health / readiness checks
+Add an admin-only “Production Readiness” check page or endpoint that reports:
+- current base url being used (APP_BASE_URL)
+- request host
+- cookie secure/samesite settings
+- CORS allowed origins
+- Stripe mode (test/live) and publishable key presence
+- Plaid env (sandbox/dev/prod)
+This should NOT display secrets.
+
+Deliverable:
+- A short list of what changed (files + key settings)
+- Confirmation that Stripe success redirect, n8n links, and auth cookies all work on portal.quickitprojects.com
