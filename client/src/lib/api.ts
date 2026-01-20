@@ -426,7 +426,7 @@ export interface PlaidSyncStatus {
 }
 
 export type TimePeriod = "weekly" | "biweekly" | "monthly" | "yearly";
-export type RecurrenceType = "one_time" | "weekly" | "biweekly" | "monthly" | "yearly";
+export type RecurrenceType = "one_time" | "static" | "weekly" | "biweekly" | "monthly" | "yearly";
 
 export interface PlaidFinanceTotals {
   income: number;
