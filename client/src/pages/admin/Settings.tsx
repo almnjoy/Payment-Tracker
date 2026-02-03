@@ -22,7 +22,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-function PlaidLinkButton({ onSuccess }: { onSuccess: () => void }) {
+function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?: () => void }) {
   const createLinkToken = useCreatePlaidLinkToken();
   const exchangeToken = useExchangePlaidToken();
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -30,6 +30,10 @@ function PlaidLinkButton({ onSuccess }: { onSuccess: () => void }) {
 
   const handleGetLinkToken = async () => {
     try {
+      // Close any parent modal before opening Plaid Link to avoid focus trap issues
+      if (onOpen) {
+        onOpen();
+      }
       const result = await createLinkToken.mutateAsync();
       setLinkToken(result.link_token);
     } catch (error: any) {
@@ -1034,7 +1038,7 @@ export default function AdminSettings() {
                          </DialogDescription>
                       </DialogHeader>
                       <div className="grid grid-cols-2 gap-4 py-4">
-                         <PlaidLinkButton onSuccess={handleLinkSuccess} />
+                         <PlaidLinkButton onSuccess={handleLinkSuccess} onOpen={() => setModalOpen(false)} />
                          <Button variant="outline" className="h-24 flex flex-col gap-2 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all opacity-50 cursor-not-allowed" disabled>
                             <div className="h-10 w-10 bg-[#635BFF] rounded-lg flex items-center justify-center text-white font-bold">S</div>
                             <span>Stripe (Coming)</span>

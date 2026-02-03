@@ -1,0 +1,40 @@
+Admin > Finance: add “Static” frequency option and change handling for Debt / Holdings / Other
+
+Goal
+Update finance logic so certain manual entries can be treated as “Static” (non-recurring) and are NOT adjusted by timeframe calculations (weekly/bi-weekly/monthly/yearly).
+
+Requirements
+1) Manual entry frequency dropdown
+- Add a new option to the manual entry “frequency” dropdown: Static
+- Keep existing options (one-time, weekly, bi-weekly, monthly, yearly)
+
+2) Static behavior
+- If a manual entry frequency is Static:
+  - It should be treated as a snapshot value and never scaled/converted based on timeframe.
+  - It should always count at full value in totals regardless of timeframe selection.
+  - It should not show “past time period” warnings, since it is not time-bound.
+- This is intended for things like outstanding debts (car loan balance), holdings (savings balance), or other static totals.
+
+3) Category handling change (Debt / Holdings / Other)
+- For these categories, default behavior for manual entries should encourage Static usage:
+  - If user selects Debt/Holdings/Other and does not choose a frequency, default frequency to Static.
+  - If user explicitly chooses a recurring frequency, respect it (do not override).
+
+4) Editing static entries
+- Ensure manual entries can be edited (amount, category, frequency, notes).
+- Updating a static entry amount should immediately update totals.
+
+5) Totals logic
+- Totals should continue to show breakdown lines:
+  - Manual entries total
+  - From Plaid (selected/assigned only)
+  - Client rent if applicable
+- For timeframe calculations:
+  - Apply scaling only to non-static entries.
+  - Static entries remain unchanged.
+
+Deliverable
+- Static appears in the manual entry frequency dropdown.
+- Static manual entries remain constant across timeframe selections.
+- Debt/Holdings/Other manual entries default to Static when not specified.
+- Admin can edit static entry amounts anytime and totals update correctly.

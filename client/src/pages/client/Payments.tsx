@@ -54,6 +54,8 @@ export default function ClientPayments() {
   const [useCustomAmount, setUseCustomAmount] = useState(false);
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
   const [confirmingPayment, setConfirmingPayment] = useState(false);
+  // 2-step flow for external methods (cashapp, venmo, bank): "details" -> "confirmation"
+  const [externalPaymentStep, setExternalPaymentStep] = useState<"details" | "confirmation" | null>(null);
 
   const sessionId = searchParams.get("session_id");
 
@@ -142,6 +144,14 @@ export default function ClientPayments() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["client-payments"] });
       queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
+      
+      // For external methods (cashapp/venmo/bank), transition to confirmation step
+      if (selectedMethod && ["cashapp", "venmo", "bank"].includes(selectedMethod)) {
+        setExternalPaymentStep("confirmation");
+        return;
+      }
+      
+      // For "other" method, close dialog and show toast
       toast({ 
         title: "Payment Submitted", 
         description: "Your payment has been logged and is pending verification." 
@@ -150,6 +160,7 @@ export default function ClientPayments() {
       setSelectedMethod(null);
       setPaymentAmount("");
       setPaymentNote("");
+      setExternalPaymentStep(null);
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -364,14 +375,25 @@ export default function ClientPayments() {
           )}
         </div>
 
-        <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <Dialog open={paymentDialogOpen} onOpenChange={(open) => {
+          setPaymentDialogOpen(open);
+          if (!open) {
+            setSelectedMethod(null);
+            setPaymentAmount("");
+            setPaymentNote("");
+            setUseCustomAmount(false);
+            setExternalPaymentStep(null);
+          }
+        }}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Make a Payment</DialogTitle>
               <DialogDescription>
                 {!selectedMethod 
                   ? "Select a payment method to continue"
-                  : "Complete your payment details"
+                  : externalPaymentStep === "confirmation"
+                    ? "Complete your payment using the details below"
+                    : "Complete your payment details"
                 }
               </DialogDescription>
             </DialogHeader>
@@ -382,7 +404,19 @@ export default function ClientPayments() {
                   <button
                     key={method.id}
                     disabled={!method.available}
-                    onClick={() => method.available && setSelectedMethod(method.id)}
+                    onClick={() => {
+                      if (!method.available) return;
+                      setSelectedMethod(method.id);
+                      // For external methods, start the 2-step flow and pre-fill amount
+                      if (["cashapp", "venmo", "bank"].includes(method.id)) {
+                        setExternalPaymentStep("details");
+                        // Pre-fill with outstanding balance
+                        const outstandingBalance = dashboardData?.amountDueCents || 0;
+                        if (outstandingBalance > 0) {
+                          setPaymentAmount((outstandingBalance / 100).toFixed(2));
+                        }
+                      }
+                    }}
                     className={`p-4 rounded-lg border-2 transition-all text-left ${
                       method.available 
                         ? `${method.bgColor} cursor-pointer` 
@@ -406,109 +440,42 @@ export default function ClientPayments() {
               </div>
             ) : (
               <div className="space-y-4 py-4">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={() => setSelectedMethod(null)}
-                  className="mb-2"
-                >
-                  <ArrowLeft className="h-4 w-4 mr-2" /> Change Method
-                </Button>
+                {/* Back button - only show on details step or for non-external methods */}
+                {(externalPaymentStep !== "confirmation") && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => {
+                      setSelectedMethod(null);
+                      setExternalPaymentStep(null);
+                    }}
+                    className="mb-2"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" /> Change Method
+                  </Button>
+                )}
 
-                <div className={`p-4 rounded-lg border ${selectedMethodData?.bgColor}`}>
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className={`h-10 w-10 ${selectedMethodData?.color} rounded-lg flex items-center justify-center text-white font-bold`}>
-                      {typeof selectedMethodData?.icon === "string" ? selectedMethodData.icon : selectedMethodData?.icon}
-                    </div>
-                    <h4 className="font-semibold text-gray-900">{selectedMethodData?.name}</h4>
-                  </div>
-
-                  {selectedMethod === "cashapp" && (
-                    <div className="space-y-2">
-                      <p className="text-sm text-gray-600">
-                        Send payment to: <span className="font-bold text-green-700">{selectedMethodData?.handle}</span>
-                      </p>
-                      {(selectedMethodData as any)?.link && (
-                        <a 
-                          href={(selectedMethodData as any).link} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-sm text-green-600 hover:underline"
-                        >
-                          <ExternalLink className="h-4 w-4" /> Open Cash App
-                        </a>
-                      )}
-                    </div>
-                  )}
-
-                  {selectedMethod === "venmo" && (
-                    <div className="space-y-2">
-                      <p className="text-sm text-gray-600">
-                        Send payment to: <span className="font-bold text-blue-700">{selectedMethodData?.handle}</span>
-                      </p>
-                      {(selectedMethodData as any)?.link && (
-                        <a 
-                          href={(selectedMethodData as any).link} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
-                        >
-                          <ExternalLink className="h-4 w-4" /> Open Venmo
-                        </a>
-                      )}
-                    </div>
-                  )}
-
-                  {selectedMethod === "bank" && (
-                    <div className="text-sm text-gray-600 whitespace-pre-wrap">
-                      {(selectedMethodData as any)?.instructions}
-                    </div>
-                  )}
-
-                  {selectedMethod === "other" && (
-                    <p className="text-sm text-gray-600">
-                      Record a payment made via check, cash, or other method.
-                    </p>
-                  )}
-
-                  {selectedMethod === "stripe" && (
-                    <div className="space-y-3">
-                      <p className="text-sm text-gray-600">
-                        Pay securely with your credit or debit card via Stripe.
-                      </p>
-                      <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
-                        <p className="text-sm font-medium text-purple-900">
-                          Amount Due: <span className="text-lg">{formatCents(dashboardData?.amountDueCents || 0)}</span>
-                        </p>
+                {/* 2-Step Flow for External Methods (Cash App, Venmo, Bank) */}
+                {["cashapp", "venmo", "bank"].includes(selectedMethod!) && externalPaymentStep === "details" && (
+                  <>
+                    {/* Method header */}
+                    <div className={`p-4 rounded-lg border ${selectedMethodData?.bgColor}`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`h-10 w-10 ${selectedMethodData?.color} rounded-lg flex items-center justify-center text-white font-bold`}>
+                          {typeof selectedMethodData?.icon === "string" ? selectedMethodData.icon : selectedMethodData?.icon}
+                        </div>
+                        <h4 className="font-semibold text-gray-900">{selectedMethodData?.name}</h4>
                       </div>
                     </div>
-                  )}
-                </div>
 
-                {selectedMethod === "stripe" ? (
-                  <div className="grid gap-4">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="customAmount" className="flex-1">Pay custom amount</Label>
-                      <Switch
-                        id="customAmount"
-                        checked={useCustomAmount}
-                        onCheckedChange={(checked) => {
-                          setUseCustomAmount(checked);
-                          if (!checked) {
-                            setPaymentAmount("");
-                          }
-                        }}
-                        data-testid="switch-custom-amount"
-                      />
-                    </div>
-
-                    {useCustomAmount && (
+                    {/* Payment Details Form */}
+                    <div className="grid gap-4">
                       <div>
-                        <Label htmlFor="stripeAmount">Custom Amount ($)</Label>
+                        <Label htmlFor="amount">Payment Amount ($)</Label>
                         <div className="relative">
                           <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
                           <Input
-                            id="stripeAmount"
+                            id="amount"
                             type="number"
                             step="0.01"
                             min="0.01"
@@ -516,85 +483,292 @@ export default function ClientPayments() {
                             className="pl-9"
                             value={paymentAmount}
                             onChange={(e) => setPaymentAmount(e.target.value)}
-                            data-testid="input-stripe-amount"
+                            data-testid="input-payment-amount"
                           />
                         </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Outstanding balance: {formatCents(dashboardData?.amountDueCents || 0)}
+                        </p>
                       </div>
-                    )}
 
-                    <div>
-                      <Label htmlFor="stripeNote">Note (optional)</Label>
-                      <Textarea
-                        id="stripeNote"
-                        placeholder="Add any details about this payment..."
-                        value={paymentNote}
-                        onChange={(e) => setPaymentNote(e.target.value)}
-                        rows={2}
-                        data-testid="input-stripe-note"
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    <div>
-                      <Label htmlFor="amount">Payment Amount ($)</Label>
-                      <div className="relative">
-                        <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                        <Input
-                          id="amount"
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          placeholder="0.00"
-                          className="pl-9"
-                          value={paymentAmount}
-                          onChange={(e) => setPaymentAmount(e.target.value)}
-                          data-testid="input-payment-amount"
+                      <div>
+                        <Label htmlFor="note">Note (optional)</Label>
+                        <Textarea
+                          id="note"
+                          placeholder="Add any details about this payment..."
+                          value={paymentNote}
+                          onChange={(e) => setPaymentNote(e.target.value)}
+                          data-testid="input-payment-note"
                         />
                       </div>
                     </div>
+                  </>
+                )}
 
-                    <div>
-                      <Label htmlFor="note">Note (optional)</Label>
-                      <Textarea
-                        id="note"
-                        placeholder="Add any details about this payment..."
-                        value={paymentNote}
-                        onChange={(e) => setPaymentNote(e.target.value)}
-                        data-testid="input-payment-note"
-                      />
+                {/* Confirmation Step for External Methods */}
+                {["cashapp", "venmo", "bank"].includes(selectedMethod!) && externalPaymentStep === "confirmation" && (
+                  <>
+                    {/* Success message */}
+                    <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <h4 className="font-semibold text-green-900">Payment Submitted</h4>
+                      </div>
+                      <p className="text-sm text-green-700">
+                        Your payment of <span className="font-bold">{formatCents(Math.round(parseFloat(paymentAmount || "0") * 100))}</span> has been recorded and is pending verification.
+                      </p>
                     </div>
-                  </div>
+
+                    {/* Payment instructions */}
+                    <div className={`p-4 rounded-lg border ${selectedMethodData?.bgColor}`}>
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className={`h-10 w-10 ${selectedMethodData?.color} rounded-lg flex items-center justify-center text-white font-bold`}>
+                          {typeof selectedMethodData?.icon === "string" ? selectedMethodData.icon : selectedMethodData?.icon}
+                        </div>
+                        <h4 className="font-semibold text-gray-900">Complete Your Payment</h4>
+                      </div>
+
+                      {selectedMethod === "cashapp" && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-gray-600">
+                            Send <span className="font-bold">{formatCents(Math.round(parseFloat(paymentAmount || "0") * 100))}</span> to: <span className="font-bold text-green-700">{selectedMethodData?.handle}</span>
+                          </p>
+                          {(selectedMethodData as any)?.link && (
+                            <a 
+                              href={(selectedMethodData as any).link} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-green-600 hover:underline font-medium"
+                            >
+                              <ExternalLink className="h-4 w-4" /> Open Cash App
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {selectedMethod === "venmo" && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-gray-600">
+                            Send <span className="font-bold">{formatCents(Math.round(parseFloat(paymentAmount || "0") * 100))}</span> to: <span className="font-bold text-blue-700">{selectedMethodData?.handle}</span>
+                          </p>
+                          {(selectedMethodData as any)?.link && (
+                            <a 
+                              href={(selectedMethodData as any).link} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-sm text-blue-600 hover:underline font-medium"
+                            >
+                              <ExternalLink className="h-4 w-4" /> Open Venmo
+                            </a>
+                          )}
+                        </div>
+                      )}
+
+                      {selectedMethod === "bank" && (
+                        <div className="space-y-2">
+                          <p className="text-sm text-gray-600 mb-2">
+                            Transfer <span className="font-bold">{formatCents(Math.round(parseFloat(paymentAmount || "0") * 100))}</span> using the bank details below:
+                          </p>
+                          <div className="text-sm text-gray-600 whitespace-pre-wrap bg-white/50 p-3 rounded border">
+                            {(selectedMethodData as any)?.instructions}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {/* Original flow for "other" method */}
+                {selectedMethod === "other" && (
+                  <>
+                    <div className={`p-4 rounded-lg border ${selectedMethodData?.bgColor}`}>
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className={`h-10 w-10 ${selectedMethodData?.color} rounded-lg flex items-center justify-center text-white font-bold`}>
+                          {typeof selectedMethodData?.icon === "string" ? selectedMethodData.icon : selectedMethodData?.icon}
+                        </div>
+                        <h4 className="font-semibold text-gray-900">{selectedMethodData?.name}</h4>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        Record a payment made via check, cash, or other method.
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4">
+                      <div>
+                        <Label htmlFor="amount">Payment Amount ($)</Label>
+                        <div className="relative">
+                          <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                          <Input
+                            id="amount"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            placeholder="0.00"
+                            className="pl-9"
+                            value={paymentAmount}
+                            onChange={(e) => setPaymentAmount(e.target.value)}
+                            data-testid="input-payment-amount"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="note">Note (optional)</Label>
+                        <Textarea
+                          id="note"
+                          placeholder="Add any details about this payment..."
+                          value={paymentNote}
+                          onChange={(e) => setPaymentNote(e.target.value)}
+                          data-testid="input-payment-note"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Stripe flow (unchanged) */}
+                {selectedMethod === "stripe" && (
+                  <>
+                    <div className={`p-4 rounded-lg border ${selectedMethodData?.bgColor}`}>
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className={`h-10 w-10 ${selectedMethodData?.color} rounded-lg flex items-center justify-center text-white font-bold`}>
+                          {typeof selectedMethodData?.icon === "string" ? selectedMethodData.icon : selectedMethodData?.icon}
+                        </div>
+                        <h4 className="font-semibold text-gray-900">{selectedMethodData?.name}</h4>
+                      </div>
+                      <div className="space-y-3">
+                        <p className="text-sm text-gray-600">
+                          Pay securely with your credit or debit card via Stripe.
+                        </p>
+                        <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+                          <p className="text-sm font-medium text-purple-900">
+                            Amount Due: <span className="text-lg">{formatCents(dashboardData?.amountDueCents || 0)}</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="customAmount" className="flex-1">Pay custom amount</Label>
+                        <Switch
+                          id="customAmount"
+                          checked={useCustomAmount}
+                          onCheckedChange={(checked) => {
+                            setUseCustomAmount(checked);
+                            if (!checked) {
+                              setPaymentAmount("");
+                            }
+                          }}
+                          data-testid="switch-custom-amount"
+                        />
+                      </div>
+
+                      {useCustomAmount && (
+                        <div>
+                          <Label htmlFor="stripeAmount">Custom Amount ($)</Label>
+                          <div className="relative">
+                            <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+                            <Input
+                              id="stripeAmount"
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              placeholder="0.00"
+                              className="pl-9"
+                              value={paymentAmount}
+                              onChange={(e) => setPaymentAmount(e.target.value)}
+                              data-testid="input-stripe-amount"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div>
+                        <Label htmlFor="stripeNote">Note (optional)</Label>
+                        <Textarea
+                          id="stripeNote"
+                          placeholder="Add any details about this payment..."
+                          value={paymentNote}
+                          onChange={(e) => setPaymentNote(e.target.value)}
+                          rows={2}
+                          data-testid="input-stripe-note"
+                        />
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             )}
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => {
-                setPaymentDialogOpen(false);
-                setSelectedMethod(null);
-                setPaymentAmount("");
-                setPaymentNote("");
-                setUseCustomAmount(false);
-              }}>
-                Cancel
-              </Button>
-              {selectedMethod && selectedMethod !== "stripe" && (
+              {/* Cancel/Close button */}
+              {externalPaymentStep === "confirmation" ? (
                 <Button 
-                  onClick={handleSubmitPayment}
-                  disabled={submitPaymentMutation.isPending || !paymentAmount}
-                  className="btn-primary-orange"
-                  data-testid="button-submit-payment"
+                  variant="outline"
+                  onClick={() => {
+                    setPaymentDialogOpen(false);
+                    setSelectedMethod(null);
+                    setPaymentAmount("");
+                    setPaymentNote("");
+                    setUseCustomAmount(false);
+                    setExternalPaymentStep(null);
+                  }}
+                  className="w-full"
                 >
-                  {submitPaymentMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                  )}
-                  Confirm Payment
+                  Close
                 </Button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={() => {
+                    setPaymentDialogOpen(false);
+                    setSelectedMethod(null);
+                    setPaymentAmount("");
+                    setPaymentNote("");
+                    setUseCustomAmount(false);
+                    setExternalPaymentStep(null);
+                  }}>
+                    Cancel
+                  </Button>
+                  
+                  {/* Confirm Payment for external methods (details step) */}
+                  {selectedMethod && ["cashapp", "venmo", "bank"].includes(selectedMethod) && externalPaymentStep === "details" && (
+                    <Button 
+                      onClick={handleSubmitPayment}
+                      disabled={submitPaymentMutation.isPending || !paymentAmount}
+                      className="btn-primary-orange"
+                      data-testid="button-submit-payment"
+                    >
+                      {submitPaymentMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Confirm Payment
+                    </Button>
+                  )}
+                  
+                  {/* Confirm Payment for "other" method (original flow) */}
+                  {selectedMethod === "other" && (
+                    <Button 
+                      onClick={handleSubmitPayment}
+                      disabled={submitPaymentMutation.isPending || !paymentAmount}
+                      className="btn-primary-orange"
+                      data-testid="button-submit-payment"
+                    >
+                      {submitPaymentMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Confirm Payment
+                    </Button>
+                  )}
+                </>
               )}
-              {selectedMethod === "stripe" && (
+              
+              {/* Stripe checkout button */}
+              {selectedMethod === "stripe" && externalPaymentStep !== "confirmation" && (
                 <Button 
                   onClick={() => {
                     const amountCents = useCustomAmount 

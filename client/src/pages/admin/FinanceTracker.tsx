@@ -38,7 +38,10 @@ import {
 import { 
   getRecurrenceMultiplier as sharedGetRecurrenceMultiplier, 
   getMultiplierLabel as sharedGetMultiplierLabel,
-  isOneTimeInRange
+  isOneTimeInRange,
+  isStaticRecurrence,
+  getDefaultRecurrenceForCategory,
+  STATIC_DEFAULT_CATEGORIES
 } from "@shared/recurrence";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -62,6 +65,7 @@ const PERIOD_OPTIONS: { value: TimePeriod; label: string }[] = [
 
 const RECURRENCE_OPTIONS: { value: RecurrenceType | "one_time"; label: string }[] = [
   { value: "one_time", label: "One-time" },
+  { value: "static", label: "Static (snapshot)" },
   { value: "weekly", label: "Weekly" },
   { value: "biweekly", label: "Bi-Weekly" },
   { value: "monthly", label: "Monthly" },
@@ -249,9 +253,15 @@ export default function FinanceTracker() {
   const currentEntries = entries.data || [];
   
   // Calculate manual total with proper recurrence handling
+  // Static entries always count at full value (never scaled)
   // One-time entries only count if within the selected period's date range
   const manualTotal = useMemo(() => {
     return currentEntries.reduce((sum, entry) => {
+      // Static entries always count at full value, regardless of timeframe
+      if (isStaticRecurrence(entry.recurrence)) {
+        return sum + entry.amountCents;
+      }
+      
       const isOneTime = !entry.recurrence || entry.recurrence === "one_time";
       
       if (isOneTime) {
@@ -359,7 +369,16 @@ export default function FinanceTracker() {
               Generate Summary Email
             </Button>
             
-            <Button className="btn-primary-orange" onClick={() => setDialogOpen(true)} data-testid="button-add-entry">
+            <Button 
+              className="btn-primary-orange" 
+              onClick={() => {
+                // Set default recurrence based on category (static for debt/holding/other)
+                const defaultRecurrence = getDefaultRecurrenceForCategory(activeTab);
+                setFormData(prev => ({ ...prev, recurrence: defaultRecurrence }));
+                setDialogOpen(true);
+              }} 
+              data-testid="button-add-entry"
+            >
               <Plus className="h-4 w-4 mr-2" /> Add Entry
             </Button>
           </div>
@@ -452,7 +471,12 @@ export default function FinanceTracker() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {formData.recurrence && formData.recurrence !== "one_time" && (
+                    {formData.recurrence === "static" && (
+                      <p className="text-xs text-blue-600">
+                        Snapshot value - not scaled by timeframe
+                      </p>
+                    )}
+                    {formData.recurrence && formData.recurrence !== "one_time" && formData.recurrence !== "static" && (
                       <p className="text-xs text-purple-600">
                         {getMultiplierLabel(formData.recurrence, selectedPeriod) || `Recurs ${formData.recurrence}`}
                       </p>
@@ -1226,7 +1250,12 @@ export default function FinanceTracker() {
                     ))}
                   </SelectContent>
                 </Select>
-                {editingEntry.recurrence && (
+                {editingEntry.recurrence === "static" && (
+                  <p className="text-xs text-blue-600">
+                    Snapshot value - not scaled by timeframe
+                  </p>
+                )}
+                {editingEntry.recurrence && editingEntry.recurrence !== "static" && (
                   <p className="text-xs text-purple-600">
                     {getMultiplierLabel(editingEntry.recurrence, selectedPeriod) || `Recurs ${editingEntry.recurrence}`}
                   </p>
