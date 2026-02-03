@@ -22,26 +22,27 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?: () => void }) {
+function PlaidLinkButton({ onSuccess, onClose }: { onSuccess: () => void; onClose?: () => void }) {
   const createLinkToken = useCreatePlaidLinkToken();
   const exchangeToken = useExchangePlaidToken();
   const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [isPlaidLaunching, setIsPlaidLaunching] = useState(false);
   const { toast } = useToast();
 
   const handleGetLinkToken = async () => {
     try {
-      // Close any parent modal before opening Plaid Link to avoid focus trap issues
-      if (onOpen) {
-        onOpen();
-      }
+      setIsPlaidLaunching(true);
       const result = await createLinkToken.mutateAsync();
+      console.log("token fetched", result.link_token);
       setLinkToken(result.link_token);
     } catch (error: any) {
+      setIsPlaidLaunching(false);
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
   const onPlaidSuccess = useCallback(async (publicToken: string, metadata: any) => {
+    console.log("onSuccess");
     try {
       await exchangeToken.mutateAsync({
         public_token: publicToken,
@@ -50,15 +51,21 @@ function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?
       });
       toast({ title: "Success", description: "Account linked successfully" });
       setLinkToken(null);
+      setIsPlaidLaunching(false);
       onSuccess();
+      if (onClose) onClose();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsPlaidLaunching(false);
     }
-  }, [exchangeToken, toast, onSuccess]);
+  }, [exchangeToken, toast, onSuccess, onClose]);
 
   const onPlaidExit = useCallback(() => {
+    console.log("onExit");
     setLinkToken(null);
-  }, []);
+    setIsPlaidLaunching(false);
+    if (onClose) onClose();
+  }, [onClose]);
 
   const { open, ready } = usePlaidLink({
     token: linkToken,
@@ -67,7 +74,9 @@ function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?
   });
 
   useEffect(() => {
+    console.log("plaid ready", ready, "token", !!linkToken);
     if (linkToken && ready) {
+      console.log("calling open()");
       open();
     }
   }, [linkToken, ready, open]);
@@ -77,10 +86,10 @@ function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?
       variant="outline" 
       className="h-24 flex flex-col gap-2 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all" 
       onClick={handleGetLinkToken}
-      disabled={createLinkToken.isPending || exchangeToken.isPending}
+      disabled={createLinkToken.isPending || exchangeToken.isPending || isPlaidLaunching}
       data-testid="button-link-plaid"
     >
-      {(createLinkToken.isPending || exchangeToken.isPending) ? (
+      {(createLinkToken.isPending || exchangeToken.isPending || isPlaidLaunching) ? (
         <Loader2 className="h-6 w-6 animate-spin" />
       ) : (
         <>
@@ -1038,7 +1047,7 @@ export default function AdminSettings() {
                          </DialogDescription>
                       </DialogHeader>
                       <div className="grid grid-cols-2 gap-4 py-4">
-                         <PlaidLinkButton onSuccess={handleLinkSuccess} onOpen={() => setModalOpen(false)} />
+                         <PlaidLinkButton onSuccess={handleLinkSuccess} onClose={() => setModalOpen(false)} />
                          <Button variant="outline" className="h-24 flex flex-col gap-2 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all opacity-50 cursor-not-allowed" disabled>
                             <div className="h-10 w-10 bg-[#635BFF] rounded-lg flex items-center justify-center text-white font-bold">S</div>
                             <span>Stripe (Coming)</span>
