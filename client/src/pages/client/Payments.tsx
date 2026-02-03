@@ -145,10 +145,9 @@ export default function ClientPayments() {
       queryClient.invalidateQueries({ queryKey: ["client-payments"] });
       queryClient.invalidateQueries({ queryKey: ["client-dashboard"] });
       
-      // For external methods (cashapp/venmo/bank), don't close the dialog
-      // The button handler will transition to confirmation step
+      // For external methods (cashapp/venmo/bank), transition to confirmation step
       if (selectedMethod && ["cashapp", "venmo", "bank"].includes(selectedMethod)) {
-        // Don't show toast here - confirmation step will show success message
+        setExternalPaymentStep("confirmation");
         return;
       }
       
@@ -376,7 +375,16 @@ export default function ClientPayments() {
           )}
         </div>
 
-        <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <Dialog open={paymentDialogOpen} onOpenChange={(open) => {
+          setPaymentDialogOpen(open);
+          if (!open) {
+            setSelectedMethod(null);
+            setPaymentAmount("");
+            setPaymentNote("");
+            setUseCustomAmount(false);
+            setExternalPaymentStep(null);
+          }
+        }}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Make a Payment</DialogTitle>
@@ -726,10 +734,7 @@ export default function ClientPayments() {
                   {/* Confirm Payment for external methods (details step) */}
                   {selectedMethod && ["cashapp", "venmo", "bank"].includes(selectedMethod) && externalPaymentStep === "details" && (
                     <Button 
-                      onClick={async () => {
-                        await handleSubmitPayment();
-                        setExternalPaymentStep("confirmation");
-                      }}
+                      onClick={handleSubmitPayment}
                       disabled={submitPaymentMutation.isPending || !paymentAmount}
                       className="btn-primary-orange"
                       data-testid="button-submit-payment"
