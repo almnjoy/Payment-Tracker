@@ -3814,11 +3814,22 @@ export async function registerRoutes(
 
         res.json({ link_token: response.data.link_token });
       } catch (error: any) {
-        console.error(
-          "Error creating link token:",
-          error?.response?.data || error,
-        );
-        res.status(500).json({ message: "Failed to create link token" });
+        const plaidError = error?.response?.data || error?.response?.body || error;
+        console.error("Error creating link token:", plaidError);
+        
+        const errorResponse: Record<string, any> = {
+          message: "Failed to create link token",
+        };
+        
+        if (plaidError) {
+          if (plaidError.error_type) errorResponse.error_type = plaidError.error_type;
+          if (plaidError.error_code) errorResponse.error_code = plaidError.error_code;
+          if (plaidError.error_message) errorResponse.error_message = plaidError.error_message;
+          if (plaidError.display_message) errorResponse.display_message = plaidError.display_message;
+          if (plaidError.request_id) errorResponse.request_id = plaidError.request_id;
+        }
+        
+        res.status(500).json(errorResponse);
       }
     },
   );
