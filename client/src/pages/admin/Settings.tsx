@@ -22,21 +22,26 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-function PlaidLinkButton({ onSuccess, onClose }: { onSuccess: () => void; onClose?: () => void }) {
+function PlaidLinkButton({ onSuccess, onClose, onPlaidLaunchingChange }: { onSuccess: () => void; onClose?: () => void; onPlaidLaunchingChange?: (launching: boolean) => void }) {
   const createLinkToken = useCreatePlaidLinkToken();
   const exchangeToken = useExchangePlaidToken();
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [isPlaidLaunching, setIsPlaidLaunching] = useState(false);
   const { toast } = useToast();
+  
+  const updatePlaidLaunching = (launching: boolean) => {
+    setIsPlaidLaunching(launching);
+    if (onPlaidLaunchingChange) onPlaidLaunchingChange(launching);
+  };
 
   const handleGetLinkToken = async () => {
     try {
-      setIsPlaidLaunching(true);
+      updatePlaidLaunching(true);
       const result = await createLinkToken.mutateAsync();
       console.log("token fetched", result.link_token);
       setLinkToken(result.link_token);
     } catch (error: any) {
-      setIsPlaidLaunching(false);
+      updatePlaidLaunching(false);
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
@@ -51,21 +56,21 @@ function PlaidLinkButton({ onSuccess, onClose }: { onSuccess: () => void; onClos
       });
       toast({ title: "Success", description: "Account linked successfully" });
       setLinkToken(null);
-      setIsPlaidLaunching(false);
+      updatePlaidLaunching(false);
       onSuccess();
       if (onClose) onClose();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
-      setIsPlaidLaunching(false);
+      updatePlaidLaunching(false);
     }
-  }, [exchangeToken, toast, onSuccess, onClose]);
+  }, [exchangeToken, toast, onSuccess, onClose, onPlaidLaunchingChange]);
 
   const onPlaidExit = useCallback(() => {
     console.log("onExit");
     setLinkToken(null);
-    setIsPlaidLaunching(false);
+    updatePlaidLaunching(false);
     if (onClose) onClose();
-  }, [onClose]);
+  }, [onClose, onPlaidLaunchingChange]);
 
   const { open, ready } = usePlaidLink({
     token: linkToken,
@@ -976,6 +981,7 @@ export default function AdminSettings() {
   const deleteItem = useDeletePlaidItem();
   const { toast } = useToast();
   const [modalOpen, setModalOpen] = useState(false);
+  const [isPlaidLaunching, setIsPlaidLaunching] = useState(false);
 
   const handleSync = async () => {
     try {
@@ -1033,7 +1039,7 @@ export default function AdminSettings() {
                   )}
                   Sync Now
                 </Button>
-                <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+                <Dialog open={modalOpen} onOpenChange={setModalOpen} modal={!isPlaidLaunching}>
                    <DialogTrigger asChild>
                       <Button className="btn-primary-orange shadow-sm" data-testid="button-add-account">
                          <Plus className="mr-2 h-4 w-4" /> Add Account
@@ -1047,7 +1053,7 @@ export default function AdminSettings() {
                          </DialogDescription>
                       </DialogHeader>
                       <div className="grid grid-cols-2 gap-4 py-4">
-                         <PlaidLinkButton onSuccess={handleLinkSuccess} onClose={() => setModalOpen(false)} />
+                         <PlaidLinkButton onSuccess={handleLinkSuccess} onClose={() => setModalOpen(false)} onPlaidLaunchingChange={setIsPlaidLaunching} />
                          <Button variant="outline" className="h-24 flex flex-col gap-2 hover:border-primary hover:bg-primary/5 hover:text-primary transition-all opacity-50 cursor-not-allowed" disabled>
                             <div className="h-10 w-10 bg-[#635BFF] rounded-lg flex items-center justify-center text-white font-bold">S</div>
                             <span>Stripe (Coming)</span>
