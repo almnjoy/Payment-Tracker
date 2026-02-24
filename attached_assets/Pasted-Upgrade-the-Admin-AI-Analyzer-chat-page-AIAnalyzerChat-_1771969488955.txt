@@ -1,0 +1,47 @@
+Upgrade the Admin AI Analyzer chat page (AIAnalyzerChat.tsx) into a dashboard-like AI assistant with a real table UI and export options.
+
+Current:
+- AIAnalyzerChat.tsx posts to POST /api/admin/ai-finance/analyze with { query, useLLM: true }
+- Response includes: summary, recurringPayments[], totalMonthlyEstimate, analyzedTransactions, dateRange
+- UI currently renders assistant output as plain text in a <pre>
+
+Goals:
+1) Keep the chat UX (user bubble right, assistant bubble left).
+2) For assistant responses, render a rich “Results Card” instead of only text:
+   - Summary section: show response.summary
+   - Stats row: 
+     - Est Monthly Total (format cents to $)
+     - Recurring Payments count
+     - Analyzed Transactions
+     - Date range
+   - Recurring Payments Table (shadcn Table):
+     Columns: Merchant, Frequency (Badge), Avg Amount, Monthly Est, Count, Last Date, Confidence (Badge)
+     - Merchant cell must handle long names:
+       - truncate + tooltip OR wrap safely without overflowing
+     - On mobile, allow horizontal scroll (overflow-x-auto)
+3) Add Export options for the recurring payments result:
+   - Button “Export CSV”
+   - Button “Copy CSV” (optional but nice)
+   - CSV should include the same columns shown in the table.
+   - Use client-side export (Blob + download) so no backend changes needed.
+   - Filename example: recurring-payments-YYYY-MM-DD.csv
+4) Add quick “suggested prompts” buttons above the input when chat is empty (or in a small row):
+   - “What are my top recurring payments?”
+   - “Which recurring charges look non-essential?”
+   - “What should I cancel to save money?”
+   - “Any suspicious recurring charges?”
+   Clicking a suggestion should populate input and optionally auto-send.
+5) Keep fallback behavior:
+   - If response has no recurringPayments, show an empty-state message.
+   - If rendering fails, fall back to the old plain text output.
+
+Important constraints:
+- Do NOT change the API endpoint or request body.
+- Do NOT break existing Layout or admin auth.
+- Minimize changes outside AIAnalyzerChat.tsx.
+- Match existing project styling (shadcn components already used elsewhere).
+
+Deliverables:
+- Provide the updated AIAnalyzerChat.tsx only.
+- Include a short note on how to manually verify:
+  - table renders, long names behave, export downloads valid CSV, works on mobile widths.
