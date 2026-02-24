@@ -16,6 +16,7 @@ import {
   TrendingUp,
   PieChart,
   Brain,
+  RotateCcw,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,7 @@ export function Layout({ children, role, clientName }: LayoutProps) {
         { icon: Wallet, label: "Account Summaries", href: "/admin/accounts" },
         { icon: TrendingUp, label: "Finance Tracker", href: "/admin/finance" },
         { icon: PieChart, label: "Spending Habits", href: "/admin/spending" },
+        { icon: RotateCcw, label: "Recurring?", href: "/admin/recurring" },
         { icon: Brain, label: "AI Analyzer", href: "/admin/ai-analyzer" },
       ],
     },

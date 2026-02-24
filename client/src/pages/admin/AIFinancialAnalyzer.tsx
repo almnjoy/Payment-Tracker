@@ -102,8 +102,8 @@ export default function AIFinancialAnalyzer() {
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-gray-900 flex items-center gap-2" data-testid="text-page-title">
-              <Brain className="h-8 w-8 text-primary" />
-              AI Financial Analyzer
+              <RotateCcw className="h-8 w-8 text-primary" />
+              Recurring?
             </h2>
             <p className="text-gray-500">Analyze your transactions to detect recurring payments and spending patterns.</p>
           </div>
