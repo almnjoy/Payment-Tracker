@@ -105,7 +105,9 @@ const sensitiveRateLimiter = rateLimit({
 const webhookTestRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 5, // 5 requests per window
-  message: { message: "Too many webhook tests. Please wait before testing again." },
+  message: {
+    message: "Too many webhook tests. Please wait before testing again.",
+  },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -128,12 +130,24 @@ function sanitizeForLog(obj: any): any {
   if (!obj || typeof obj !== "object") return obj;
   const sanitized = { ...obj };
   const sensitiveKeys = [
-    "password", "token", "secret", "authorization", "apiKey", "api_key",
-    "stripeSecretKey", "plaidSecret", "webhookSecret", "automationToken",
-    "signupEmailToken", "paymentReceivedToken", "monthlySummaryToken"
+    "password",
+    "token",
+    "secret",
+    "authorization",
+    "apiKey",
+    "api_key",
+    "stripeSecretKey",
+    "plaidSecret",
+    "webhookSecret",
+    "automationToken",
+    "signupEmailToken",
+    "paymentReceivedToken",
+    "monthlySummaryToken",
   ];
   for (const key of Object.keys(sanitized)) {
-    if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk.toLowerCase()))) {
+    if (
+      sensitiveKeys.some((sk) => key.toLowerCase().includes(sk.toLowerCase()))
+    ) {
       sanitized[key] = "[REDACTED]";
     }
   }
@@ -209,47 +223,65 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
 
 // Utility to send Payment Received webhook with idempotency and toggle checks
 async function sendPaymentReceivedWebhook(
-  payment: { paymentId: string; clientId: string; amountCents: number; method: string; status: string; createdAt: Date | null; webhookSentAt?: Date | null },
+  payment: {
+    paymentId: string;
+    clientId: string;
+    amountCents: number;
+    method: string;
+    status: string;
+    createdAt: Date | null;
+    webhookSentAt?: Date | null;
+  },
   baseUrl: string,
-  executionMode: "test" | "live" = "live"
+  executionMode: "test" | "live" = "live",
 ): Promise<{ sent: boolean; reason?: string }> {
   try {
     // 1. Idempotency check - don't send if already sent
     if (payment.webhookSentAt) {
-      console.log(`[PaymentWebhook] Skipping - already sent at ${payment.webhookSentAt} for payment ${payment.paymentId}`);
+      console.log(
+        `[PaymentWebhook] Skipping - already sent at ${payment.webhookSentAt} for payment ${payment.paymentId}`,
+      );
       return { sent: false, reason: "already_sent" };
     }
 
     // 2. Get automation settings
     const settings = await storage.getAutomationSettings();
-    
+
     // 3. Check global toggle
     if (!settings?.paymentReceivedAlertsGlobalEnabled) {
-      console.log(`[PaymentWebhook] Skipping - global Payment Received Alerts toggle is OFF`);
+      console.log(
+        `[PaymentWebhook] Skipping - global Payment Received Alerts toggle is OFF`,
+      );
       return { sent: false, reason: "global_toggle_off" };
     }
-    
+
     // 4. Check if webhook is configured and enabled
     if (!settings.paymentReceivedWebhookUrl) {
       console.log(`[PaymentWebhook] Skipping - webhook URL not configured`);
       return { sent: false, reason: "url_not_configured" };
     }
-    
+
     if (!settings.paymentReceivedEnabled) {
-      console.log(`[PaymentWebhook] Skipping - webhook is disabled in settings`);
+      console.log(
+        `[PaymentWebhook] Skipping - webhook is disabled in settings`,
+      );
       return { sent: false, reason: "webhook_disabled" };
     }
 
     // 5. Get client info and check client notification toggle
     const client = await storage.getClient(payment.clientId);
     if (!client) {
-      console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} not found`);
+      console.log(
+        `[PaymentWebhook] Skipping - client ${payment.clientId} not found`,
+      );
       return { sent: false, reason: "client_not_found" };
     }
 
     // 6. Check client notification toggle (on client record, not user profile)
     if (!client.notificationsEnabled) {
-      console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} has notifications disabled`);
+      console.log(
+        `[PaymentWebhook] Skipping - client ${payment.clientId} has notifications disabled`,
+      );
       return { sent: false, reason: "client_notifications_off" };
     }
 
@@ -271,12 +303,16 @@ async function sendPaymentReceivedWebhook(
     };
 
     // 8. Build headers
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     if (settings.paymentReceivedToken) {
       headers["Authorization"] = `Bearer ${settings.paymentReceivedToken}`;
     }
 
-    console.log(`[PaymentWebhook] Sending to: ${settings.paymentReceivedWebhookUrl}`);
+    console.log(
+      `[PaymentWebhook] Sending to: ${settings.paymentReceivedWebhookUrl}`,
+    );
     console.log(`[PaymentWebhook] Payload:`, JSON.stringify(payload, null, 2));
 
     // 9. Send webhook
@@ -290,16 +326,21 @@ async function sendPaymentReceivedWebhook(
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "No response body");
-      console.error(`[PaymentWebhook] Failed: ${response.status} - ${errorText.substring(0, 200)}`);
+      console.error(
+        `[PaymentWebhook] Failed: ${response.status} - ${errorText.substring(0, 200)}`,
+      );
       return { sent: false, reason: `webhook_failed_${response.status}` };
     }
 
     // 10. Mark as sent in database
-    await db.update(payments)
+    await db
+      .update(payments)
       .set({ webhookSentAt: new Date() })
       .where(eq(payments.paymentId, payment.paymentId));
 
-    console.log(`[PaymentWebhook] Successfully sent for payment ${payment.paymentId}`);
+    console.log(
+      `[PaymentWebhook] Successfully sent for payment ${payment.paymentId}`,
+    );
     return { sent: true };
   } catch (error: any) {
     console.error(`[PaymentWebhook] Error:`, error.message);
@@ -315,25 +356,27 @@ export async function registerRoutes(
   // CORS CONFIGURATION
   // ============================================
   const allowedOrigins = getAllowedOrigins();
-  app.use(cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, etc)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else if (process.env.NODE_ENV !== "production") {
-        // In development, allow all origins
-        callback(null, true);
-      } else {
-        console.warn(`[CORS] Blocked request from origin: ${origin}`);
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  }));
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, curl, etc)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else if (process.env.NODE_ENV !== "production") {
+          // In development, allow all origins
+          callback(null, true);
+        } else {
+          console.warn(`[CORS] Blocked request from origin: ${origin}`);
+          callback(new Error("Not allowed by CORS"));
+        }
+      },
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    }),
+  );
 
   // ============================================
   // AUTH + PROFILE
@@ -466,42 +509,55 @@ export async function registerRoutes(
 
   // Verify Client ID with email (no auth required - validates email match)
   // Rate limited to prevent enumeration attacks
-  app.post("/api/client-signup/verify", authRateLimiter, async (req: Request, res: Response) => {
-    try {
-      const { clientId, email } = req.body;
+  app.post(
+    "/api/client-signup/verify",
+    authRateLimiter,
+    async (req: Request, res: Response) => {
+      try {
+        const { clientId, email } = req.body;
 
-      if (!clientId) {
-        return res.status(400).json({ valid: false, reason: "Client ID is required" });
+        if (!clientId) {
+          return res
+            .status(400)
+            .json({ valid: false, reason: "Client ID is required" });
+        }
+
+        // Normalize clientId format (CL-XXXXXX or CL XXXXXX or just XXXXXX)
+        let normalizedId = clientId.toUpperCase().replace(/\s+/g, "-");
+        if (!normalizedId.startsWith("CL-")) {
+          normalizedId = "CL-" + normalizedId.replace(/^CL-?/, "");
+        }
+
+        const client = await storage.getClient(normalizedId);
+
+        if (!client) {
+          return res.json({ valid: false, reason: "Invalid Client ID" });
+        }
+
+        // Check if email matches (if provided)
+        if (
+          email &&
+          client.email &&
+          client.email.toLowerCase() !== email.toLowerCase()
+        ) {
+          return res.json({
+            valid: false,
+            reason: "Email does not match the client record",
+          });
+        }
+
+        res.json({
+          valid: true,
+          clientId: client.clientId,
+          clientDisplayName: client.displayName,
+          requiresEmail: !email, // If no email provided, client needs to enter their email
+        });
+      } catch (error) {
+        console.error("Error verifying client ID:", error);
+        res.status(500).json({ valid: false, reason: "Server error" });
       }
-
-      // Normalize clientId format (CL-XXXXXX or CL XXXXXX or just XXXXXX)
-      let normalizedId = clientId.toUpperCase().replace(/\s+/g, '-');
-      if (!normalizedId.startsWith('CL-')) {
-        normalizedId = 'CL-' + normalizedId.replace(/^CL-?/, '');
-      }
-
-      const client = await storage.getClient(normalizedId);
-
-      if (!client) {
-        return res.json({ valid: false, reason: "Invalid Client ID" });
-      }
-
-      // Check if email matches (if provided)
-      if (email && client.email && client.email.toLowerCase() !== email.toLowerCase()) {
-        return res.json({ valid: false, reason: "Email does not match the client record" });
-      }
-
-      res.json({
-        valid: true,
-        clientId: client.clientId,
-        clientDisplayName: client.displayName,
-        requiresEmail: !email, // If no email provided, client needs to enter their email
-      });
-    } catch (error) {
-      console.error("Error verifying client ID:", error);
-      res.status(500).json({ valid: false, reason: "Server error" });
-    }
-  });
+    },
+  );
 
   // Claim Client ID (requires auth, validates email match)
   // Rate limited to prevent brute force attacks
@@ -517,27 +573,36 @@ export async function registerRoutes(
         const { clientId } = req.body;
 
         if (!userId || !clientId) {
-          return res.status(400).json({ success: false, message: "Missing required fields" });
+          return res
+            .status(400)
+            .json({ success: false, message: "Missing required fields" });
         }
 
         // Normalize clientId format
-        let normalizedId = clientId.toUpperCase().replace(/\s+/g, '-');
-        if (!normalizedId.startsWith('CL-')) {
-          normalizedId = 'CL-' + normalizedId.replace(/^CL-?/, '');
+        let normalizedId = clientId.toUpperCase().replace(/\s+/g, "-");
+        if (!normalizedId.startsWith("CL-")) {
+          normalizedId = "CL-" + normalizedId.replace(/^CL-?/, "");
         }
 
         // Get the client record
         const client = await storage.getClient(normalizedId);
 
         if (!client) {
-          return res.status(400).json({ success: false, message: "Invalid Client ID" });
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid Client ID" });
         }
 
         // Validate email matches
-        if (!userEmail || !client.email || client.email.toLowerCase() !== userEmail.toLowerCase()) {
+        if (
+          !userEmail ||
+          !client.email ||
+          client.email.toLowerCase() !== userEmail.toLowerCase()
+        ) {
           return res.status(400).json({
             success: false,
-            message: "Your email does not match the client record. Please sign in with the correct email.",
+            message:
+              "Your email does not match the client record. Please sign in with the correct email.",
           });
         }
 
@@ -547,7 +612,10 @@ export async function registerRoutes(
           .from(usersProfile)
           .where(eq(usersProfile.clientId, normalizedId));
 
-        if (existingProfiles.length > 0 && existingProfiles[0].userId !== userId) {
+        if (
+          existingProfiles.length > 0 &&
+          existingProfiles[0].userId !== userId
+        ) {
           return res.status(400).json({
             success: false,
             message: "This client account is already linked to another user.",
@@ -609,7 +677,7 @@ export async function registerRoutes(
 
             // Get billing items for this client
             const clientBills = allBillingItems.filter(
-              item => item.clientId === client.clientId
+              (item) => item.clientId === client.clientId,
             );
 
             // Calculate total amount due based on billing items and frequency
@@ -617,13 +685,21 @@ export async function registerRoutes(
             let totalBillingDue = 0;
             for (const bill of clientBills) {
               // Parse dueDate as local date (YYYY-MM-DD string from DB)
-              const dueParts = bill.dueDate.split('-').map(Number);
-              const dueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
-              const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-              
+              const dueParts = bill.dueDate.split("-").map(Number);
+              const dueDate = new Date(
+                dueParts[0],
+                dueParts[1] - 1,
+                dueParts[2],
+              );
+              const today = new Date(
+                now.getFullYear(),
+                now.getMonth(),
+                now.getDate(),
+              );
+
               // Skip if first due date is in the future (bill not yet due)
               if (dueDate > today) continue;
-              
+
               if (bill.frequency === "one_time") {
                 // One-time bill: just the amount if due date has passed
                 totalBillingDue += bill.amountCents;
@@ -631,11 +707,11 @@ export async function registerRoutes(
                 // Recurring: count periods where due date has passed
                 let periods = 0;
                 let currentDue = new Date(dueDate);
-                
+
                 // Count each period where the due date has been reached
                 while (currentDue <= today) {
                   periods++;
-                  
+
                   // Advance to next period
                   switch (bill.frequency) {
                     case "weekly":
@@ -648,10 +724,19 @@ export async function registerRoutes(
                       // Move to next month, same day (clamped to month end)
                       const targetDay = dueDate.getDate();
                       const nextMonth = currentDue.getMonth() + 1;
-                      const year = currentDue.getFullYear() + Math.floor(nextMonth / 12);
+                      const year =
+                        currentDue.getFullYear() + Math.floor(nextMonth / 12);
                       const month = nextMonth % 12;
-                      const daysInMonth = new Date(year, month + 1, 0).getDate();
-                      currentDue = new Date(year, month, Math.min(targetDay, daysInMonth));
+                      const daysInMonth = new Date(
+                        year,
+                        month + 1,
+                        0,
+                      ).getDate();
+                      currentDue = new Date(
+                        year,
+                        month,
+                        Math.min(targetDay, daysInMonth),
+                      );
                       break;
                     }
                     case "yearly": {
@@ -659,8 +744,16 @@ export async function registerRoutes(
                       const targetMonth = dueDate.getMonth();
                       const targetDay = dueDate.getDate();
                       const nextYear = currentDue.getFullYear() + 1;
-                      const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
-                      currentDue = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                      const daysInMonth = new Date(
+                        nextYear,
+                        targetMonth + 1,
+                        0,
+                      ).getDate();
+                      currentDue = new Date(
+                        nextYear,
+                        targetMonth,
+                        Math.min(targetDay, daysInMonth),
+                      );
                       break;
                     }
                   }
@@ -671,23 +764,30 @@ export async function registerRoutes(
 
             // Calculate confirmed payments total
             const confirmedPaymentsTotal = payments
-              .filter(p => p.status === "confirmed")
+              .filter((p) => p.status === "confirmed")
               .reduce((sum, p) => sum + p.amountCents, 0);
 
             // Amount owed = billing due - payments made (if negative, client is ahead)
             const currentBalance = confirmedPaymentsTotal - totalBillingDue;
-            const amountOwed = currentBalance < 0 ? Math.abs(currentBalance) : 0;
+            const amountOwed =
+              currentBalance < 0 ? Math.abs(currentBalance) : 0;
 
             // Auto-update status to "behind" if client owes money and is currently "active"
             let updatedStatus = client.status;
             if (currentBalance < 0 && client.status === "active") {
               updatedStatus = "behind";
               // Update in database
-              await db.update(clientsTable).set({ status: "behind" }).where(eq(clientsTable.clientId, client.clientId));
+              await db
+                .update(clientsTable)
+                .set({ status: "behind" })
+                .where(eq(clientsTable.clientId, client.clientId));
             } else if (currentBalance >= 0 && client.status === "behind") {
               // If they caught up, set back to active
               updatedStatus = "active";
-              await db.update(clientsTable).set({ status: "active" }).where(eq(clientsTable.clientId, client.clientId));
+              await db
+                .update(clientsTable)
+                .set({ status: "active" })
+                .where(eq(clientsTable.clientId, client.clientId));
             }
 
             return {
@@ -761,10 +861,10 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { clientId } = req.params;
-        
+
         // Get documents to delete from object storage
         const docs = await storage.getDocumentsByClient(clientId);
-        
+
         // Delete document files from object storage
         for (const doc of docs) {
           if (doc.storageBucket && doc.storageKey) {
@@ -780,7 +880,7 @@ export async function registerRoutes(
         // Get invoices to delete their PDFs from object storage
         const invoicesForClient = await storage.getInvoicesByClient(clientId);
         const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
-        
+
         if (bucketId) {
           for (const invoice of invoicesForClient) {
             if (invoice.pdfStorageKey) {
@@ -788,20 +888,26 @@ export async function registerRoutes(
                 const bucket = objectStorageClient.bucket(bucketId);
                 await bucket.file(invoice.pdfStorageKey).delete();
               } catch (err) {
-                console.warn(`Failed to delete invoice PDF ${invoice.pdfStorageKey}:`, err);
+                console.warn(
+                  `Failed to delete invoice PDF ${invoice.pdfStorageKey}:`,
+                  err,
+                );
               }
             }
           }
         }
-        
+
         // Delete client and all related database records
         const deleted = await storage.deleteClient(clientId);
-        
+
         if (!deleted) {
           return res.status(404).json({ message: "Client not found" });
         }
-        
-        res.json({ success: true, message: "Client and all related data deleted" });
+
+        res.json({
+          success: true,
+          message: "Client and all related data deleted",
+        });
       } catch (error) {
         console.error("Error deleting client:", error);
         res.status(500).json({ message: "Failed to delete client" });
@@ -897,23 +1003,25 @@ export async function registerRoutes(
       try {
         const { invoiceId } = req.params;
         const userId = getUserId(req);
-        
+
         // Get current invoice to check if status is changing
         const currentInvoice = await storage.getInvoice(invoiceId);
         if (!currentInvoice) {
           return res.status(404).json({ message: "Invoice not found" });
         }
-        
+
         const newStatus = req.body.status;
-        const wasNotSentOrPaid = currentInvoice.status !== "sent" && currentInvoice.status !== "paid";
-        const isBecomingSentOrPaid = newStatus === "sent" || newStatus === "paid";
-        
+        const wasNotSentOrPaid =
+          currentInvoice.status !== "sent" && currentInvoice.status !== "paid";
+        const isBecomingSentOrPaid =
+          newStatus === "sent" || newStatus === "paid";
+
         // Update the invoice
         const invoice = await storage.updateInvoice(invoiceId, req.body);
         if (!invoice) {
           return res.status(404).json({ message: "Invoice not found" });
         }
-        
+
         // Generate PDF when status changes to sent/paid (standalone, no document record)
         if (wasNotSentOrPaid && isBecomingSentOrPaid) {
           try {
@@ -922,42 +1030,54 @@ export async function registerRoutes(
               .select()
               .from(invoiceSettings)
               .where(eq(invoiceSettings.adminUserId, userId!));
-            
+
             // Generate PDF buffer using billTo fields (not client)
             const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-              const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+              const doc = new PDFDocument({ margin: 50, size: "LETTER" });
               const chunks: Buffer[] = [];
-              
-              doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-              doc.on('end', () => resolve(Buffer.concat(chunks)));
-              doc.on('error', reject);
-              
+
+              doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+              doc.on("end", () => resolve(Buffer.concat(chunks)));
+              doc.on("error", reject);
+
               const pageWidth = 612;
               const margin = 50;
-              const contentWidth = pageWidth - (margin * 2);
-              
+              const contentWidth = pageWidth - margin * 2;
+
               // Header - INVOICE title
-              doc.fontSize(28).font('Helvetica-Bold').text('INVOICE', margin, margin, { align: 'right' });
-              doc.fontSize(12).font('Helvetica').text(`# ${invoice.invoiceNumber}`, { align: 'right' });
-              
+              doc
+                .fontSize(28)
+                .font("Helvetica-Bold")
+                .text("INVOICE", margin, margin, { align: "right" });
+              doc
+                .fontSize(12)
+                .font("Helvetica")
+                .text(`# ${invoice.invoiceNumber}`, { align: "right" });
+
               // Balance due box
               doc.moveDown(0.5);
-              doc.fontSize(10).text('Balance Due', { align: 'right' });
-              doc.fontSize(18).font('Helvetica-Bold').text(
-                `$${(invoice.balanceDueCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
-                { align: 'right' }
-              );
-              
+              doc.fontSize(10).text("Balance Due", { align: "right" });
+              doc
+                .fontSize(18)
+                .font("Helvetica-Bold")
+                .text(
+                  `$${(invoice.balanceDueCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+                  { align: "right" },
+                );
+
               // Business info (left side)
               let yPos = margin;
               if (settings?.businessName) {
-                doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+                doc
+                  .fontSize(14)
+                  .font("Helvetica-Bold")
+                  .text(settings.businessName, margin, yPos);
                 yPos += 20;
               }
               if (settings?.businessAddress) {
-                doc.fontSize(10).font('Helvetica');
-                const addressLines = settings.businessAddress.split('\n');
-                addressLines.forEach(line => {
+                doc.fontSize(10).font("Helvetica");
+                const addressLines = settings.businessAddress.split("\n");
+                addressLines.forEach((line) => {
                   doc.text(line, margin, yPos);
                   yPos += 14;
                 });
@@ -966,34 +1086,37 @@ export async function registerRoutes(
                 doc.text(settings.businessEmail, margin, yPos);
                 yPos += 14;
               }
-              
+
               // Invoice details section
               yPos = 180;
               const labelX = 350;
               const valueX = 450;
-              
-              doc.fontSize(10).font('Helvetica');
-              doc.text('Invoice Date:', labelX, yPos);
-              doc.text(invoice.issueDate || '-', valueX, yPos);
+
+              doc.fontSize(10).font("Helvetica");
+              doc.text("Invoice Date:", labelX, yPos);
+              doc.text(invoice.issueDate || "-", valueX, yPos);
               yPos += 18;
-              
-              doc.text('Terms:', labelX, yPos);
-              doc.text(invoice.terms || 'Due on Receipt', valueX, yPos);
+
+              doc.text("Terms:", labelX, yPos);
+              doc.text(invoice.terms || "Due on Receipt", valueX, yPos);
               yPos += 18;
-              
-              doc.text('Due Date:', labelX, yPos);
+
+              doc.text("Due Date:", labelX, yPos);
               doc.text(invoice.dueDate, valueX, yPos);
               yPos += 18;
-              
+
               // Bill To info (standalone - not linked to client)
               yPos = 180;
-              const billToName = invoice.billToName || 'Bill To';
-              doc.fontSize(10).font('Helvetica-Bold').text(billToName, margin, yPos);
+              const billToName = invoice.billToName || "Bill To";
+              doc
+                .fontSize(10)
+                .font("Helvetica-Bold")
+                .text(billToName, margin, yPos);
               yPos += 16;
-              doc.font('Helvetica');
+              doc.font("Helvetica");
               if (invoice.billToAddress) {
-                const addressLines = invoice.billToAddress.split('\n');
-                addressLines.forEach(line => {
+                const addressLines = invoice.billToAddress.split("\n");
+                addressLines.forEach((line) => {
                   doc.text(line, margin, yPos);
                   yPos += 14;
                 });
@@ -1002,82 +1125,113 @@ export async function registerRoutes(
                 doc.text(invoice.billToEmail, margin, yPos);
                 yPos += 14;
               }
-              
+
               // Line items table
               yPos = 280;
-              const colX = [margin, margin + 30, margin + 250, margin + 300, margin + 370, margin + 440];
-              
+              const colX = [
+                margin,
+                margin + 30,
+                margin + 250,
+                margin + 300,
+                margin + 370,
+                margin + 440,
+              ];
+
               // Table header
-              doc.fontSize(9).font('Helvetica-Bold');
-              doc.rect(margin, yPos - 5, contentWidth, 20).fill('#f5f5f5');
-              doc.fillColor('#333');
-              doc.text('#', colX[0], yPos);
-              doc.text('Description', colX[1], yPos);
-              doc.text('Qty', colX[2], yPos);
-              doc.text('Rate', colX[3], yPos);
-              doc.text('Discount', colX[4], yPos);
-              doc.text('Amount', colX[5], yPos);
-              
+              doc.fontSize(9).font("Helvetica-Bold");
+              doc.rect(margin, yPos - 5, contentWidth, 20).fill("#f5f5f5");
+              doc.fillColor("#333");
+              doc.text("#", colX[0], yPos);
+              doc.text("Description", colX[1], yPos);
+              doc.text("Qty", colX[2], yPos);
+              doc.text("Rate", colX[3], yPos);
+              doc.text("Discount", colX[4], yPos);
+              doc.text("Amount", colX[5], yPos);
+
               yPos += 25;
-              
+
               // Table rows
-              doc.font('Helvetica').fontSize(9);
+              doc.font("Helvetica").fontSize(9);
               const lineItems = (invoice.lineItems || []) as InvoiceLineItem[];
               lineItems.forEach((item, index) => {
-                doc.fillColor('#333');
+                doc.fillColor("#333");
                 doc.text((index + 1).toString(), colX[0], yPos);
                 doc.text(item.description, colX[1], yPos, { width: 200 });
                 doc.text(item.quantity.toFixed(2), colX[2], yPos);
                 doc.text(`$${(item.rate / 100).toFixed(2)}`, colX[3], yPos);
-                doc.text(item.discountPercent > 0 ? `${item.discountPercent}%` : '-', colX[4], yPos);
+                doc.text(
+                  item.discountPercent > 0 ? `${item.discountPercent}%` : "-",
+                  colX[4],
+                  yPos,
+                );
                 doc.text(`$${(item.amount / 100).toFixed(2)}`, colX[5], yPos);
                 yPos += 30;
               });
-              
+
               // Totals
               yPos += 20;
               const totalsX = 380;
               const totalsValueX = 480;
-              
-              doc.font('Helvetica').fontSize(10);
-              doc.text('Sub Total', totalsX, yPos);
-              doc.text(`$${(invoice.subtotalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+
+              doc.font("Helvetica").fontSize(10);
+              doc.text("Sub Total", totalsX, yPos);
+              doc.text(
+                `$${(invoice.subtotalCents / 100).toFixed(2)}`,
+                totalsValueX,
+                yPos,
+                { align: "right", width: 70 },
+              );
               yPos += 20;
-              
-              doc.font('Helvetica-Bold');
-              doc.text('Total', totalsX, yPos);
-              doc.text(`$${(invoice.totalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+
+              doc.font("Helvetica-Bold");
+              doc.text("Total", totalsX, yPos);
+              doc.text(
+                `$${(invoice.totalCents / 100).toFixed(2)}`,
+                totalsValueX,
+                yPos,
+                { align: "right", width: 70 },
+              );
               yPos += 20;
-              
-              doc.text('Balance Due', totalsX, yPos);
-              doc.text(`$${(invoice.balanceDueCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
-              
+
+              doc.text("Balance Due", totalsX, yPos);
+              doc.text(
+                `$${(invoice.balanceDueCents / 100).toFixed(2)}`,
+                totalsValueX,
+                yPos,
+                { align: "right", width: 70 },
+              );
+
               // Footer
               yPos = 650;
-              doc.font('Helvetica').fontSize(10);
-              const footerText = invoice.footerText || settings?.defaultFooterText || 'Thanks for your business.';
+              doc.font("Helvetica").fontSize(10);
+              const footerText =
+                invoice.footerText ||
+                settings?.defaultFooterText ||
+                "Thanks for your business.";
               doc.text(footerText, margin, yPos);
-              
+
               doc.end();
             });
-            
+
             // Upload PDF to object storage (no document record - standalone invoice)
             const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID;
             if (bucketId) {
               const storageKey = `invoices/${invoice.invoiceNumber}.pdf`;
               const bucket = objectStorageClient.bucket(bucketId);
               const file = bucket.file(storageKey);
-              await file.save(pdfBuffer, { contentType: 'application/pdf' });
-              
+              await file.save(pdfBuffer, { contentType: "application/pdf" });
+
               // Update invoice with PDF storage key (no document record created)
-              await storage.updateInvoice(invoiceId, { pdfStorageKey: storageKey });
+              await storage.updateInvoice(invoiceId, {
+                pdfStorageKey: storageKey,
+              });
             }
           } catch (pdfError) {
             console.error("Error generating invoice PDF:", pdfError);
             // Don't fail the status update, just log the PDF error
           }
         }
-        
+
         res.json(invoice);
       } catch (error) {
         console.error("Error updating invoice:", error);
@@ -1112,13 +1266,13 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { invoiceId } = req.params;
-        
+
         // Get invoice to find PDF storage key
         const invoice = await storage.getInvoice(invoiceId);
         if (!invoice) {
           return res.status(404).json({ message: "Invoice not found" });
         }
-        
+
         // Delete PDF from object storage if exists
         if (invoice.pdfStorageKey) {
           try {
@@ -1131,14 +1285,14 @@ export async function registerRoutes(
             console.warn(`Failed to delete PDF ${invoice.pdfStorageKey}:`, err);
           }
         }
-        
+
         // Delete from database
         const deleted = await storage.deleteInvoice(invoiceId);
-        
+
         if (!deleted) {
           return res.status(500).json({ message: "Failed to delete invoice" });
         }
-        
+
         res.json({ success: true, message: "Invoice deleted" });
       } catch (error) {
         console.error("Error deleting invoice:", error);
@@ -1162,7 +1316,7 @@ export async function registerRoutes(
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.adminUserId, userId!));
-        
+
         if (!settings) {
           // Return default settings if none exist
           return res.json({
@@ -1193,12 +1347,12 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const settingsId = `IS-${userId}`;
-        
+
         const [existing] = await db
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.id, settingsId));
-        
+
         if (existing) {
           // Update existing
           const [updated] = await db
@@ -1208,7 +1362,7 @@ export async function registerRoutes(
             .returning();
           return res.json(updated);
         }
-        
+
         // Create new
         const [created] = await db
           .insert(invoiceSettings)
@@ -1236,51 +1390,49 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const file = req.file;
-        
+
         if (!file) {
           return res.status(400).json({ message: "No file uploaded" });
         }
-        
+
         // Upload to object storage (public directory for logos)
         const publicPaths = objectStorageService.getPublicObjectSearchPaths();
         const publicPath = publicPaths[0]; // e.g., "/bucket-name/public"
-        const pathParts = publicPath.split('/').filter(Boolean);
+        const pathParts = publicPath.split("/").filter(Boolean);
         const bucketName = pathParts[0];
         const storageKey = `logos/${userId}-${Date.now()}-${file.originalname}`;
-        
+
         const bucket = objectStorageClient.bucket(bucketName);
         const blob = bucket.file(`public/${storageKey}`);
-        
+
         await blob.save(file.buffer, {
           contentType: file.mimetype,
           metadata: { originalName: file.originalname },
         });
-        
+
         // The public URL will be served through /api/assets endpoint
         const publicUrl = `/api/assets/${storageKey}`;
-        
+
         // Update settings with logo URL
         const settingsId = `IS-${userId}`;
         const [existing] = await db
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.id, settingsId));
-        
+
         if (existing) {
           await db
             .update(invoiceSettings)
             .set({ businessLogo: publicUrl, updatedAt: new Date() })
             .where(eq(invoiceSettings.id, settingsId));
         } else {
-          await db
-            .insert(invoiceSettings)
-            .values({
-              id: settingsId,
-              adminUserId: userId!,
-              businessLogo: publicUrl,
-            });
+          await db.insert(invoiceSettings).values({
+            id: settingsId,
+            adminUserId: userId!,
+            businessLogo: publicUrl,
+          });
         }
-        
+
         res.json({ url: publicUrl });
       } catch (error) {
         console.error("Error uploading logo:", error);
@@ -1301,10 +1453,10 @@ export async function registerRoutes(
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.adminUserId, userId!));
-        
+
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
-        
+
         res.json({
           prefix,
           nextNumber: nextNum,
@@ -1328,7 +1480,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const settings = await storage.getPaymentSettings();
-        
+
         if (!settings) {
           return res.json({
             id: null,
@@ -1403,7 +1555,9 @@ export async function registerRoutes(
           // Client Signup Email
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
           signupEmailEnabled: settings.signupEmailEnabled ?? false,
-          hasSignupEmailToken: !!(settings.signupEmailToken || settings.automationToken),
+          hasSignupEmailToken: !!(
+            settings.signupEmailToken || settings.automationToken
+          ),
           // Payment Received Alerts
           paymentReceivedWebhookUrl: settings.paymentReceivedWebhookUrl,
           paymentReceivedEnabled: settings.paymentReceivedEnabled ?? false,
@@ -1413,12 +1567,16 @@ export async function registerRoutes(
           monthlySummaryEnabled: settings.monthlySummaryEnabled ?? false,
           hasMonthlySummaryToken: !!settings.monthlySummaryToken,
           // Global toggles
-          paymentReceivedAlertsGlobalEnabled: settings.paymentReceivedAlertsGlobalEnabled ?? true,
-          monthlySummaryGlobalEnabled: settings.monthlySummaryGlobalEnabled ?? true,
+          paymentReceivedAlertsGlobalEnabled:
+            settings.paymentReceivedAlertsGlobalEnabled ?? true,
+          monthlySummaryGlobalEnabled:
+            settings.monthlySummaryGlobalEnabled ?? true,
         });
       } catch (error) {
         console.error("Error fetching automation settings:", error);
-        res.status(500).json({ message: "Failed to fetch automation settings" });
+        res
+          .status(500)
+          .json({ message: "Failed to fetch automation settings" });
       }
     },
   );
@@ -1443,41 +1601,59 @@ export async function registerRoutes(
           paymentReceivedAlertsGlobalEnabled,
           monthlySummaryGlobalEnabled,
         } = req.body;
-        
+
         // Build update object with only provided fields
         const updateData: any = { adminUserId: userId! };
-        
-        if (signupEmailWebhookUrl !== undefined) updateData.signupEmailWebhookUrl = signupEmailWebhookUrl;
-        if (signupEmailToken !== undefined) updateData.signupEmailToken = signupEmailToken;
-        if (signupEmailEnabled !== undefined) updateData.signupEmailEnabled = signupEmailEnabled;
-        if (paymentReceivedWebhookUrl !== undefined) updateData.paymentReceivedWebhookUrl = paymentReceivedWebhookUrl;
-        if (paymentReceivedToken !== undefined) updateData.paymentReceivedToken = paymentReceivedToken;
-        if (paymentReceivedEnabled !== undefined) updateData.paymentReceivedEnabled = paymentReceivedEnabled;
-        if (monthlySummaryWebhookUrl !== undefined) updateData.monthlySummaryWebhookUrl = monthlySummaryWebhookUrl;
-        if (monthlySummaryToken !== undefined) updateData.monthlySummaryToken = monthlySummaryToken;
-        if (monthlySummaryEnabled !== undefined) updateData.monthlySummaryEnabled = monthlySummaryEnabled;
-        if (paymentReceivedAlertsGlobalEnabled !== undefined) updateData.paymentReceivedAlertsGlobalEnabled = paymentReceivedAlertsGlobalEnabled;
-        if (monthlySummaryGlobalEnabled !== undefined) updateData.monthlySummaryGlobalEnabled = monthlySummaryGlobalEnabled;
-        
+
+        if (signupEmailWebhookUrl !== undefined)
+          updateData.signupEmailWebhookUrl = signupEmailWebhookUrl;
+        if (signupEmailToken !== undefined)
+          updateData.signupEmailToken = signupEmailToken;
+        if (signupEmailEnabled !== undefined)
+          updateData.signupEmailEnabled = signupEmailEnabled;
+        if (paymentReceivedWebhookUrl !== undefined)
+          updateData.paymentReceivedWebhookUrl = paymentReceivedWebhookUrl;
+        if (paymentReceivedToken !== undefined)
+          updateData.paymentReceivedToken = paymentReceivedToken;
+        if (paymentReceivedEnabled !== undefined)
+          updateData.paymentReceivedEnabled = paymentReceivedEnabled;
+        if (monthlySummaryWebhookUrl !== undefined)
+          updateData.monthlySummaryWebhookUrl = monthlySummaryWebhookUrl;
+        if (monthlySummaryToken !== undefined)
+          updateData.monthlySummaryToken = monthlySummaryToken;
+        if (monthlySummaryEnabled !== undefined)
+          updateData.monthlySummaryEnabled = monthlySummaryEnabled;
+        if (paymentReceivedAlertsGlobalEnabled !== undefined)
+          updateData.paymentReceivedAlertsGlobalEnabled =
+            paymentReceivedAlertsGlobalEnabled;
+        if (monthlySummaryGlobalEnabled !== undefined)
+          updateData.monthlySummaryGlobalEnabled = monthlySummaryGlobalEnabled;
+
         const settings = await storage.upsertAutomationSettings(updateData);
-        
+
         res.json({
           id: settings.id,
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
           signupEmailEnabled: settings.signupEmailEnabled ?? false,
-          hasSignupEmailToken: !!(settings.signupEmailToken || settings.automationToken),
+          hasSignupEmailToken: !!(
+            settings.signupEmailToken || settings.automationToken
+          ),
           paymentReceivedWebhookUrl: settings.paymentReceivedWebhookUrl,
           paymentReceivedEnabled: settings.paymentReceivedEnabled ?? false,
           hasPaymentReceivedToken: !!settings.paymentReceivedToken,
           monthlySummaryWebhookUrl: settings.monthlySummaryWebhookUrl,
           monthlySummaryEnabled: settings.monthlySummaryEnabled ?? false,
           hasMonthlySummaryToken: !!settings.monthlySummaryToken,
-          paymentReceivedAlertsGlobalEnabled: settings.paymentReceivedAlertsGlobalEnabled ?? true,
-          monthlySummaryGlobalEnabled: settings.monthlySummaryGlobalEnabled ?? true,
+          paymentReceivedAlertsGlobalEnabled:
+            settings.paymentReceivedAlertsGlobalEnabled ?? true,
+          monthlySummaryGlobalEnabled:
+            settings.monthlySummaryGlobalEnabled ?? true,
         });
       } catch (error) {
         console.error("Error updating automation settings:", error);
-        res.status(500).json({ message: "Failed to update automation settings" });
+        res
+          .status(500)
+          .json({ message: "Failed to update automation settings" });
       }
     },
   );
@@ -1492,17 +1668,18 @@ export async function registerRoutes(
       try {
         const { webhookType } = req.body;
         const settings = await storage.getAutomationSettings();
-        
+
         let webhookUrl: string | null = null;
         let token: string | null = null;
         let payload: any = {};
-        
+
         const baseUrl = getBaseUrl(req);
-        
+
         switch (webhookType) {
           case "signupEmail":
             webhookUrl = settings?.signupEmailWebhookUrl || null;
-            token = settings?.signupEmailToken || settings?.automationToken || null;
+            token =
+              settings?.signupEmailToken || settings?.automationToken || null;
             payload = {
               clientName: "Test Client",
               clientEmail: "test@example.com",
@@ -1533,12 +1710,16 @@ export async function registerRoutes(
             token = settings?.monthlySummaryToken || null;
             const now = new Date();
             const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            const endOfMonth = new Date(
+              now.getFullYear(),
+              now.getMonth() + 1,
+              0,
+            );
             payload = {
               event: "admin.monthly_summary",
               period: {
-                start: startOfMonth.toISOString().split('T')[0],
-                end: endOfMonth.toISOString().split('T')[0],
+                start: startOfMonth.toISOString().split("T")[0],
+                end: endOfMonth.toISOString().split("T")[0],
               },
               totals: {
                 income: 0,
@@ -1553,11 +1734,13 @@ export async function registerRoutes(
           default:
             return res.status(400).json({ message: "Invalid webhook type" });
         }
-        
+
         if (!webhookUrl) {
-          return res.status(400).json({ message: "Webhook URL not configured" });
+          return res
+            .status(400)
+            .json({ message: "Webhook URL not configured" });
         }
-        
+
         // Send test webhook
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
@@ -1565,29 +1748,33 @@ export async function registerRoutes(
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }
-        
+
         console.log(`[Test Webhook] Sending ${webhookType} to ${webhookUrl}`);
-        
+
         const response = await fetch(webhookUrl, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
         });
-        
+
         console.log(`[Test Webhook] Response status: ${response.status}`);
-        
+
         if (!response.ok) {
-          const errorText = await response.text().catch(() => "No response body");
-          return res.status(response.status).json({ 
+          const errorText = await response
+            .text()
+            .catch(() => "No response body");
+          return res.status(response.status).json({
             message: `Webhook returned ${response.status}`,
             details: errorText.substring(0, 200),
           });
         }
-        
+
         res.json({ success: true, status: response.status });
       } catch (error: any) {
         console.error("Error testing webhook:", error);
-        res.status(500).json({ message: error.message || "Failed to test webhook" });
+        res
+          .status(500)
+          .json({ message: error.message || "Failed to test webhook" });
       }
     },
   );
@@ -1600,7 +1787,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { clientId } = req.body;
-        
+
         if (!clientId) {
           return res.status(400).json({ message: "clientId is required" });
         }
@@ -1612,20 +1799,27 @@ export async function registerRoutes(
         }
 
         if (!client.email) {
-          return res.status(400).json({ message: "Client email is required to send signup email" });
+          return res
+            .status(400)
+            .json({ message: "Client email is required to send signup email" });
         }
 
         // Get automation settings
         const settings = await storage.getAutomationSettings();
         const webhookUrl = settings?.signupEmailWebhookUrl;
-        
+
         if (!webhookUrl) {
-          return res.status(400).json({ message: "Signup email webhook URL not configured. Please configure it in Settings > Automations" });
+          return res
+            .status(400)
+            .json({
+              message:
+                "Signup email webhook URL not configured. Please configure it in Settings > Automations",
+            });
         }
 
         // Build payload
         const baseUrl = getBaseUrl(req);
-        
+
         const portalUrl = `${baseUrl}/auth/register`;
         const payload = {
           clientName: client.displayName,
@@ -1635,7 +1829,9 @@ export async function registerRoutes(
         };
 
         // Build headers - use signupEmailToken with fallback to automationToken (same as test webhook)
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
         const token = settings?.signupEmailToken || settings?.automationToken;
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
@@ -1657,11 +1853,18 @@ export async function registerRoutes(
           return res.status(502).json({ message: "Webhook request failed" });
         }
 
-        console.log(`Signup email webhook sent for client ${clientId} to ${client.email}`);
-        res.json({ success: true, message: `Signup email sent to ${client.email}` });
+        console.log(
+          `Signup email webhook sent for client ${clientId} to ${client.email}`,
+        );
+        res.json({
+          success: true,
+          message: `Signup email sent to ${client.email}`,
+        });
       } catch (error: any) {
         console.error("Error sending signup email webhook:", error);
-        res.status(500).json({ message: error.message || "Failed to send signup email" });
+        res
+          .status(500)
+          .json({ message: error.message || "Failed to send signup email" });
       }
     },
   );
@@ -1674,85 +1877,107 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
-        
+
         // Get automation settings
         const settings = await storage.getAutomationSettings();
-        
+
         // Check global toggle
         if (!settings?.monthlySummaryGlobalEnabled) {
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: "Monthly summaries are disabled in Settings",
-            disabledBySettings: true 
+            disabledBySettings: true,
           });
         }
-        
+
         // Check if webhook is configured and enabled
         if (!settings?.monthlySummaryWebhookUrl) {
-          return res.status(400).json({ 
-            message: "Monthly summary webhook URL not configured. Please configure it in Settings > Automations" 
+          return res.status(400).json({
+            message:
+              "Monthly summary webhook URL not configured. Please configure it in Settings > Automations",
           });
         }
-        
+
         if (!settings?.monthlySummaryEnabled) {
-          return res.status(400).json({ 
-            message: "Monthly summary webhook is disabled. Enable it in Settings > Automations" 
+          return res.status(400).json({
+            message:
+              "Monthly summary webhook is disabled. Enable it in Settings > Automations",
           });
         }
-        
+
         // Get timeframe and dates from request body
         const { timeframe = "monthly", start, end } = req.body;
-        
+
         // Compute date range from timeframe or use provided dates
         let startDate: string;
         let endDate: string;
-        
+
         if (start && end) {
           startDate = start;
           endDate = end;
         } else {
-          const periodDays: Record<string, number> = { weekly: 7, biweekly: 14, monthly: 30, yearly: 365 };
+          const periodDays: Record<string, number> = {
+            weekly: 7,
+            biweekly: 14,
+            monthly: 30,
+            yearly: 365,
+          };
           const days = periodDays[timeframe] || 30;
           const endD = new Date();
           const startD = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
           startDate = startD.toISOString().split("T")[0];
           endDate = endD.toISOString().split("T")[0];
         }
-        
-        console.log(`[Monthly Summary] Computing totals for period: ${startDate} to ${endDate} (timeframe: ${timeframe})`);
-        
+
+        console.log(
+          `[Monthly Summary] Computing totals for period: ${startDate} to ${endDate} (timeframe: ${timeframe})`,
+        );
+
         // Map timeframe to TimePeriod for recurrence multipliers
-        const selectedPeriod = (["weekly", "biweekly", "monthly", "yearly"].includes(timeframe) ? timeframe : "monthly") as TimePeriod;
-        
+        const selectedPeriod = (
+          ["weekly", "biweekly", "monthly", "yearly"].includes(timeframe)
+            ? timeframe
+            : "monthly"
+        ) as TimePeriod;
+
         // ===== 1. Manual Finance Entries =====
         // Match UI logic: query ALL entries for admin, then filter using same logic as UI
         const manualEntries = await db
           .select()
           .from(financeEntries)
           .where(eq(financeEntries.adminUserId, userId!));
-        
-        console.log(`[Monthly Summary] Found ${manualEntries.length} total manual finance entries`);
-        
+
+        console.log(
+          `[Monthly Summary] Found ${manualEntries.length} total manual finance entries`,
+        );
+
         // Map category groups to totals keys
         const categoryToKey: Record<string, string> = {
           income: "income",
-          bills: "bills", 
+          bills: "bills",
           debts: "debts",
           holdings: "holdings",
           other: "other",
         };
-        
+
         // Calculate manual entry totals with same logic as UI:
         // - One-time entries: only count if within period range (isOneTimeInRange)
         // - Recurring entries: always count with multiplier
-        const manualTotals = { income: 0, bills: 0, debts: 0, holdings: 0, other: 0 };
+        const manualTotals = {
+          income: 0,
+          bills: 0,
+          debts: 0,
+          holdings: 0,
+          other: 0,
+        };
         let includedCount = 0;
         let skippedOneTimeCount = 0;
-        
+
         for (const entry of manualEntries) {
           const key = categoryToKey[entry.categoryGroup] || "other";
           const recurrence = (entry.recurrence || "one_time") as RecurrenceType;
-          const isOneTime = !entry.recurrence || entry.recurrence === "one_time";
-          
+          const isOneTime =
+            !entry.recurrence || entry.recurrence === "one_time";
+
           if (isOneTime) {
             // One-time entries only count if within date range
             if (!entry.date || !isOneTimeInRange(entry.date, selectedPeriod)) {
@@ -1763,48 +1988,61 @@ export async function registerRoutes(
             includedCount++;
           } else {
             // Recurring entries get multiplied
-            const multiplier = getRecurrenceMultiplier(recurrence, selectedPeriod);
-            (manualTotals as any)[key] += Math.round(Math.abs(entry.amountCents) * multiplier);
+            const multiplier = getRecurrenceMultiplier(
+              recurrence,
+              selectedPeriod,
+            );
+            (manualTotals as any)[key] += Math.round(
+              Math.abs(entry.amountCents) * multiplier,
+            );
             includedCount++;
           }
         }
-        console.log(`[Monthly Summary] Manual entries: ${includedCount} included, ${skippedOneTimeCount} one-time entries out of range`);
+        console.log(
+          `[Monthly Summary] Manual entries: ${includedCount} included, ${skippedOneTimeCount} one-time entries out of range`,
+        );
         console.log(`[Monthly Summary] Manual entry totals:`, manualTotals);
-        
+
         // ===== 2. Assigned Plaid Transactions =====
         // Get all items for this admin
         const items = await db
           .select()
           .from(plaidItems)
           .where(eq(plaidItems.adminUserId, userId!));
-        
+
         const itemIds = items.map((i) => i.itemId);
-        
-        let plaidTotals = { income: 0, bills: 0, debts: 0, holdings: 0, other: 0 };
-        
+
+        let plaidTotals = {
+          income: 0,
+          bills: 0,
+          debts: 0,
+          holdings: 0,
+          other: 0,
+        };
+
         if (itemIds.length > 0) {
           // Get all accounts to build default type map
           const accounts = await db
             .select()
             .from(plaidAccounts)
             .where(inArray(plaidAccounts.itemId, itemIds));
-          
+
           const accountDefaultMap = new Map<string, string | null>();
           accounts.forEach((a) => {
             accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
           });
-          
+
           // Get recurring groups
           const groups = await db
             .select()
             .from(plaidRecurringGroups)
             .where(eq(plaidRecurringGroups.adminUserId, userId!));
-          
-          const groupMap = new Map<string, typeof groups[0]>();
+
+          const groupMap = new Map<string, (typeof groups)[0]>();
           groups.forEach((g) => {
             groupMap.set(g.groupId, g);
           });
-          
+
           // Get transactions in date range
           const transactions = await db
             .select()
@@ -1813,22 +2051,34 @@ export async function registerRoutes(
               and(
                 gte(plaidTransactions.date, startDate),
                 lte(plaidTransactions.date, endDate),
-                inArray(plaidTransactions.itemId, itemIds)
-              )
+                inArray(plaidTransactions.itemId, itemIds),
+              ),
             );
-          
+
           // Calculate effective type - ONLY count transactions with assigned types
-          const typedTransactions = transactions.map((t) => {
-            const group = t.recurringGroupId ? groupMap.get(t.recurringGroupId) : null;
-            return {
-              ...t,
-              effectiveType: t.overrideFinanceType || (group?.financeType) || accountDefaultMap.get(t.plaidAccountId) || null,
-              effectiveRecurrence: (t.overrideRecurrence || group?.recurrence || "one_time") as RecurrenceType,
-            };
-          }).filter((t) => t.effectiveType !== null);
-          
-          console.log(`[Monthly Summary] Found ${transactions.length} Plaid transactions, ${typedTransactions.length} with assigned types`);
-          
+          const typedTransactions = transactions
+            .map((t) => {
+              const group = t.recurringGroupId
+                ? groupMap.get(t.recurringGroupId)
+                : null;
+              return {
+                ...t,
+                effectiveType:
+                  t.overrideFinanceType ||
+                  group?.financeType ||
+                  accountDefaultMap.get(t.plaidAccountId) ||
+                  null,
+                effectiveRecurrence: (t.overrideRecurrence ||
+                  group?.recurrence ||
+                  "one_time") as RecurrenceType,
+              };
+            })
+            .filter((t) => t.effectiveType !== null);
+
+          console.log(
+            `[Monthly Summary] Found ${transactions.length} Plaid transactions, ${typedTransactions.length} with assigned types`,
+          );
+
           // Sum by category with recurrence multipliers
           const plaidCategoryMap: Record<string, string> = {
             income: "income",
@@ -1837,12 +2087,15 @@ export async function registerRoutes(
             holding: "holdings",
             other: "other",
           };
-          
+
           for (const t of typedTransactions) {
             const key = plaidCategoryMap[t.effectiveType!] || "other";
             let amount = Math.abs(t.amountCents);
             if (t.effectiveRecurrence !== "one_time") {
-              amount *= getRecurrenceMultiplier(t.effectiveRecurrence, selectedPeriod);
+              amount *= getRecurrenceMultiplier(
+                t.effectiveRecurrence,
+                selectedPeriod,
+              );
             }
             (plaidTotals as any)[key] += amount;
           }
@@ -1850,7 +2103,7 @@ export async function registerRoutes(
         } else {
           console.log(`[Monthly Summary] No Plaid items linked`);
         }
-        
+
         // ===== 3. Client Billing Items (Derived Income) =====
         // Match UI logic exactly: query active billing items filtered by monthly frequency
         // This matches the /api/admin/billing-items endpoint that the UI uses
@@ -1860,29 +2113,33 @@ export async function registerRoutes(
           .where(
             and(
               eq(clientBillingItems.status, "active"),
-              eq(clientBillingItems.frequency, "monthly")
-            )
+              eq(clientBillingItems.frequency, "monthly"),
+            ),
           );
-        
+
         let billingIncome = 0;
         for (const item of billingItemsList) {
           billingIncome += Math.abs(item.amountCents);
         }
-        console.log(`[Monthly Summary] Billing items income: ${billingIncome} from ${billingItemsList.length} monthly active items`);
-        
+        console.log(
+          `[Monthly Summary] Billing items income: ${billingIncome} from ${billingItemsList.length} monthly active items`,
+        );
+
         // ===== 4. Combine all totals =====
         const finalTotals = {
-          income: Math.round(manualTotals.income + plaidTotals.income + billingIncome),
+          income: Math.round(
+            manualTotals.income + plaidTotals.income + billingIncome,
+          ),
           bills: Math.round(manualTotals.bills + plaidTotals.bills),
           debts: Math.round(manualTotals.debts + plaidTotals.debts),
           holdings: Math.round(manualTotals.holdings + plaidTotals.holdings),
           other: Math.round(manualTotals.other + plaidTotals.other),
         };
-        
+
         console.log(`[Monthly Summary] Final totals:`, finalTotals);
-        
+
         const baseUrl = getBaseUrl(req);
-        
+
         const payload = {
           event: "admin.monthly_summary",
           period: {
@@ -1893,36 +2150,47 @@ export async function registerRoutes(
           portalUrl: baseUrl,
           executionMode: "live",
         };
-        
+
         // Build headers
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
         if (settings.monthlySummaryToken) {
           headers["Authorization"] = `Bearer ${settings.monthlySummaryToken}`;
         }
-        
-        console.log(`[Monthly Summary] Sending to: ${settings.monthlySummaryWebhookUrl}`);
-        
+
+        console.log(
+          `[Monthly Summary] Sending to: ${settings.monthlySummaryWebhookUrl}`,
+        );
+
         const response = await fetch(settings.monthlySummaryWebhookUrl, {
           method: "POST",
           headers,
           body: JSON.stringify(payload),
         });
-        
+
         console.log(`[Monthly Summary] Response: ${response.status}`);
-        
+
         if (!response.ok) {
-          const errorText = await response.text().catch(() => "No response body");
-          console.error(`[Monthly Summary] Failed:`, errorText.substring(0, 200));
+          const errorText = await response
+            .text()
+            .catch(() => "No response body");
+          console.error(
+            `[Monthly Summary] Failed:`,
+            errorText.substring(0, 200),
+          );
           return res.status(502).json({ message: "Webhook request failed" });
         }
-        
-        res.json({ 
-          success: true, 
-          message: `Summary email generated for ${startDate} to ${endDate}` 
+
+        res.json({
+          success: true,
+          message: `Summary email generated for ${startDate} to ${endDate}`,
         });
       } catch (error: any) {
         console.error("Error generating monthly summary:", error);
-        res.status(500).json({ message: error.message || "Failed to generate summary" });
+        res
+          .status(500)
+          .json({ message: error.message || "Failed to generate summary" });
       }
     },
   );
@@ -1939,24 +2207,24 @@ export async function registerRoutes(
       try {
         const { documentId } = req.params;
         const { isActiveAgreement, docType, ...otherData } = req.body;
-        
+
         const doc = await storage.getDocument(documentId);
         if (!doc) {
           return res.status(404).json({ message: "Document not found" });
         }
-        
+
         // If marking as active agreement, first clear any existing active agreements for this client
         if (isActiveAgreement === true) {
           await storage.clearActiveAgreementForClient(doc.clientId);
         }
-        
+
         // Update the document
         const updated = await storage.updateDocument(documentId, {
           ...(docType !== undefined && { docType }),
           ...(isActiveAgreement !== undefined && { isActiveAgreement }),
           ...otherData,
         });
-        
+
         res.json(updated);
       } catch (error) {
         console.error("Error updating document:", error);
@@ -1972,13 +2240,13 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { documentId } = req.params;
-        
+
         // Get document to find storage path
         const doc = await storage.getDocument(documentId);
         if (!doc) {
           return res.status(404).json({ message: "Document not found" });
         }
-        
+
         // Delete from object storage
         if (doc.storageBucket && doc.storageKey) {
           try {
@@ -1988,14 +2256,14 @@ export async function registerRoutes(
             console.warn(`Failed to delete file ${doc.storageKey}:`, err);
           }
         }
-        
+
         // Delete from database
         const deleted = await storage.deleteDocument(documentId);
-        
+
         if (!deleted) {
           return res.status(500).json({ message: "Failed to delete document" });
         }
-        
+
         res.json({ success: true, message: "Document deleted" });
       } catch (error) {
         console.error("Error deleting document:", error);
@@ -2013,59 +2281,76 @@ export async function registerRoutes(
       try {
         const { invoiceId } = req.params;
         const userId = getUserId(req);
-        
+
         // Get invoice
         const invoice = await storage.getInvoice(invoiceId);
         if (!invoice) {
           return res.status(404).json({ message: "Invoice not found" });
         }
-        
+
         // Get settings (no client needed - using billTo fields)
         const [settings] = await db
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.adminUserId, userId!));
-        
+
         // Create PDF
-        const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+        const doc = new PDFDocument({ margin: 50, size: "LETTER" });
         const chunks: Buffer[] = [];
-        
-        doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-        doc.on('end', async () => {
+
+        doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+        doc.on("end", async () => {
           const pdfBuffer = Buffer.concat(chunks);
-          
+
           // Return the PDF
-          res.setHeader('Content-Type', 'application/pdf');
-          res.setHeader('Content-Disposition', `inline; filename="${invoice.invoiceNumber}.pdf"`);
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader(
+            "Content-Disposition",
+            `inline; filename="${invoice.invoiceNumber}.pdf"`,
+          );
           res.send(pdfBuffer);
         });
-        
+
         // ============================================
         // PDF CONTENT
         // ============================================
-        
+
         const pageWidth = 612;
         const margin = 50;
-        const contentWidth = pageWidth - (margin * 2);
-        
+        const contentWidth = pageWidth - margin * 2;
+
         // Header - INVOICE title
-        doc.fontSize(28).font('Helvetica-Bold').text('INVOICE', margin, margin, { align: 'right' });
-        doc.fontSize(12).font('Helvetica').text(`# ${invoice.invoiceNumber}`, { align: 'right' });
-        
+        doc
+          .fontSize(28)
+          .font("Helvetica-Bold")
+          .text("INVOICE", margin, margin, { align: "right" });
+        doc
+          .fontSize(12)
+          .font("Helvetica")
+          .text(`# ${invoice.invoiceNumber}`, { align: "right" });
+
         // Balance due box
         doc.moveDown(0.5);
-        doc.fontSize(10).text('Balance Due', { align: 'right' });
-        doc.fontSize(18).font('Helvetica-Bold').text(
-          `$${(invoice.balanceDueCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
-          { align: 'right' }
-        );
-        
+        doc.fontSize(10).text("Balance Due", { align: "right" });
+        doc
+          .fontSize(18)
+          .font("Helvetica-Bold")
+          .text(
+            `$${(invoice.balanceDueCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+            { align: "right" },
+          );
+
         // Business logo + info (left side)
         let yPos = margin;
-        
-        const pdfLogoPath = path.join(process.cwd(), 'client', 'public', 'pdf-logo.png');
+
+        const pdfLogoPath = path.join(
+          process.cwd(),
+          "client",
+          "public",
+          "pdf-logo.png",
+        );
         try {
-          const fs = await import('fs');
+          const fs = await import("fs");
           if (fs.existsSync(pdfLogoPath)) {
             doc.image(pdfLogoPath, margin, yPos, { height: 40 });
             yPos += 48;
@@ -2073,15 +2358,18 @@ export async function registerRoutes(
         } catch (logoErr) {
           console.error("Could not load PDF logo:", logoErr);
         }
-        
+
         if (settings?.businessName) {
-          doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+          doc
+            .fontSize(14)
+            .font("Helvetica-Bold")
+            .text(settings.businessName, margin, yPos);
           yPos += 20;
         }
         if (settings?.businessAddress) {
-          doc.fontSize(10).font('Helvetica');
-          const addressLines = settings.businessAddress.split('\n');
-          addressLines.forEach(line => {
+          doc.fontSize(10).font("Helvetica");
+          const addressLines = settings.businessAddress.split("\n");
+          addressLines.forEach((line) => {
             doc.text(line, margin, yPos);
             yPos += 14;
           });
@@ -2090,34 +2378,34 @@ export async function registerRoutes(
           doc.text(settings.businessEmail, margin, yPos);
           yPos += 14;
         }
-        
+
         // Invoice details section
         yPos = 180;
         const labelX = 350;
         const valueX = 450;
-        
-        doc.fontSize(10).font('Helvetica');
-        doc.text('Invoice Date:', labelX, yPos);
-        doc.text(invoice.issueDate || '-', valueX, yPos);
+
+        doc.fontSize(10).font("Helvetica");
+        doc.text("Invoice Date:", labelX, yPos);
+        doc.text(invoice.issueDate || "-", valueX, yPos);
         yPos += 18;
-        
-        doc.text('Terms:', labelX, yPos);
-        doc.text(invoice.terms || 'Due on Receipt', valueX, yPos);
+
+        doc.text("Terms:", labelX, yPos);
+        doc.text(invoice.terms || "Due on Receipt", valueX, yPos);
         yPos += 18;
-        
-        doc.text('Due Date:', labelX, yPos);
+
+        doc.text("Due Date:", labelX, yPos);
         doc.text(invoice.dueDate, valueX, yPos);
         yPos += 18;
-        
+
         // Bill To info (standalone invoice - no client link)
         yPos = 180;
-        const billToName = invoice.billToName || 'Bill To';
-        doc.fontSize(10).font('Helvetica-Bold').text(billToName, margin, yPos);
+        const billToName = invoice.billToName || "Bill To";
+        doc.fontSize(10).font("Helvetica-Bold").text(billToName, margin, yPos);
         yPos += 16;
-        doc.font('Helvetica');
+        doc.font("Helvetica");
         if (invoice.billToAddress) {
-          const addressLines = invoice.billToAddress.split('\n');
-          addressLines.forEach(line => {
+          const addressLines = invoice.billToAddress.split("\n");
+          addressLines.forEach((line) => {
             doc.text(line, margin, yPos);
             yPos += 14;
           });
@@ -2126,64 +2414,93 @@ export async function registerRoutes(
           doc.text(invoice.billToEmail, margin, yPos);
           yPos += 14;
         }
-        
+
         // Line items table
         yPos = 280;
         const tableTop = yPos;
         const colWidths = [30, 220, 50, 70, 70, 70];
-        const colX = [margin, margin + 30, margin + 250, margin + 300, margin + 370, margin + 440];
-        
+        const colX = [
+          margin,
+          margin + 30,
+          margin + 250,
+          margin + 300,
+          margin + 370,
+          margin + 440,
+        ];
+
         // Table header
-        doc.fontSize(9).font('Helvetica-Bold');
-        doc.rect(margin, yPos - 5, contentWidth, 20).fill('#f5f5f5');
-        doc.fillColor('#333');
-        doc.text('#', colX[0], yPos);
-        doc.text('Description', colX[1], yPos);
-        doc.text('Qty', colX[2], yPos);
-        doc.text('Rate', colX[3], yPos);
-        doc.text('Discount', colX[4], yPos);
-        doc.text('Amount', colX[5], yPos);
-        
+        doc.fontSize(9).font("Helvetica-Bold");
+        doc.rect(margin, yPos - 5, contentWidth, 20).fill("#f5f5f5");
+        doc.fillColor("#333");
+        doc.text("#", colX[0], yPos);
+        doc.text("Description", colX[1], yPos);
+        doc.text("Qty", colX[2], yPos);
+        doc.text("Rate", colX[3], yPos);
+        doc.text("Discount", colX[4], yPos);
+        doc.text("Amount", colX[5], yPos);
+
         yPos += 25;
-        
+
         // Table rows
-        doc.font('Helvetica').fontSize(9);
+        doc.font("Helvetica").fontSize(9);
         const lineItems = (invoice.lineItems || []) as InvoiceLineItem[];
         lineItems.forEach((item, index) => {
-          doc.fillColor('#333');
+          doc.fillColor("#333");
           doc.text((index + 1).toString(), colX[0], yPos);
           doc.text(item.description, colX[1], yPos, { width: 200 });
           doc.text(item.quantity.toFixed(2), colX[2], yPos);
           doc.text(`$${(item.rate / 100).toFixed(2)}`, colX[3], yPos);
-          doc.text(item.discountPercent > 0 ? `${item.discountPercent}%` : '-', colX[4], yPos);
+          doc.text(
+            item.discountPercent > 0 ? `${item.discountPercent}%` : "-",
+            colX[4],
+            yPos,
+          );
           doc.text(`$${(item.amount / 100).toFixed(2)}`, colX[5], yPos);
           yPos += 30;
         });
-        
+
         // Totals
         yPos += 20;
         const totalsX = 380;
         const totalsValueX = 480;
-        
-        doc.font('Helvetica').fontSize(10);
-        doc.text('Sub Total', totalsX, yPos);
-        doc.text(`$${(invoice.subtotalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+
+        doc.font("Helvetica").fontSize(10);
+        doc.text("Sub Total", totalsX, yPos);
+        doc.text(
+          `$${(invoice.subtotalCents / 100).toFixed(2)}`,
+          totalsValueX,
+          yPos,
+          { align: "right", width: 70 },
+        );
         yPos += 20;
-        
-        doc.font('Helvetica-Bold');
-        doc.text('Total', totalsX, yPos);
-        doc.text(`$${(invoice.totalCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
+
+        doc.font("Helvetica-Bold");
+        doc.text("Total", totalsX, yPos);
+        doc.text(
+          `$${(invoice.totalCents / 100).toFixed(2)}`,
+          totalsValueX,
+          yPos,
+          { align: "right", width: 70 },
+        );
         yPos += 20;
-        
-        doc.text('Balance Due', totalsX, yPos);
-        doc.text(`$${(invoice.balanceDueCents / 100).toFixed(2)}`, totalsValueX, yPos, { align: 'right', width: 70 });
-        
+
+        doc.text("Balance Due", totalsX, yPos);
+        doc.text(
+          `$${(invoice.balanceDueCents / 100).toFixed(2)}`,
+          totalsValueX,
+          yPos,
+          { align: "right", width: 70 },
+        );
+
         // Footer
         yPos = 650;
-        doc.font('Helvetica').fontSize(10);
-        const footerText = invoice.footerText || settings?.defaultFooterText || 'Thanks for your business.';
+        doc.font("Helvetica").fontSize(10);
+        const footerText =
+          invoice.footerText ||
+          settings?.defaultFooterText ||
+          "Thanks for your business.";
         doc.text(footerText, margin, yPos);
-        
+
         doc.end();
       } catch (error) {
         console.error("Error generating PDF:", error);
@@ -2200,26 +2517,29 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
-        
+
         // Get settings for auto-numbering
         const settingsId = `IS-${userId}`;
         let [settings] = await db
           .select()
           .from(invoiceSettings)
           .where(eq(invoiceSettings.id, settingsId));
-        
+
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
         const invoiceNumber = formatInvoiceNumber(prefix, nextNum);
-        
+
         // Calculate totals
         const lineItems = (req.body.lineItems || []) as InvoiceLineItem[];
-        const subtotalCents = lineItems.reduce((sum, item) => sum + item.amount, 0);
+        const subtotalCents = lineItems.reduce(
+          (sum, item) => sum + item.amount,
+          0,
+        );
         const taxPercent = req.body.taxPercent || 0;
         const taxCents = Math.round(subtotalCents * (taxPercent / 100));
         const totalCents = subtotalCents + taxCents;
         const balanceDueCents = totalCents;
-        
+
         // Create invoice (standalone - no client link required)
         const invoice = await storage.createInvoice({
           billToName: req.body.billToName,
@@ -2227,7 +2547,8 @@ export async function registerRoutes(
           billToAddress: req.body.billToAddress || null,
           invoiceNumber,
           title: req.body.title || `Invoice ${invoiceNumber}`,
-          issueDate: req.body.issueDate || new Date().toISOString().split('T')[0],
+          issueDate:
+            req.body.issueDate || new Date().toISOString().split("T")[0],
           dueDate: req.body.dueDate,
           terms: req.body.terms || settings?.defaultTerms || "Due on Receipt",
           lineItems,
@@ -2240,7 +2561,7 @@ export async function registerRoutes(
           status: req.body.status || "draft",
           footerText: req.body.footerText || settings?.defaultFooterText,
         });
-        
+
         // Increment next invoice number
         if (settings) {
           await db
@@ -2248,15 +2569,13 @@ export async function registerRoutes(
             .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
             .where(eq(invoiceSettings.id, settingsId));
         } else {
-          await db
-            .insert(invoiceSettings)
-            .values({
-              id: settingsId,
-              adminUserId: userId!,
-              nextInvoiceNumber: 2,
-            });
+          await db.insert(invoiceSettings).values({
+            id: settingsId,
+            adminUserId: userId!,
+            nextInvoiceNumber: 2,
+          });
         }
-        
+
         res.status(201).json(invoice);
       } catch (error) {
         console.error("Error creating invoice:", error);
@@ -2310,9 +2629,12 @@ export async function registerRoutes(
         // Fire webhook if payment is created as confirmed and has a client
         if (payment.status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
-          
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
-            console.error("[AdminPaymentCreate] Webhook error (non-blocking):", err.message);
+
+          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch((err) => {
+            console.error(
+              "[AdminPaymentCreate] Webhook error (non-blocking):",
+              err.message,
+            );
           });
         }
 
@@ -2336,8 +2658,8 @@ export async function registerRoutes(
 
         const validStatuses = ["pending", "posted", "confirmed", "rejected"];
         if (!validStatuses.includes(status)) {
-          return res.status(400).json({ 
-            message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
+          return res.status(400).json({
+            message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`,
           });
         }
 
@@ -2349,9 +2671,12 @@ export async function registerRoutes(
         // Fire payment received webhook if status is confirmed (non-blocking)
         if (status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
-          
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
-            console.error("[PaymentStatusUpdate] Webhook error (non-blocking):", err.message);
+
+          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch((err) => {
+            console.error(
+              "[PaymentStatusUpdate] Webhook error (non-blocking):",
+              err.message,
+            );
           });
         }
 
@@ -2398,16 +2723,21 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const file = req.file;
-        const { clientId, leaseId, invoiceId, title, docType, visibility, isActiveAgreement } =
-          req.body;
+        const {
+          clientId,
+          leaseId,
+          invoiceId,
+          title,
+          docType,
+          visibility,
+          isActiveAgreement,
+        } = req.body;
 
         if (!file || !clientId || !title) {
-          return res
-            .status(400)
-            .json({
-              message:
-                "Missing required fields: file, clientId, and title are required",
-            });
+          return res.status(400).json({
+            message:
+              "Missing required fields: file, clientId, and title are required",
+          });
         }
 
         if (file.mimetype !== "application/pdf") {
@@ -2521,8 +2851,8 @@ export async function registerRoutes(
             .where(
               and(
                 eq(documents.clientId, document.clientId),
-                eq(documents.isActiveAgreement, true)
-              )
+                eq(documents.isActiveAgreement, true),
+              ),
             );
         }
 
@@ -2555,8 +2885,8 @@ export async function registerRoutes(
           .where(
             and(
               eq(documents.clientId, clientId),
-              eq(documents.isActiveAgreement, true)
-            )
+              eq(documents.isActiveAgreement, true),
+            ),
           );
         res.json(activeDoc || null);
       } catch (error) {
@@ -2704,12 +3034,10 @@ export async function registerRoutes(
         const { status } = req.body;
 
         if (!["active", "paused", "inactive", "behind"].includes(status)) {
-          return res
-            .status(400)
-            .json({
-              message:
-                "Invalid status. Must be active, paused, inactive, or behind",
-            });
+          return res.status(400).json({
+            message:
+              "Invalid status. Must be active, paused, inactive, or behind",
+          });
         }
 
         const updated = await db
@@ -2845,7 +3173,7 @@ export async function registerRoutes(
       try {
         const clients = await storage.getAllClients();
         const payments = await storage.getAllPayments();
-        
+
         // Get all active billing items directly from database
         const allBillingItems = await db
           .select()
@@ -2853,11 +3181,15 @@ export async function registerRoutes(
           .where(eq(clientBillingItems.status, "active"));
 
         // Get active clients only (exclude paused/inactive)
-        const activeClients = clients.filter(c => c.status === "active" || c.status === "behind");
-        const activeClientIds = new Set(activeClients.map(c => c.clientId));
+        const activeClients = clients.filter(
+          (c) => c.status === "active" || c.status === "behind",
+        );
+        const activeClientIds = new Set(activeClients.map((c) => c.clientId));
 
         // Filter payments to only include those from active/behind clients
-        const activePayments = payments.filter(p => activeClientIds.has(p.clientId));
+        const activePayments = payments.filter((p) =>
+          activeClientIds.has(p.clientId),
+        );
 
         // Total Collected = confirmed payments from active/behind clients only
         const totalCollectedCents = activePayments
@@ -2867,29 +3199,33 @@ export async function registerRoutes(
         // Calculate Outstanding Balance using same logic as Client List:
         // Count billing periods that have become due, then subtract confirmed payments
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
+        const today = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+        );
+
         let totalOutstandingCents = 0;
         for (const client of activeClients) {
           const clientBills = allBillingItems.filter(
-            item => item.clientId === client.clientId
+            (item) => item.clientId === client.clientId,
           );
-          
+
           // Calculate total billing due using period-based logic
           let clientBillingDue = 0;
           for (const bill of clientBills) {
-            const dueParts = bill.dueDate.split('-').map(Number);
+            const dueParts = bill.dueDate.split("-").map(Number);
             const dueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
-            
+
             // Skip if due date is in the future
             if (dueDate > today) continue;
-            
+
             if (bill.frequency === "one_time") {
               clientBillingDue += bill.amountCents;
             } else {
               let periods = 0;
               let currentDue = new Date(dueDate);
-              
+
               while (currentDue <= today) {
                 periods++;
                 switch (bill.frequency) {
@@ -2902,18 +3238,31 @@ export async function registerRoutes(
                   case "monthly": {
                     const targetDay = dueDate.getDate();
                     const nextMonth = currentDue.getMonth() + 1;
-                    const year = currentDue.getFullYear() + Math.floor(nextMonth / 12);
+                    const year =
+                      currentDue.getFullYear() + Math.floor(nextMonth / 12);
                     const month = nextMonth % 12;
                     const daysInMonth = new Date(year, month + 1, 0).getDate();
-                    currentDue = new Date(year, month, Math.min(targetDay, daysInMonth));
+                    currentDue = new Date(
+                      year,
+                      month,
+                      Math.min(targetDay, daysInMonth),
+                    );
                     break;
                   }
                   case "yearly": {
                     const targetMonth = dueDate.getMonth();
                     const targetDay = dueDate.getDate();
                     const nextYear = currentDue.getFullYear() + 1;
-                    const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
-                    currentDue = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                    const daysInMonth = new Date(
+                      nextYear,
+                      targetMonth + 1,
+                      0,
+                    ).getDate();
+                    currentDue = new Date(
+                      nextYear,
+                      targetMonth,
+                      Math.min(targetDay, daysInMonth),
+                    );
                     break;
                   }
                 }
@@ -2921,14 +3270,15 @@ export async function registerRoutes(
               clientBillingDue += bill.amountCents * periods;
             }
           }
-          
+
           const clientConfirmedPayments = activePayments.filter(
-            p => p.clientId === client.clientId && p.status === 'confirmed'
+            (p) => p.clientId === client.clientId && p.status === "confirmed",
           );
           const clientPaymentsTotal = clientConfirmedPayments.reduce(
-            (sum, p) => sum + p.amountCents, 0
+            (sum, p) => sum + p.amountCents,
+            0,
           );
-          
+
           // Amount owed = billing due - payments (positive = owes)
           const amountOwed = clientBillingDue - clientPaymentsTotal;
           if (amountOwed > 0) {
@@ -2937,15 +3287,16 @@ export async function registerRoutes(
         }
 
         // Count payments needing verification from active/behind clients
-        const pendingVerificationCount = activePayments.filter(
-          (p) => ["pending", "posted"].includes(p.status),
+        const pendingVerificationCount = activePayments.filter((p) =>
+          ["pending", "posted"].includes(p.status),
         ).length;
 
         res.json({
           totalCollectedCents,
           outstandingCents: totalOutstandingCents, // Now matches Client Details (negative = owed)
           pendingVerificationCount,
-          activeClients: activeClients.filter(c => c.status === "active").length,
+          activeClients: activeClients.filter((c) => c.status === "active")
+            .length,
         });
       } catch (error) {
         console.error("Error fetching stats:", error);
@@ -2986,12 +3337,16 @@ export async function registerRoutes(
           .where(
             and(
               eq(clientBillingItems.clientId, profile.clientId),
-              eq(clientBillingItems.status, "active")
-            )
+              eq(clientBillingItems.status, "active"),
+            ),
           );
 
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const today = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+        );
 
         // Calculate amount due based on billing items (same logic as admin side)
         let totalBillingDue = 0;
@@ -3004,18 +3359,31 @@ export async function registerRoutes(
           isPaid: boolean;
           currentPeriodDue: string;
           nextBillingDate: string | null;
-          coveringPayment: { paymentId: string; amountCents: number; paidAt: string } | null;
+          coveringPayment: {
+            paymentId: string;
+            amountCents: number;
+            paidAt: string;
+          } | null;
         }> = [];
 
         // Get confirmed payments total for balance calculation
-        const confirmedPayments = payments.filter(p => p.status === "confirmed");
-        const confirmedPaymentsTotal = confirmedPayments.reduce((sum, p) => sum + p.amountCents, 0);
+        const confirmedPayments = payments.filter(
+          (p) => p.status === "confirmed",
+        );
+        const confirmedPaymentsTotal = confirmedPayments.reduce(
+          (sum, p) => sum + p.amountCents,
+          0,
+        );
 
         for (const bill of billingItems) {
           // Parse dueDate as local date
-          const dueParts = bill.dueDate.split('-').map(Number);
-          const firstDueDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2]);
-          
+          const dueParts = bill.dueDate.split("-").map(Number);
+          const firstDueDate = new Date(
+            dueParts[0],
+            dueParts[1] - 1,
+            dueParts[2],
+          );
+
           let periods = 0;
           let currentPeriodDue = new Date(firstDueDate);
           let nextBillingDate: Date | null = null;
@@ -3033,11 +3401,11 @@ export async function registerRoutes(
             // Recurring: find current period and next billing date
             let iterDate = new Date(firstDueDate);
             let lastDue = new Date(firstDueDate);
-            
+
             while (iterDate <= today) {
               periods++;
               lastDue = new Date(iterDate);
-              
+
               // Advance to next period
               switch (bill.frequency) {
                 case "weekly":
@@ -3049,23 +3417,36 @@ export async function registerRoutes(
                 case "monthly": {
                   const targetDay = firstDueDate.getDate();
                   const nextMonth = iterDate.getMonth() + 1;
-                  const year = iterDate.getFullYear() + Math.floor(nextMonth / 12);
+                  const year =
+                    iterDate.getFullYear() + Math.floor(nextMonth / 12);
                   const month = nextMonth % 12;
                   const daysInMonth = new Date(year, month + 1, 0).getDate();
-                  iterDate = new Date(year, month, Math.min(targetDay, daysInMonth));
+                  iterDate = new Date(
+                    year,
+                    month,
+                    Math.min(targetDay, daysInMonth),
+                  );
                   break;
                 }
                 case "yearly": {
                   const targetMonth = firstDueDate.getMonth();
                   const targetDay = firstDueDate.getDate();
                   const nextYear = iterDate.getFullYear() + 1;
-                  const daysInMonth = new Date(nextYear, targetMonth + 1, 0).getDate();
-                  iterDate = new Date(nextYear, targetMonth, Math.min(targetDay, daysInMonth));
+                  const daysInMonth = new Date(
+                    nextYear,
+                    targetMonth + 1,
+                    0,
+                  ).getDate();
+                  iterDate = new Date(
+                    nextYear,
+                    targetMonth,
+                    Math.min(targetDay, daysInMonth),
+                  );
                   break;
                 }
               }
             }
-            
+
             currentPeriodDue = lastDue;
             nextBillingDate = iterDate; // First date after today
           }
@@ -3080,44 +3461,55 @@ export async function registerRoutes(
             amountCents: bill.amountCents,
             frequency: bill.frequency || "one_time",
             isPaid: false, // Will update below
-            currentPeriodDue: currentPeriodDue.toISOString().split('T')[0],
-            nextBillingDate: nextBillingDate ? nextBillingDate.toISOString().split('T')[0] : null,
+            currentPeriodDue: currentPeriodDue.toISOString().split("T")[0],
+            nextBillingDate: nextBillingDate
+              ? nextBillingDate.toISOString().split("T")[0]
+              : null,
             coveringPayment: null,
           });
         }
 
         // Calculate amount owed
         const currentBalance = confirmedPaymentsTotal - totalBillingDue;
-        const amountDueCents = currentBalance < 0 ? Math.abs(currentBalance) : 0;
+        const amountDueCents =
+          currentBalance < 0 ? Math.abs(currentBalance) : 0;
 
         // Determine paid/unpaid status for each bill based on remaining balance
         // If client has paid enough to cover all bills, mark them as paid
         let remainingCredit = confirmedPaymentsTotal;
-        
+
         // Sort bills by due date (earliest first)
-        billingDetails.sort((a, b) => a.currentPeriodDue.localeCompare(b.currentPeriodDue));
+        billingDetails.sort((a, b) =>
+          a.currentPeriodDue.localeCompare(b.currentPeriodDue),
+        );
 
         // Find covering payments for each bill
         for (const detail of billingDetails) {
           if (remainingCredit >= detail.amountCents) {
             detail.isPaid = true;
             remainingCredit -= detail.amountCents;
-            
+
             // Find the most recent payment that could have covered this
-            const matchingPayment = confirmedPayments.find(p => {
-              const paymentDate = p.paidAt || p.createdAt;
-              if (!paymentDate) return false;
-              const paidDate = new Date(paymentDate);
-              const dueDate = new Date(detail.currentPeriodDue);
-              return paidDate >= dueDate || p.amountCents >= detail.amountCents;
-            }) || confirmedPayments[0];
-            
+            const matchingPayment =
+              confirmedPayments.find((p) => {
+                const paymentDate = p.paidAt || p.createdAt;
+                if (!paymentDate) return false;
+                const paidDate = new Date(paymentDate);
+                const dueDate = new Date(detail.currentPeriodDue);
+                return (
+                  paidDate >= dueDate || p.amountCents >= detail.amountCents
+                );
+              }) || confirmedPayments[0];
+
             if (matchingPayment) {
-              const paidAtDate = matchingPayment.paidAt || matchingPayment.createdAt;
+              const paidAtDate =
+                matchingPayment.paidAt || matchingPayment.createdAt;
               detail.coveringPayment = {
                 paymentId: matchingPayment.paymentId,
                 amountCents: matchingPayment.amountCents,
-                paidAt: paidAtDate ? new Date(paidAtDate).toISOString() : new Date().toISOString(),
+                paidAt: paidAtDate
+                  ? new Date(paidAtDate).toISOString()
+                  : new Date().toISOString(),
               };
             }
           }
@@ -3125,14 +3517,17 @@ export async function registerRoutes(
 
         // Find next due date from billing items
         const upcomingDueDates = billingDetails
-          .filter(b => b.nextBillingDate)
-          .map(b => b.nextBillingDate!)
+          .filter((b) => b.nextBillingDate)
+          .map((b) => b.nextBillingDate!)
           .sort();
-        const nextDueDate = upcomingDueDates.length > 0 ? upcomingDueDates[0] : null;
+        const nextDueDate =
+          upcomingDueDates.length > 0 ? upcomingDueDates[0] : null;
 
         const lastPayment = payments.length > 0 ? payments[0] : null;
         const activeLease = leases.find((l) => l.status === "active");
-        const activeAgreement = documents.find((d: any) => d.isActiveAgreement === true);
+        const activeAgreement = documents.find(
+          (d: any) => d.isActiveAgreement === true,
+        );
 
         res.json({
           client,
@@ -3209,21 +3604,23 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const profile = (req as any).userProfile;
-        
+
         if (!profile.clientId) {
           return res.status(403).json({ message: "No client profile linked" });
         }
-        
+
         const { amountCents, method, note } = req.body;
-        
+
         if (!amountCents || amountCents <= 0) {
           return res.status(400).json({ message: "Invalid payment amount" });
         }
-        
+
         if (!method) {
-          return res.status(400).json({ message: "Payment method is required" });
+          return res
+            .status(400)
+            .json({ message: "Payment method is required" });
         }
-        
+
         const payment = await storage.createPayment({
           clientId: profile.clientId,
           amountCents,
@@ -3232,7 +3629,7 @@ export async function registerRoutes(
           status: "pending",
           paidAt: new Date(),
         });
-        
+
         res.status(201).json(payment);
       } catch (error) {
         console.error("Error creating client payment:", error);
@@ -3275,10 +3672,10 @@ export async function registerRoutes(
 
         // Use centralized base URL (prefers APP_BASE_URL for production custom domain)
         const baseUrl = getBaseUrl(req);
-        
+
         const successUrl = `${baseUrl}/client/payments?success=1&session_id={CHECKOUT_SESSION_ID}`;
         const cancelUrl = `${baseUrl}/client/payments?canceled=1`;
-        
+
         // Log for debugging
         console.log("[Stripe Checkout] Using baseUrl:", baseUrl);
         console.log("[Stripe Checkout] success_url:", successUrl);
@@ -3313,14 +3710,14 @@ export async function registerRoutes(
           cancel_url: cancelUrl,
         });
 
-        res.json({ 
+        res.json({
           checkoutUrl: session.url,
           sessionId: session.id,
         });
       } catch (error: any) {
         console.error("Error creating Stripe checkout session:", error);
-        res.status(500).json({ 
-          message: error.message || "Failed to create checkout session" 
+        res.status(500).json({
+          message: error.message || "Failed to create checkout session",
         });
       }
     },
@@ -3351,31 +3748,39 @@ export async function registerRoutes(
 
         // Validate payment status
         if (session.payment_status !== "paid") {
-          return res.status(400).json({ 
+          return res.status(400).json({
             message: "Payment not completed",
-            paymentStatus: session.payment_status 
+            paymentStatus: session.payment_status,
           });
         }
 
         // Extract clientId from client_reference_id or metadata
-        const clientId = session.client_reference_id || session.metadata?.clientId;
+        const clientId =
+          session.client_reference_id || session.metadata?.clientId;
         if (!clientId) {
-          return res.status(400).json({ message: "Client ID not found in session" });
+          return res
+            .status(400)
+            .json({ message: "Client ID not found in session" });
         }
 
         // Verify the authenticated user owns this client
         const profile = (req as any).userProfile;
         if (profile.clientId !== clientId) {
-          return res.status(403).json({ message: "Unauthorized - client mismatch" });
+          return res
+            .status(403)
+            .json({ message: "Unauthorized - client mismatch" });
         }
 
         // Use payment_intent or session.id as idempotency key
         const idempotencyKey = (session.payment_intent as string) || session.id;
 
         // Check if payment already exists (idempotency) - key by payment_intent OR session.id
-        const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : null;
+        const paymentIntentId =
+          typeof session.payment_intent === "string"
+            ? session.payment_intent
+            : null;
         const existingPayments = await storage.getPaymentsByClient(clientId);
-        const existingPayment = existingPayments.find(p => {
+        const existingPayment = existingPayments.find((p) => {
           // Check by payment intent if available
           if (paymentIntentId && p.stripePaymentIntentId === paymentIntentId) {
             return true;
@@ -3388,18 +3793,18 @@ export async function registerRoutes(
         });
 
         if (existingPayment) {
-          return res.json({ 
-            payment: existingPayment, 
-            alreadyExists: true 
+          return res.json({
+            payment: existingPayment,
+            alreadyExists: true,
           });
         }
 
         // Create new payment record
         const amountCents = session.amount_total || 0;
-        const noteText = session.metadata?.note 
+        const noteText = session.metadata?.note
           ? `${session.metadata.note} (Session: ${session.id})`
           : `Stripe Session: ${session.id}`;
-        
+
         const payment = await storage.createPayment({
           clientId,
           amountCents,
@@ -3410,23 +3815,28 @@ export async function registerRoutes(
           stripePaymentIntentId: paymentIntentId,
         });
 
-        console.log(`[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`);
+        console.log(
+          `[Stripe Confirm] Created payment ${payment.paymentId} for client ${clientId}, amount: ${amountCents}`,
+        );
 
         // Fire payment received webhook for confirmed Stripe payment (non-blocking)
         const baseUrl = getBaseUrl(req);
-        
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
-          console.error("[Stripe Confirm] Webhook error (non-blocking):", err.message);
+
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch((err) => {
+          console.error(
+            "[Stripe Confirm] Webhook error (non-blocking):",
+            err.message,
+          );
         });
 
-        res.json({ 
-          payment, 
-          alreadyExists: false 
+        res.json({
+          payment,
+          alreadyExists: false,
         });
       } catch (error: any) {
         console.error("Error confirming Stripe checkout:", error);
-        res.status(500).json({ 
-          message: error.message || "Failed to confirm checkout" 
+        res.status(500).json({
+          message: error.message || "Failed to confirm checkout",
         });
       }
     },
@@ -3443,11 +3853,11 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const profile = (req as any).userProfile;
-        
+
         if (!profile.clientId) {
           return res.status(403).json({ message: "No client profile linked" });
         }
-        
+
         const client = await storage.getClient(profile.clientId);
         res.json(client);
       } catch (error) {
@@ -3464,28 +3874,29 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const profile = (req as any).userProfile;
-        
+
         if (!profile.clientId) {
           return res.status(403).json({ message: "No client profile linked" });
         }
-        
-        const { displayName, email, phone, address, notificationsEnabled } = req.body;
-        
+
+        const { displayName, email, phone, address, notificationsEnabled } =
+          req.body;
+
         // Validate required fields
         if (!displayName || !displayName.trim()) {
           return res.status(400).json({ message: "Name is required" });
         }
-        
+
         if (!email || !email.trim()) {
           return res.status(400).json({ message: "Email is required" });
         }
-        
+
         // Basic email validation
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(email)) {
           return res.status(400).json({ message: "Invalid email format" });
         }
-        
+
         const updated = await storage.updateClient(profile.clientId, {
           displayName: displayName.trim(),
           email: email.trim().toLowerCase(),
@@ -3493,7 +3904,7 @@ export async function registerRoutes(
           address: address?.trim() || null,
           notificationsEnabled: notificationsEnabled ?? true,
         });
-        
+
         res.json(updated);
       } catch (error) {
         console.error("Error updating client profile:", error);
@@ -3513,7 +3924,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const settings = await storage.getPaymentSettings();
-        
+
         // Return sanitized settings (no admin userId)
         res.json({
           cashAppHandle: settings?.cashAppHandle || null,
@@ -3521,7 +3932,9 @@ export async function registerRoutes(
           venmoHandle: settings?.venmoHandle || null,
           venmoLink: settings?.venmoLink || null,
           bankInstructions: settings?.bankInstructions || null,
-          stripePlaceholderMessage: settings?.stripePlaceholderMessage || "Stripe payments coming soon!",
+          stripePlaceholderMessage:
+            settings?.stripePlaceholderMessage ||
+            "Stripe payments coming soon!",
         });
       } catch (error) {
         console.error("Error fetching payment settings for client:", error);
@@ -3624,7 +4037,7 @@ export async function registerRoutes(
           .orderBy(desc(clientBillingItems.dueDate));
 
         // Transform to match expected format for client dashboard
-        const entries = items.map(item => ({
+        const entries = items.map((item) => ({
           entryId: item.id,
           title: item.title,
           amountCents: item.amountCents,
@@ -3656,16 +4069,18 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const userIp = req.ip || req.socket.remoteAddress || "unknown";
-        
+
         // Check if admin already exists - if so, reject with 403
         const adminExists = await storage.hasExistingAdmin();
         if (adminExists) {
-          console.warn(`[SECURITY] Bootstrap attempt blocked - admin already exists. User: ${userId}, IP: ${userIp}`);
-          return res.status(403).json({ 
-            message: "Bootstrap is disabled. An admin account already exists." 
+          console.warn(
+            `[SECURITY] Bootstrap attempt blocked - admin already exists. User: ${userId}, IP: ${userIp}`,
+          );
+          return res.status(403).json({
+            message: "Bootstrap is disabled. An admin account already exists.",
           });
         }
-        
+
         const { secretKey } = req.body;
 
         // Check for admin bootstrap secret (set in environment)
@@ -3673,7 +4088,9 @@ export async function registerRoutes(
           process.env.ADMIN_BOOTSTRAP_SECRET || "SETUP_ADMIN_2024";
 
         if (secretKey !== bootstrapSecret) {
-          console.warn(`[SECURITY] Bootstrap attempt with invalid secret. User: ${userId}, IP: ${userIp}`);
+          console.warn(
+            `[SECURITY] Bootstrap attempt with invalid secret. User: ${userId}, IP: ${userIp}`,
+          );
           return res.status(403).json({ message: "Invalid bootstrap secret" });
         }
 
@@ -3685,7 +4102,9 @@ export async function registerRoutes(
           status: "active",
         });
 
-        console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
+        console.log(
+          `[SECURITY] Admin bootstrapped successfully. User: ${userId}`,
+        );
         res.json({ success: true, profile });
       } catch (error) {
         console.error("Error bootstrapping admin:", error);
@@ -3704,87 +4123,98 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const results: Array<{ test: string; status: "pass" | "fail"; details: string }> = [];
-        
+        const results: Array<{
+          test: string;
+          status: "pass" | "fail";
+          details: string;
+        }> = [];
+
         // Get current admin profile
         const adminProfile = (req as any).userProfile;
-        
+
         // Test 1: Verify admin middleware works
         results.push({
           test: "Admin role enforcement",
           status: adminProfile?.role === "admin" ? "pass" : "fail",
           details: `Current user role: ${adminProfile?.role || "unknown"}`,
         });
-        
+
         // Test 2: Verify client routes require linkedClientId (not browser-provided)
         results.push({
           test: "Client ID server-derived (not trusted from browser)",
           status: "pass", // Verified by code audit - all client routes use profile.clientId
-          details: "All /api/client/* endpoints use server-derived clientId from authenticated profile",
+          details:
+            "All /api/client/* endpoints use server-derived clientId from authenticated profile",
         });
-        
+
         // Test 3: Verify webhook tokens are not exposed to frontend
         const automationSettings = await storage.getAutomationSettings();
-        const tokensExposed = automationSettings && (
-          "signupEmailToken" in automationSettings ||
-          "paymentReceivedToken" in automationSettings ||
-          "monthlySummaryToken" in automationSettings
-        );
+        const tokensExposed =
+          automationSettings &&
+          ("signupEmailToken" in automationSettings ||
+            "paymentReceivedToken" in automationSettings ||
+            "monthlySummaryToken" in automationSettings);
         results.push({
           test: "Webhook tokens not exposed to frontend (GET returns hasXXXToken booleans only)",
           status: "pass", // Verified by code audit - GET returns hasXXXToken, not actual tokens
-          details: "GET /api/admin/automation-settings returns hasXXXToken flags, not actual token values",
+          details:
+            "GET /api/admin/automation-settings returns hasXXXToken flags, not actual token values",
         });
-        
+
         // Test 4: Verify document download verifies client ownership
         results.push({
           test: "Document download verifies client ownership",
           status: "pass", // Verified by code audit - checks document.clientId !== profile.clientId
-          details: "/api/client/documents/:id/download verifies document.clientId matches profile.clientId",
+          details:
+            "/api/client/documents/:id/download verifies document.clientId matches profile.clientId",
         });
-        
+
         // Test 5: Verify Stripe checkout uses server-derived clientId
         results.push({
           test: "Stripe checkout uses server-derived clientId",
           status: "pass", // Verified by code audit - uses profile.clientId, not req.body
-          details: "Stripe session created with profile.clientId from authenticated user, not browser input",
+          details:
+            "Stripe session created with profile.clientId from authenticated user, not browser input",
         });
-        
+
         // Test 6: Verify confirm-checkout verifies client ownership
         results.push({
           test: "Stripe confirm-checkout verifies client ownership",
           status: "pass", // Verified by code audit - checks profile.clientId !== session.clientId
-          details: "POST /api/stripe/confirm-checkout verifies authenticated user owns the session's clientId",
+          details:
+            "POST /api/stripe/confirm-checkout verifies authenticated user owns the session's clientId",
         });
-        
+
         // Test 7: Rate limiting configured
         results.push({
           test: "Rate limiting on sensitive endpoints",
           status: "pass",
-          details: "Auth/signup endpoints: 10/15min, Webhook tests: 5/min, Sensitive ops: 30/min",
+          details:
+            "Auth/signup endpoints: 10/15min, Webhook tests: 5/min, Sensitive ops: 30/min",
         });
-        
+
         // Test 8: Active agreement server-side enforcement
         results.push({
           test: "One active agreement per client (server-enforced)",
           status: "pass", // Verified by code audit - clearActiveAgreementForClient called
-          details: "Server clears existing active agreements before setting new one via clearActiveAgreementForClient()",
+          details:
+            "Server clears existing active agreements before setting new one via clearActiveAgreementForClient()",
         });
-        
+
         // Test 9: Bootstrap one-time only
         const adminExists = await storage.hasExistingAdmin();
         results.push({
           test: "Bootstrap endpoint disabled after first admin",
           status: adminExists ? "pass" : "pass", // Both states are valid - test checks that mechanism exists
-          details: adminExists 
-            ? "Admin exists - bootstrap endpoint will reject new attempts with 403" 
+          details: adminExists
+            ? "Admin exists - bootstrap endpoint will reject new attempts with 403"
             : "No admin yet - bootstrap available for initial setup only",
         });
-        
+
         // Count results
-        const passCount = results.filter(r => r.status === "pass").length;
-        const failCount = results.filter(r => r.status === "fail").length;
-        
+        const passCount = results.filter((r) => r.status === "pass").length;
+        const failCount = results.filter((r) => r.status === "fail").length;
+
         res.json({
           summary: {
             total: results.length,
@@ -3817,6 +4247,17 @@ export async function registerRoutes(
           query?: string;
           days?: number;
           useLLM?: boolean;
+        };
+        const debug = {
+          useLLMRequested: Boolean(useLLM),
+          openaiKeyPresent: Boolean(process.env.OPENAI_API_KEY),
+          AI_ANALYZER_ENABLE_LLM:
+            process.env.AI_ANALYZER_ENABLE_LLM ?? "(unset)",
+          llmEnabledFn: false,
+          llmAttempted: false,
+          llmSucceeded: false,
+          llmError: null as string | null,
+          model: null as string | null,
         };
 
         const lookbackDays = days || 90;
@@ -3950,8 +4391,7 @@ export async function registerRoutes(
 
         let summary: string;
         if (recurringPayments.length === 0) {
-          summary =
-            "No recurring payments detected in the analyzed period.";
+          summary = "No recurring payments detected in the analyzed period.";
         } else {
           summary = `Detected ${recurringPayments.length} recurring payment${recurringPayments.length !== 1 ? "s" : ""} with an estimated monthly total of $${summaryDollars}.`;
         }
@@ -3961,10 +4401,20 @@ export async function registerRoutes(
             const { openai, isLlmEnabled } = await import(
               "./services/openaiClient"
             );
-            if (isLlmEnabled()) {
-              console.log(
-                "[ai-analyzer] LLM enabled, generating enhanced summary",
-              );
+
+            debug.llmEnabledFn = isLlmEnabled();
+
+            if (debug.llmEnabledFn) {
+              debug.llmAttempted = true;
+              debug.model = "gpt-4o-mini";
+
+              console.log("[ai-analyzer] Calling OpenAI", {
+                useLLMRequested: debug.useLLMRequested,
+                openaiKeyPresent: debug.openaiKeyPresent,
+                AI_ANALYZER_ENABLE_LLM: debug.AI_ANALYZER_ENABLE_LLM,
+                model: debug.model,
+              });
+
               const llmPayload = recurringPayments.map((p) => ({
                 merchant: p.merchantName,
                 frequency: p.frequency,
@@ -3979,10 +4429,7 @@ export async function registerRoutes(
                 model: "gpt-4o-mini",
                 messages: [
                   { role: "system", content: systemPrompt },
-                  {
-                    role: "user",
-                    content: JSON.stringify(llmPayload),
-                  },
+                  { role: "user", content: JSON.stringify(llmPayload) },
                 ],
                 max_tokens: 300,
                 temperature: 0.7,
@@ -3991,18 +4438,23 @@ export async function registerRoutes(
               const llmSummary =
                 completion.choices[0]?.message?.content?.trim();
               if (llmSummary) {
-                summary = llmSummary;
+                summary = `[OPENAI_OK] ${llmSummary}`; // temporary marker
+                debug.llmSucceeded = true;
+              } else {
+                debug.llmError = "OpenAI returned empty summary";
               }
             } else {
               console.log(
-                "[ai-analyzer] LLM requested but not enabled, using heuristic summary",
+                "[ai-analyzer] LLM requested but isLlmEnabled() is false",
+                {
+                  openaiKeyPresent: debug.openaiKeyPresent,
+                  AI_ANALYZER_ENABLE_LLM: debug.AI_ANALYZER_ENABLE_LLM,
+                },
               );
             }
           } catch (llmError: any) {
-            console.error(
-              "[ai-analyzer] LLM call failed, falling back to heuristic summary:",
-              llmError.message,
-            );
+            debug.llmError = llmError?.message || String(llmError);
+            console.error("[ai-analyzer] OpenAI call failed:", debug.llmError);
           }
         }
 
@@ -4012,6 +4464,7 @@ export async function registerRoutes(
           totalMonthlyEstimate,
           analyzedTransactions: transactions.length,
           dateRange: { start: startStr, end: endStr },
+          debug, // add this
         });
       } catch (error: any) {
         console.error("[ai-analyzer] Error in AI finance analyzer:", error);
@@ -4045,21 +4498,27 @@ export async function registerRoutes(
 
         res.json({ link_token: response.data.link_token });
       } catch (error: any) {
-        const plaidError = error?.response?.data || error?.response?.body || error;
+        const plaidError =
+          error?.response?.data || error?.response?.body || error;
         console.error("Error creating link token:", plaidError);
-        
+
         const errorResponse: Record<string, any> = {
           message: "Failed to create link token",
         };
-        
+
         if (plaidError) {
-          if (plaidError.error_type) errorResponse.error_type = plaidError.error_type;
-          if (plaidError.error_code) errorResponse.error_code = plaidError.error_code;
-          if (plaidError.error_message) errorResponse.error_message = plaidError.error_message;
-          if (plaidError.display_message) errorResponse.display_message = plaidError.display_message;
-          if (plaidError.request_id) errorResponse.request_id = plaidError.request_id;
+          if (plaidError.error_type)
+            errorResponse.error_type = plaidError.error_type;
+          if (plaidError.error_code)
+            errorResponse.error_code = plaidError.error_code;
+          if (plaidError.error_message)
+            errorResponse.error_message = plaidError.error_message;
+          if (plaidError.display_message)
+            errorResponse.display_message = plaidError.display_message;
+          if (plaidError.request_id)
+            errorResponse.request_id = plaidError.request_id;
         }
-        
+
         res.status(500).json(errorResponse);
       }
     },
@@ -4232,7 +4691,9 @@ export async function registerRoutes(
         const userId = getUserId(req);
         const dryRun = req.query.dryRun === "1";
 
-        console.log(`[plaid-sync] Starting sync for admin=${userId}, dryRun=${dryRun}`);
+        console.log(
+          `[plaid-sync] Starting sync for admin=${userId}, dryRun=${dryRun}`,
+        );
         const syncStart = Date.now();
 
         const items = await db
@@ -4243,7 +4704,14 @@ export async function registerRoutes(
         console.log(`[plaid-sync] Found ${items.length} linked items`);
 
         if (items.length === 0) {
-          return res.json({ synced_items: 0, failed_items: 0, results: [], added: 0, modified: 0, removed: 0 });
+          return res.json({
+            synced_items: 0,
+            failed_items: 0,
+            results: [],
+            added: 0,
+            modified: 0,
+            removed: 0,
+          });
         }
 
         const results: any[] = [];
@@ -4256,7 +4724,9 @@ export async function registerRoutes(
         for (const item of items) {
           const itemStart = Date.now();
           try {
-            console.log(`[plaid-sync] Syncing item=${item.itemId}, institution=${item.institutionName}`);
+            console.log(
+              `[plaid-sync] Syncing item=${item.itemId}, institution=${item.institutionName}`,
+            );
 
             const cursorResult = await db
               .select()
@@ -4265,7 +4735,9 @@ export async function registerRoutes(
               .limit(1);
 
             const currentCursor = cursorResult[0]?.cursor || undefined;
-            console.log(`[plaid-sync] item=${item.itemId} cursor=${currentCursor ? "exists" : "none"}`);
+            console.log(
+              `[plaid-sync] item=${item.itemId} cursor=${currentCursor ? "exists" : "none"}`,
+            );
 
             const syncResponse = await plaidClient.transactionsSync({
               access_token: item.accessToken,
@@ -4273,9 +4745,13 @@ export async function registerRoutes(
             });
 
             const { added, modified, removed } = syncResponse.data;
-            console.log(`[plaid-sync] item=${item.itemId} plaid response: added=${added.length}, modified=${modified.length}, removed=${removed.length}`);
+            console.log(
+              `[plaid-sync] item=${item.itemId} plaid response: added=${added.length}, modified=${modified.length}, removed=${removed.length}`,
+            );
 
-            let itemAdded = 0, itemModified = 0, itemRemoved = 0;
+            let itemAdded = 0,
+              itemModified = 0,
+              itemRemoved = 0;
 
             if (!dryRun) {
               for (const txn of added) {
@@ -4285,7 +4761,10 @@ export async function registerRoutes(
                   .where(
                     and(
                       eq(plaidTransactions.itemId, item.itemId),
-                      eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
+                      eq(
+                        plaidTransactions.plaidTransactionId,
+                        txn.transaction_id,
+                      ),
                     ),
                   )
                   .limit(1);
@@ -4302,7 +4781,8 @@ export async function registerRoutes(
                     amountCents: Math.round(txn.amount * 100),
                     isoCurrencyCode: txn.iso_currency_code || "USD",
                     pending: txn.pending,
-                    categoryPrimary: txn.personal_finance_category?.primary || null,
+                    categoryPrimary:
+                      txn.personal_finance_category?.primary || null,
                     rawJson: txn as any,
                   });
                   itemAdded++;
@@ -4318,14 +4798,18 @@ export async function registerRoutes(
                     merchantName: txn.merchant_name || null,
                     amountCents: Math.round(txn.amount * 100),
                     pending: txn.pending,
-                    categoryPrimary: txn.personal_finance_category?.primary || null,
+                    categoryPrimary:
+                      txn.personal_finance_category?.primary || null,
                     rawJson: txn as any,
                     updatedAt: new Date(),
                   })
                   .where(
                     and(
                       eq(plaidTransactions.itemId, item.itemId),
-                      eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
+                      eq(
+                        plaidTransactions.plaidTransactionId,
+                        txn.transaction_id,
+                      ),
                     ),
                   );
                 itemModified++;
@@ -4338,7 +4822,10 @@ export async function registerRoutes(
                     .where(
                       and(
                         eq(plaidTransactions.itemId, item.itemId),
-                        eq(plaidTransactions.plaidTransactionId, r.transaction_id),
+                        eq(
+                          plaidTransactions.plaidTransactionId,
+                          r.transaction_id,
+                        ),
                       ),
                     );
                   itemRemoved++;
@@ -4419,7 +4906,13 @@ export async function registerRoutes(
               errorInfo.error_code = plaidErr.error_code;
               errorInfo.error_message = plaidErr.error_message;
               errorInfo.error_type = plaidErr.error_type;
-              if (["ITEM_LOGIN_REQUIRED", "INVALID_ACCESS_TOKEN", "ITEM_LOCKED"].includes(plaidErr.error_code)) {
+              if (
+                [
+                  "ITEM_LOGIN_REQUIRED",
+                  "INVALID_ACCESS_TOKEN",
+                  "ITEM_LOCKED",
+                ].includes(plaidErr.error_code)
+              ) {
                 errorInfo.action_required = "unlink_and_relink";
               }
             } else {
@@ -4431,7 +4924,9 @@ export async function registerRoutes(
         }
 
         const totalDuration = Date.now() - syncStart;
-        console.log(`[plaid-sync] Complete: synced=${syncedCount}, failed=${failedCount}, duration=${totalDuration}ms`);
+        console.log(
+          `[plaid-sync] Complete: synced=${syncedCount}, failed=${failedCount}, duration=${totalDuration}ms`,
+        );
 
         res.json({
           synced_items: syncedCount,
@@ -4446,10 +4941,11 @@ export async function registerRoutes(
       } catch (error: any) {
         const plaidError = error?.response?.data || error;
         console.error("[plaid-sync] Critical error:", plaidError);
-        res.status(500).json({ 
+        res.status(500).json({
           message: "Failed to sync transactions",
           error_code: plaidError?.error_code || null,
-          error_message: plaidError?.error_message || error?.message || "Unknown error",
+          error_message:
+            plaidError?.error_message || error?.message || "Unknown error",
           error_type: plaidError?.error_type || null,
         });
       }
@@ -4716,7 +5212,8 @@ export async function registerRoutes(
             pending: t.pending,
             category_primary: t.categoryPrimary,
             override_finance_type: t.overrideFinanceType,
-            effective_finance_type: t.overrideFinanceType || accountDefault || null,
+            effective_finance_type:
+              t.overrideFinanceType || accountDefault || null,
           })),
         });
       } catch (error) {
@@ -4728,15 +5225,21 @@ export async function registerRoutes(
 
   // G2) Get transactions for multiple Plaid accounts (for tile drilldowns)
   const bulkTransactionsSchema = z.object({
-    plaidAccountIds: z.array(z.string()).min(1, "At least one account ID required"),
-    start_date: z.string().optional().refine(
-      (val) => !val || !isNaN(Date.parse(val)),
-      { message: "Invalid start_date format" }
-    ),
-    end_date: z.string().optional().refine(
-      (val) => !val || !isNaN(Date.parse(val)),
-      { message: "Invalid end_date format" }
-    ),
+    plaidAccountIds: z
+      .array(z.string())
+      .min(1, "At least one account ID required"),
+    start_date: z
+      .string()
+      .optional()
+      .refine((val) => !val || !isNaN(Date.parse(val)), {
+        message: "Invalid start_date format",
+      }),
+    end_date: z
+      .string()
+      .optional()
+      .refine((val) => !val || !isNaN(Date.parse(val)), {
+        message: "Invalid end_date format",
+      }),
     search: z.string().optional(),
   });
 
@@ -4748,13 +5251,14 @@ export async function registerRoutes(
       try {
         const parseResult = bulkTransactionsSchema.safeParse(req.body);
         if (!parseResult.success) {
-          return res.status(400).json({ 
-            message: "Validation error", 
-            errors: parseResult.error.flatten().fieldErrors 
+          return res.status(400).json({
+            message: "Validation error",
+            errors: parseResult.error.flatten().fieldErrors,
           });
         }
 
-        const { plaidAccountIds, start_date, end_date, search } = parseResult.data;
+        const { plaidAccountIds, start_date, end_date, search } =
+          parseResult.data;
         const userId = getUserId(req);
 
         // Default to last 30 days
@@ -4818,7 +5322,7 @@ export async function registerRoutes(
 
         // Build a map of account defaults for transaction effective type calculation
         const accountDefaultMap = new Map(
-          accounts.map(a => [a.plaidAccountId, a.defaultFinanceType])
+          accounts.map((a) => [a.plaidAccountId, a.defaultFinanceType]),
         );
 
         res.json({
@@ -4844,7 +5348,10 @@ export async function registerRoutes(
             pending: t.pending,
             category_primary: t.categoryPrimary,
             override_finance_type: t.overrideFinanceType,
-            effective_finance_type: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
+            effective_finance_type:
+              t.overrideFinanceType ||
+              accountDefaultMap.get(t.plaidAccountId) ||
+              null,
           })),
         });
       } catch (error) {
@@ -4897,7 +5404,9 @@ export async function registerRoutes(
         }
 
         const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+        const startDate = new Date(
+          endDate.getTime() - days * 24 * 60 * 60 * 1000,
+        );
         const searchTerm = `%${search}%`;
 
         const transactions = await db
@@ -4906,7 +5415,10 @@ export async function registerRoutes(
           .where(
             and(
               inArray(plaidTransactions.plaidAccountId, accountIds),
-              gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+              gte(
+                plaidTransactions.date,
+                startDate.toISOString().split("T")[0],
+              ),
               or(
                 ilike(plaidTransactions.name, searchTerm),
                 ilike(plaidTransactions.merchantName, searchTerm),
@@ -4943,7 +5455,9 @@ export async function registerRoutes(
 
   // G3) Update account default finance type
   const updateAccountTypeSchema = z.object({
-    defaultFinanceType: z.enum(["income", "bill", "debt", "holding", "other"]).nullable(),
+    defaultFinanceType: z
+      .enum(["income", "bill", "debt", "holding", "other"])
+      .nullable(),
   });
 
   app.patch(
@@ -4955,9 +5469,9 @@ export async function registerRoutes(
         const { accountId } = req.params;
         const parseResult = updateAccountTypeSchema.safeParse(req.body);
         if (!parseResult.success) {
-          return res.status(400).json({ 
-            message: "Validation error", 
-            errors: parseResult.error.flatten().fieldErrors 
+          return res.status(400).json({
+            message: "Validation error",
+            errors: parseResult.error.flatten().fieldErrors,
           });
         }
 
@@ -4982,9 +5496,9 @@ export async function registerRoutes(
 
         await db
           .update(plaidAccounts)
-          .set({ 
-            defaultFinanceType, 
-            updatedAt: new Date() 
+          .set({
+            defaultFinanceType,
+            updatedAt: new Date(),
           })
           .where(eq(plaidAccounts.accountId, accountId));
 
@@ -4998,7 +5512,9 @@ export async function registerRoutes(
 
   // G4) Update transaction override finance type
   const updateTransactionTypeSchema = z.object({
-    overrideFinanceType: z.enum(["income", "bill", "debt", "holding", "other"]).nullable(),
+    overrideFinanceType: z
+      .enum(["income", "bill", "debt", "holding", "other"])
+      .nullable(),
   });
 
   app.patch(
@@ -5010,9 +5526,9 @@ export async function registerRoutes(
         const { transactionId } = req.params;
         const parseResult = updateTransactionTypeSchema.safeParse(req.body);
         if (!parseResult.success) {
-          return res.status(400).json({ 
-            message: "Validation error", 
-            errors: parseResult.error.flatten().fieldErrors 
+          return res.status(400).json({
+            message: "Validation error",
+            errors: parseResult.error.flatten().fieldErrors,
           });
         }
 
@@ -5023,7 +5539,10 @@ export async function registerRoutes(
         const transaction = await db
           .select({ transactionId: plaidTransactions.transactionId })
           .from(plaidTransactions)
-          .innerJoin(plaidItems, eq(plaidTransactions.itemId, plaidItems.itemId))
+          .innerJoin(
+            plaidItems,
+            eq(plaidTransactions.itemId, plaidItems.itemId),
+          )
           .where(
             and(
               eq(plaidTransactions.transactionId, transactionId),
@@ -5037,9 +5556,9 @@ export async function registerRoutes(
 
         await db
           .update(plaidTransactions)
-          .set({ 
-            overrideFinanceType, 
-            updatedAt: new Date() 
+          .set({
+            overrideFinanceType,
+            updatedAt: new Date(),
           })
           .where(eq(plaidTransactions.transactionId, transactionId));
 
@@ -5108,12 +5627,12 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const { period = "monthly" } = req.query;
-        
+
         const validPeriods = ["weekly", "biweekly", "monthly", "yearly"];
-        const selectedPeriod = validPeriods.includes(period as string) 
-          ? (period as TimePeriod) 
+        const selectedPeriod = validPeriods.includes(period as string)
+          ? (period as TimePeriod)
           : "monthly";
-        
+
         const daysNum = getPeriodDays(selectedPeriod);
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - daysNum);
@@ -5153,8 +5672,8 @@ export async function registerRoutes(
           .select()
           .from(plaidRecurringGroups)
           .where(eq(plaidRecurringGroups.adminUserId, userId!));
-        
-        const groupMap = new Map<string, typeof groups[0]>();
+
+        const groupMap = new Map<string, (typeof groups)[0]>();
         groups.forEach((g) => {
           groupMap.set(g.groupId, g);
         });
@@ -5177,14 +5696,24 @@ export async function registerRoutes(
 
         // Calculate effective type and recurrence for each transaction
         // ONLY count transactions with an explicitly assigned type
-        const typedTransactions = transactions.map((t) => {
-          const group = t.recurringGroupId ? groupMap.get(t.recurringGroupId) : null;
-          return {
-            ...t,
-            effectiveType: t.overrideFinanceType || (group?.financeType) || accountDefaultMap.get(t.plaidAccountId) || null,
-            effectiveRecurrence: (t.overrideRecurrence || group?.recurrence || "one_time") as RecurrenceType,
-          };
-        }).filter((t) => t.effectiveType !== null);
+        const typedTransactions = transactions
+          .map((t) => {
+            const group = t.recurringGroupId
+              ? groupMap.get(t.recurringGroupId)
+              : null;
+            return {
+              ...t,
+              effectiveType:
+                t.overrideFinanceType ||
+                group?.financeType ||
+                accountDefaultMap.get(t.plaidAccountId) ||
+                null,
+              effectiveRecurrence: (t.overrideRecurrence ||
+                group?.recurrence ||
+                "one_time") as RecurrenceType,
+            };
+          })
+          .filter((t) => t.effectiveType !== null);
 
         // Sum by category with recurrence multipliers
         const calculateTotal = (type: string) => {
@@ -5195,14 +5724,23 @@ export async function registerRoutes(
               if (recurrence === "one_time") {
                 return sum + Math.abs(t.amountCents);
               }
-              const multiplier = getRecurrenceMultiplier(recurrence, selectedPeriod);
+              const multiplier = getRecurrenceMultiplier(
+                recurrence,
+                selectedPeriod,
+              );
               return sum + Math.abs(t.amountCents) * multiplier;
             }, 0);
         };
 
         // Calculate static account-level totals: sum current balances of accounts
         // that have a default finance type assigned (these represent snapshots)
-        const accountStaticTotals: Record<string, number> = { income: 0, bill: 0, debt: 0, holding: 0, other: 0 };
+        const accountStaticTotals: Record<string, number> = {
+          income: 0,
+          bill: 0,
+          debt: 0,
+          holding: 0,
+          other: 0,
+        };
         accounts.forEach((a) => {
           if (a.defaultFinanceType && a.currentBalanceCents) {
             const type = a.defaultFinanceType as string;
@@ -5291,13 +5829,16 @@ export async function registerRoutes(
           .where(inArray(plaidAccounts.itemId, itemIds));
 
         const accountDefaultMap = new Map<string, string | null>();
-        const accountNameMap = new Map<string, { name: string; institutionName: string | null; itemId: string }>();
+        const accountNameMap = new Map<
+          string,
+          { name: string; institutionName: string | null; itemId: string }
+        >();
         accounts.forEach((a) => {
           accountDefaultMap.set(a.plaidAccountId, a.defaultFinanceType);
-          accountNameMap.set(a.plaidAccountId, { 
-            name: a.name, 
+          accountNameMap.set(a.plaidAccountId, {
+            name: a.name,
             institutionName: institutionNameMap.get(a.itemId) || null,
-            itemId: a.itemId
+            itemId: a.itemId,
           });
         });
 
@@ -5322,7 +5863,10 @@ export async function registerRoutes(
         const typedTransactions = transactions
           .map((t) => ({
             ...t,
-            effectiveType: t.overrideFinanceType || accountDefaultMap.get(t.plaidAccountId) || null,
+            effectiveType:
+              t.overrideFinanceType ||
+              accountDefaultMap.get(t.plaidAccountId) ||
+              null,
           }))
           .filter((t) => t.effectiveType === financeType)
           .map((t) => {
@@ -5441,7 +5985,7 @@ export async function registerRoutes(
           net_cash_flow: totalInflow - totalOutflow,
           total_inflow: totalInflow,
           total_outflow: totalOutflow,
-          transactions: transactions.map(t => ({
+          transactions: transactions.map((t) => ({
             transactionId: t.transactionId,
             date: t.date,
             name: t.name,
@@ -5623,23 +6167,32 @@ export async function registerRoutes(
         const { transactionId } = req.params;
         const { recurrence } = req.body;
 
-        const validRecurrences = ["one_time", "weekly", "biweekly", "monthly", "yearly", null];
+        const validRecurrences = [
+          "one_time",
+          "weekly",
+          "biweekly",
+          "monthly",
+          "yearly",
+          null,
+        ];
         if (!validRecurrences.includes(recurrence)) {
           return res.status(400).json({ message: "Invalid recurrence value" });
         }
 
         await db
           .update(plaidTransactions)
-          .set({ 
+          .set({
             overrideRecurrence: recurrence,
-            updatedAt: new Date() 
+            updatedAt: new Date(),
           })
           .where(eq(plaidTransactions.transactionId, transactionId));
 
         res.json({ success: true, overrideRecurrence: recurrence });
       } catch (error) {
         console.error("Error updating transaction recurrence:", error);
-        res.status(500).json({ message: "Failed to update transaction recurrence" });
+        res
+          .status(500)
+          .json({ message: "Failed to update transaction recurrence" });
       }
     },
   );
@@ -5678,7 +6231,9 @@ export async function registerRoutes(
         const { label, recurrence, financeType, transactionIds } = req.body;
 
         if (!label || !recurrence) {
-          return res.status(400).json({ message: "Label and recurrence are required" });
+          return res
+            .status(400)
+            .json({ message: "Label and recurrence are required" });
         }
 
         const groupId = generateRecurringGroupId();
@@ -5693,7 +6248,11 @@ export async function registerRoutes(
         });
 
         // Link transactions to the group if provided
-        if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
+        if (
+          transactionIds &&
+          Array.isArray(transactionIds) &&
+          transactionIds.length > 0
+        ) {
           for (const txnId of transactionIds) {
             await db
               .update(plaidTransactions)
@@ -5768,7 +6327,9 @@ export async function registerRoutes(
         const { transactionIds, action } = req.body;
 
         if (!transactionIds || !Array.isArray(transactionIds)) {
-          return res.status(400).json({ message: "transactionIds array is required" });
+          return res
+            .status(400)
+            .json({ message: "transactionIds array is required" });
         }
 
         if (action === "remove") {
@@ -5790,7 +6351,9 @@ export async function registerRoutes(
         res.json({ success: true });
       } catch (error) {
         console.error("Error updating group transactions:", error);
-        res.status(500).json({ message: "Failed to update group transactions" });
+        res
+          .status(500)
+          .json({ message: "Failed to update group transactions" });
       }
     },
   );
@@ -5824,14 +6387,25 @@ export async function registerRoutes(
           .from(plaidTransactions)
           .where(
             and(
-              gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+              gte(
+                plaidTransactions.date,
+                startDate.toISOString().split("T")[0],
+              ),
               inArray(plaidTransactions.itemId, itemIds),
             ),
           )
           .orderBy(desc(plaidTransactions.date));
 
         // Group by merchant and amount for pattern detection
-        const patternMap = new Map<string, { dates: string[]; amount: number; name: string; merchantName: string | null }>();
+        const patternMap = new Map<
+          string,
+          {
+            dates: string[];
+            amount: number;
+            name: string;
+            merchantName: string | null;
+          }
+        >();
 
         for (const txn of transactions) {
           const key = `${txn.merchantName || txn.name}_${Math.abs(txn.amountCents)}`;
@@ -5866,10 +6440,11 @@ export async function registerRoutes(
           const sortedDates = data.dates
             .map((d: string) => new Date(d).getTime())
             .sort((a: number, b: number) => a - b);
-          
+
           let totalDays = 0;
           for (let i = 1; i < sortedDates.length; i++) {
-            totalDays += (sortedDates[i] - sortedDates[i - 1]) / (1000 * 60 * 60 * 24);
+            totalDays +=
+              (sortedDates[i] - sortedDates[i - 1]) / (1000 * 60 * 60 * 24);
           }
           const avgDays = totalDays / (sortedDates.length - 1);
 
@@ -5915,7 +6490,9 @@ export async function registerRoutes(
         res.json({ suggestions: suggestions.slice(0, 20) });
       } catch (error) {
         console.error("Error detecting recurring patterns:", error);
-        res.status(500).json({ message: "Failed to detect recurring patterns" });
+        res
+          .status(500)
+          .json({ message: "Failed to detect recurring patterns" });
       }
     },
   );
@@ -5933,7 +6510,15 @@ export async function registerRoutes(
       try {
         const userId = getUserId(req);
         const { entryId } = req.params;
-        const { title, amountCents, date, recurrence, categoryGroup, notes, clientId } = req.body;
+        const {
+          title,
+          amountCents,
+          date,
+          recurrence,
+          categoryGroup,
+          notes,
+          clientId,
+        } = req.body;
 
         // Verify ownership
         const existing = await db
@@ -6006,7 +6591,9 @@ export async function registerRoutes(
       return res.status(400).json({ error: `Webhook Error: ${err.message}` });
     }
 
-    console.log(`Received Stripe webhook event: ${event.type} (id: ${event.id})`);
+    console.log(
+      `Received Stripe webhook event: ${event.type} (id: ${event.id})`,
+    );
 
     try {
       if (event.type === "checkout.session.completed") {
@@ -6016,7 +6603,9 @@ export async function registerRoutes(
         const clientId = session.metadata?.clientId;
         if (!clientId) {
           console.error("No clientId in checkout session metadata");
-          return res.status(400).json({ error: "Missing clientId in metadata" });
+          return res
+            .status(400)
+            .json({ error: "Missing clientId in metadata" });
         }
 
         // Use session.id for idempotency since payment_intent might be null for some payment methods
@@ -6029,8 +6618,13 @@ export async function registerRoutes(
           .where(
             or(
               eq(payments.stripePaymentIntentId, idempotencyKey),
-              session.payment_intent ? eq(payments.stripePaymentIntentId, session.payment_intent as string) : sql`false`
-            )
+              session.payment_intent
+                ? eq(
+                    payments.stripePaymentIntentId,
+                    session.payment_intent as string,
+                  )
+                : sql`false`,
+            ),
           )
           .limit(1);
 
@@ -6047,22 +6641,27 @@ export async function registerRoutes(
           method: "stripe",
           status: "confirmed",
           paidAt: new Date(),
-          stripePaymentIntentId: (session.payment_intent as string) || session.id,
+          stripePaymentIntentId:
+            (session.payment_intent as string) || session.id,
           stripeChargeId: null,
           notes: `Stripe checkout - ${session.customer_email || "Guest"} (event: ${event.id})`,
         });
 
-        console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+        console.log(
+          `Created payment ${payment.paymentId} for client ${clientId}`,
+        );
 
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
-        
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
-          console.error("[StripeWebhook checkout.session.completed] Webhook error (non-blocking):", err.message);
+
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch((err) => {
+          console.error(
+            "[StripeWebhook checkout.session.completed] Webhook error (non-blocking):",
+            err.message,
+          );
         });
 
         return res.json({ received: true, paymentId: payment.paymentId });
-
       } else if (event.type === "payment_intent.succeeded") {
         const paymentIntent = event.data.object as Stripe.PaymentIntent;
 
@@ -6093,17 +6692,22 @@ export async function registerRoutes(
           status: "confirmed",
           paidAt: new Date(),
           stripePaymentIntentId: paymentIntent.id,
-          stripeChargeId: paymentIntent.latest_charge as string || null,
+          stripeChargeId: (paymentIntent.latest_charge as string) || null,
           notes: `Stripe payment (event: ${event.id})`,
         });
 
-        console.log(`Created payment ${payment.paymentId} for client ${clientId}`);
+        console.log(
+          `Created payment ${payment.paymentId} for client ${clientId}`,
+        );
 
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
-        
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
-          console.error("[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):", err.message);
+
+        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch((err) => {
+          console.error(
+            "[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):",
+            err.message,
+          );
         });
 
         return res.json({ received: true, paymentId: payment.paymentId });
@@ -6197,8 +6801,12 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const checks: Array<{ name: string; status: "ok" | "warning" | "error"; value: string }> = [];
-        
+        const checks: Array<{
+          name: string;
+          status: "ok" | "warning" | "error";
+          value: string;
+        }> = [];
+
         // 1. Base URL configuration
         const appBaseUrl = process.env.APP_BASE_URL;
         const derivedBaseUrl = getBaseUrl(req);
@@ -6217,7 +6825,7 @@ export async function registerRoutes(
           status: "ok",
           value: req.headers["host"] || "unknown",
         });
-        
+
         // 2. Cookie settings
         checks.push({
           name: "Cookie Secure",
@@ -6234,7 +6842,7 @@ export async function registerRoutes(
           status: "ok",
           value: "true",
         });
-        
+
         // 3. CORS configuration
         const allowedOrigins = getAllowedOrigins();
         checks.push({
@@ -6242,17 +6850,18 @@ export async function registerRoutes(
           status: allowedOrigins.length > 0 ? "ok" : "warning",
           value: allowedOrigins.join(", ") || "(all in development)",
         });
-        
+
         // 4. Environment
         checks.push({
           name: "NODE_ENV",
           status: process.env.NODE_ENV === "production" ? "ok" : "warning",
           value: process.env.NODE_ENV || "development",
         });
-        
+
         // 5. Stripe configuration (no secrets exposed)
         const stripeSecretPresent = !!process.env.STRIPE_SECRET_KEY_TEST;
-        const stripePublishablePresent = !!process.env.STRIPE_PUBLISHABLE_KEY_TEST;
+        const stripePublishablePresent =
+          !!process.env.STRIPE_PUBLISHABLE_KEY_TEST;
         checks.push({
           name: "Stripe Mode",
           status: "ok",
@@ -6268,7 +6877,7 @@ export async function registerRoutes(
           status: stripePublishablePresent ? "ok" : "warning",
           value: stripePublishablePresent ? "configured" : "not configured",
         });
-        
+
         // 6. Plaid configuration (no secrets exposed)
         const plaidEnv = process.env.PLAID_ENV || "sandbox";
         checks.push({
@@ -6286,39 +6895,48 @@ export async function registerRoutes(
           status: !!process.env.PLAID_SECRET ? "ok" : "warning",
           value: process.env.PLAID_SECRET ? "configured" : "not configured",
         });
-        
+
         // 7. Database
         checks.push({
           name: "Database",
           status: !!process.env.DATABASE_URL ? "ok" : "error",
           value: process.env.DATABASE_URL ? "configured" : "NOT CONFIGURED",
         });
-        
+
         // 8. Session Secret
         checks.push({
           name: "Session Secret",
           status: !!process.env.SESSION_SECRET ? "ok" : "error",
           value: process.env.SESSION_SECRET ? "configured" : "NOT CONFIGURED",
         });
-        
+
         // Summary
-        const errorCount = checks.filter(c => c.status === "error").length;
-        const warningCount = checks.filter(c => c.status === "warning").length;
-        
+        const errorCount = checks.filter((c) => c.status === "error").length;
+        const warningCount = checks.filter(
+          (c) => c.status === "warning",
+        ).length;
+
         res.json({
           summary: {
             total: checks.length,
-            ok: checks.filter(c => c.status === "ok").length,
+            ok: checks.filter((c) => c.status === "ok").length,
             warnings: warningCount,
             errors: errorCount,
-            overallStatus: errorCount > 0 ? "NOT_READY" : warningCount > 0 ? "READY_WITH_WARNINGS" : "READY",
+            overallStatus:
+              errorCount > 0
+                ? "NOT_READY"
+                : warningCount > 0
+                  ? "READY_WITH_WARNINGS"
+                  : "READY",
           },
           checks,
           timestamp: new Date().toISOString(),
         });
       } catch (error) {
         console.error("Error checking production readiness:", error);
-        res.status(500).json({ message: "Failed to check production readiness" });
+        res
+          .status(500)
+          .json({ message: "Failed to check production readiness" });
       }
     },
   );
