@@ -4423,22 +4423,75 @@ export async function registerRoutes(
                 confidence: p.confidence,
               }));
 
-              const systemPrompt = `You are a financial analyst assistant. The user asked: "${query || "Analyze my recurring payments"}". You are given a list of detected recurring payments from their bank transactions over the last ${lookbackDays} days. Provide a concise, helpful summary in 2-4 sentences. Mention the total estimated monthly cost ($${summaryDollars}), highlight the largest expenses, and note any patterns. Keep it conversational and practical. Do not use markdown formatting.`;
+              const systemPrompt = `
+              You are QuickITProjects AI Financial Analyzer.
+
+              You will receive:
+              - The user's question
+              - A JSON list of detected recurring payments for the last ${lookbackDays} days
+              - The computed total estimated monthly recurring cost: $${summaryDollars}
+
+              Your job:
+              1) Answer the user's question using ONLY the data provided. Do not invent merchants, amounts, or dates.
+              2) Be practical and action-oriented: point out what is largest, what looks suspicious, and what to check.
+              3) If the question cannot be answered from recurring-payments data alone (example: "total spending this month"), say exactly what data is missing and suggest the closest insight you can provide (example: "I can summarize recurring bills; for total spending I need all transactions or category totals").
+
+              Output format (IMPORTANT):
+              Return valid JSON ONLY (no markdown fences), matching this schema:
+
+              {
+                "answer": "2-6 sentences, conversational and specific.",
+                "highlights": [
+                  "bullet-style highlight",
+                  "bullet-style highlight"
+                ],
+                "topRecurring": [
+                  {
+                    "merchantName": "string",
+                    "frequency": "weekly|biweekly|monthly|yearly",
+                    "estimatedMonthlyCost": "number (USD dollars, not cents)",
+                    "confidence": "high|medium|low"
+                  }
+                ],
+                "table": {
+                  "columns": ["Merchant", "Frequency", "Est Monthly", "Confidence"],
+                  "rows": [
+                    ["Netflix", "monthly", "$15.99", "high"]
+                  ]
+                },
+                "warnings": [
+                  "Any caveats, anomalies, or missing-data notes"
+                ]
+              }
+
+              Rules:
+              - estimatedMonthlyCost in topRecurring must be a NUMBER in dollars (example: 15.99).
+              - Keep topRecurring to the top 8 items by monthly cost.
+              - table.rows should match topRecurring.
+              - If there are no recurring payments, explain that clearly and keep arrays empty.
+              `.trim();
+
+              const userContent = JSON.stringify({
+                userQuestion: query || "Analyze my recurring payments",
+                totalEstimatedMonthlyRecurringUsd: Number(summaryDollars),
+                lookbackDays,
+                recurringPayments: llmPayload,
+              });
 
               const completion = await openai.chat.completions.create({
                 model: "gpt-4o-mini",
                 messages: [
                   { role: "system", content: systemPrompt },
-                  { role: "user", content: JSON.stringify(llmPayload) },
+                  { role: "user", content: userContent },
                 ],
-                max_tokens: 300,
+                max_tokens: 400,
                 temperature: 0.7,
               });
 
               const llmSummary =
                 completion.choices[0]?.message?.content?.trim();
               if (llmSummary) {
-                summary = `[OPENAI_OK] ${llmSummary}`; // temporary marker
+                summary = `${llmSummary}`;
                 debug.llmSucceeded = true;
               } else {
                 debug.llmError = "OpenAI returned empty summary";
@@ -4464,7 +4517,6 @@ export async function registerRoutes(
           totalMonthlyEstimate,
           analyzedTransactions: transactions.length,
           dateRange: { start: startStr, end: endStr },
-          debug, // add this
         });
       } catch (error: any) {
         console.error("[ai-analyzer] Error in AI finance analyzer:", error);
