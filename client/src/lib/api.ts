@@ -647,6 +647,24 @@ export function useAdminPlaidTypedTransactions(category: string, period: TimePer
   });
 }
 
+export function useSearchPlaidTransactions(search: string) {
+  return useQuery<{ transactions: Array<{
+    transaction_id: string;
+    date: string;
+    name: string;
+    merchant_name: string | null;
+    amount_cents: number;
+    pending: boolean;
+    category_primary: string | null;
+    account_name: string;
+    institution_name: string;
+  }> }>({
+    queryKey: ["admin", "plaid", "search-transactions", search],
+    queryFn: () => fetchApi(`/api/admin/plaid/search-transactions?search=${encodeURIComponent(search)}&days=365`),
+    enabled: search.length >= 2,
+  });
+}
+
 export function useAdminPlaidAccountTransactions(
   plaidAccountId: string | null,
   options?: { startDate?: string; endDate?: string; search?: string; minAmount?: number; maxAmount?: number }

@@ -4787,6 +4787,93 @@ export async function registerRoutes(
     },
   );
 
+  // G2b) Search all Plaid transactions across all accounts
+  app.get(
+    "/api/admin/plaid/search-transactions",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const search = (req.query.search as string) || "";
+        const days = parseInt(req.query.days as string) || 90;
+
+        if (!search || search.length < 2) {
+          return res.json({ transactions: [] });
+        }
+
+        const items = await db
+          .select()
+          .from(plaidItems)
+          .where(eq(plaidItems.adminUserId, userId!));
+
+        if (items.length === 0) {
+          return res.json({ transactions: [] });
+        }
+
+        const itemIds = items.map((i) => i.itemId);
+
+        const accounts = await db
+          .select({
+            plaidAccountId: plaidAccounts.plaidAccountId,
+            name: plaidAccounts.name,
+            institutionName: plaidItems.institutionName,
+            defaultFinanceType: plaidAccounts.defaultFinanceType,
+          })
+          .from(plaidAccounts)
+          .innerJoin(plaidItems, eq(plaidAccounts.itemId, plaidItems.itemId))
+          .where(inArray(plaidAccounts.itemId, itemIds));
+
+        const accountIds = accounts.map((a) => a.plaidAccountId);
+        if (accountIds.length === 0) {
+          return res.json({ transactions: [] });
+        }
+
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+        const searchTerm = `%${search}%`;
+
+        const transactions = await db
+          .select()
+          .from(plaidTransactions)
+          .where(
+            and(
+              inArray(plaidTransactions.plaidAccountId, accountIds),
+              gte(plaidTransactions.date, startDate.toISOString().split("T")[0]),
+              or(
+                ilike(plaidTransactions.name, searchTerm),
+                ilike(plaidTransactions.merchantName, searchTerm),
+              ),
+            ),
+          )
+          .orderBy(desc(plaidTransactions.date))
+          .limit(100);
+
+        const accountMap = new Map(accounts.map((a) => [a.plaidAccountId, a]));
+
+        res.json({
+          transactions: transactions.map((t) => {
+            const acct = accountMap.get(t.plaidAccountId);
+            return {
+              transaction_id: t.transactionId,
+              date: t.date,
+              name: t.name,
+              merchant_name: t.merchantName,
+              amount_cents: t.amountCents,
+              pending: t.pending,
+              category_primary: t.categoryPrimary,
+              account_name: acct?.name || "Unknown",
+              institution_name: acct?.institutionName || "",
+            };
+          }),
+        });
+      } catch (error) {
+        console.error("Error searching plaid transactions:", error);
+        res.status(500).json({ message: "Failed to search transactions" });
+      }
+    },
+  );
+
   // G3) Update account default finance type
   const updateAccountTypeSchema = z.object({
     defaultFinanceType: z.enum(["income", "bill", "debt", "holding", "other"]).nullable(),

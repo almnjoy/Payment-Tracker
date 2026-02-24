@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight, Pencil, RotateCcw, Mail } from "lucide-react";
+import { Plus, Link as LinkIcon, Trash2, ExternalLink, RefreshCw, Loader2, Building, Clock, Wallet, Eye, DollarSign, ChevronRight, Pencil, RotateCcw, Mail, Search } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { 
   useAdminPlaidSyncStatus, 
@@ -26,6 +26,7 @@ import {
   useAdminPlaidAccountSummaries,
   useAdminPlaidAccountTransactions,
   useAdminPlaidTypedTransactions,
+  useSearchPlaidTransactions,
   useUpdateAccountDefaultType,
   useUpdateTransactionType,
   useUpdateTransactionRecurrence,
@@ -100,6 +101,7 @@ export default function FinanceTracker() {
   const [transactionsModalOpen, setTransactionsModalOpen] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [transactionSearch, setTransactionSearch] = useState("");
+  const [autoSyncSearch, setAutoSyncSearch] = useState("");
   
   const { toast } = useToast();
   
@@ -168,6 +170,8 @@ export default function FinanceTracker() {
   
   // Typed Plaid transactions for the current tab
   const typedTransactions = useAdminPlaidTypedTransactions(activeTab, selectedPeriod);
+  
+  const plaidSearchResults = useSearchPlaidTransactions(autoSyncSearch);
 
   const handleCreateEntry = async () => {
     if (!formData.title || !formData.amountCents) {
@@ -731,8 +735,8 @@ export default function FinanceTracker() {
                             data-testid={`plaid-entry-${tx.transaction_id}`}
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <h4 className="font-medium text-gray-900 truncate">{tx.merchant_name || tx.name}</h4>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="font-medium text-gray-900 break-words whitespace-normal max-w-[300px] md:max-w-[500px]" title={tx.merchant_name || tx.name}>{tx.merchant_name || tx.name}</h4>
                                 {tx.pending && (
                                   <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">Pending</span>
                                 )}
@@ -742,8 +746,8 @@ export default function FinanceTracker() {
                                   </Badge>
                                 )}
                               </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <p className="text-sm text-gray-500 truncate">
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <p className="text-sm text-gray-500 break-words whitespace-normal">
                                   {formatDate(tx.date)} • {tx.account_name}
                                 </p>
                                 {multiplierLabel && (
@@ -890,6 +894,80 @@ export default function FinanceTracker() {
                       </div>
                       <ChevronRight className="h-4 w-4 text-gray-400" />
                     </button>
+                  </div>
+
+                  {/* Search All Plaid Entries */}
+                  <div>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Input
+                        placeholder="Search all synced transactions..."
+                        value={autoSyncSearch}
+                        onChange={(e) => setAutoSyncSearch(e.target.value)}
+                        className="pl-10"
+                        data-testid="input-auto-sync-search"
+                      />
+                    </div>
+                    {autoSyncSearch.length >= 2 && (
+                      <div className="mt-3">
+                        {plaidSearchResults.isLoading ? (
+                          <div className="flex justify-center py-4">
+                            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                          </div>
+                        ) : plaidSearchResults.data?.transactions?.length ? (
+                          <div className="border rounded-lg overflow-hidden">
+                            <div className="bg-gray-50 px-4 py-2 border-b flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-700">
+                                {plaidSearchResults.data.transactions.length} result{plaidSearchResults.data.transactions.length !== 1 ? "s" : ""} found
+                              </span>
+                              <Button variant="ghost" size="sm" onClick={() => setAutoSyncSearch("")} data-testid="button-clear-search">
+                                Clear
+                              </Button>
+                            </div>
+                            <ScrollArea className="max-h-[400px]">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow className="bg-gray-50">
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Description</TableHead>
+                                    <TableHead>Account</TableHead>
+                                    <TableHead>Category</TableHead>
+                                    <TableHead className="text-right">Amount</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {plaidSearchResults.data.transactions.map((txn) => (
+                                    <TableRow key={txn.transaction_id} data-testid={`row-search-${txn.transaction_id}`}>
+                                      <TableCell className="whitespace-nowrap">{formatDate(txn.date)}</TableCell>
+                                      <TableCell className="max-w-[200px] md:max-w-[350px]">
+                                        <div className="min-w-0">
+                                          <p className="font-medium break-words whitespace-normal" title={txn.name}>{txn.name}</p>
+                                          {txn.merchant_name && txn.merchant_name !== txn.name && (
+                                            <p className="text-sm text-gray-500 break-words whitespace-normal">{txn.merchant_name}</p>
+                                          )}
+                                        </div>
+                                      </TableCell>
+                                      <TableCell className="text-sm text-gray-600 whitespace-nowrap">{txn.account_name}</TableCell>
+                                      <TableCell>
+                                        {txn.category_primary && (
+                                          <Badge variant="outline">{txn.category_primary}</Badge>
+                                        )}
+                                      </TableCell>
+                                      <TableCell className={`text-right font-medium ${txn.amount_cents < 0 ? "text-green-600" : "text-gray-900"}`}>
+                                        {formatCents(Math.abs(txn.amount_cents))}
+                                        {txn.amount_cents < 0 && <span className="text-xs ml-1">(credit)</span>}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </ScrollArea>
+                          </div>
+                        ) : (
+                          <p className="text-center text-gray-400 py-4 text-sm">No transactions match "{autoSyncSearch}"</p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Linked Accounts Table */}
@@ -1154,11 +1232,11 @@ export default function FinanceTracker() {
                     {accountTransactions.data.transactions.map((txn) => (
                       <TableRow key={txn.transaction_id} data-testid={`row-transaction-${txn.transaction_id}`}>
                         <TableCell className="whitespace-nowrap">{formatDate(txn.date)}</TableCell>
-                        <TableCell className="max-w-[200px] md:max-w-[300px]">
+                        <TableCell className="max-w-[200px] md:max-w-[350px]">
                           <div className="min-w-0">
-                            <p className="font-medium truncate" title={txn.name}>{txn.name}</p>
+                            <p className="font-medium break-words whitespace-normal" title={txn.name}>{txn.name}</p>
                             {txn.merchant_name && txn.merchant_name !== txn.name && (
-                              <p className="text-sm text-gray-500 truncate" title={txn.merchant_name}>{txn.merchant_name}</p>
+                              <p className="text-sm text-gray-500 break-words whitespace-normal" title={txn.merchant_name}>{txn.merchant_name}</p>
                             )}
                           </div>
                         </TableCell>
