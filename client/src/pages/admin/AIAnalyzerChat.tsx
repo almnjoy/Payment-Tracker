@@ -24,7 +24,7 @@ export default function AIAnalyzerChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, useLLM: true }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Request failed");

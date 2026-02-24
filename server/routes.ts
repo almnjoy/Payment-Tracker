@@ -3813,7 +3813,11 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
-        const { query, days } = req.body as { query?: string; days?: number };
+        const { query, days, useLLM } = req.body as {
+          query?: string;
+          days?: number;
+          useLLM?: boolean;
+        };
 
         const lookbackDays = days || 90;
         const endDate = new Date();
@@ -3830,7 +3834,8 @@ export async function registerRoutes(
 
         if (items.length === 0) {
           return res.json({
-            summary: "No linked bank accounts found. Please connect a bank account via Plaid first.",
+            summary:
+              "No linked bank accounts found. Please connect a bank account via Plaid first.",
             recurringPayments: [],
             totalMonthlyEstimate: 0,
             analyzedTransactions: 0,
@@ -3858,7 +3863,11 @@ export async function registerRoutes(
 
         for (const tx of transactions) {
           const raw = tx.merchantName || tx.name;
-          const key = raw.toLowerCase().trim();
+          const key = raw
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9\s]/g, "")
+            .replace(/\s+/g, " ");
           if (!grouped[key]) {
             grouped[key] = { name: raw, amounts: [], dates: [] };
           }
@@ -3939,15 +3948,73 @@ export async function registerRoutes(
 
         const summaryDollars = (totalMonthlyEstimate / 100).toFixed(2);
 
+        let summary: string;
+        if (recurringPayments.length === 0) {
+          summary =
+            "No recurring payments detected in the analyzed period.";
+        } else {
+          summary = `Detected ${recurringPayments.length} recurring payment${recurringPayments.length !== 1 ? "s" : ""} with an estimated monthly total of $${summaryDollars}.`;
+        }
+
+        if (useLLM) {
+          try {
+            const { openai, isLlmEnabled } = await import(
+              "./services/openaiClient"
+            );
+            if (isLlmEnabled()) {
+              console.log(
+                "[ai-analyzer] LLM enabled, generating enhanced summary",
+              );
+              const llmPayload = recurringPayments.map((p) => ({
+                merchant: p.merchantName,
+                frequency: p.frequency,
+                monthlyCost: `$${(p.estimatedMonthlyCost / 100).toFixed(2)}`,
+                count: p.transactionCount,
+                confidence: p.confidence,
+              }));
+
+              const systemPrompt = `You are a financial analyst assistant. The user asked: "${query || "Analyze my recurring payments"}". You are given a list of detected recurring payments from their bank transactions over the last ${lookbackDays} days. Provide a concise, helpful summary in 2-4 sentences. Mention the total estimated monthly cost ($${summaryDollars}), highlight the largest expenses, and note any patterns. Keep it conversational and practical. Do not use markdown formatting.`;
+
+              const completion = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  {
+                    role: "user",
+                    content: JSON.stringify(llmPayload),
+                  },
+                ],
+                max_tokens: 300,
+                temperature: 0.7,
+              });
+
+              const llmSummary =
+                completion.choices[0]?.message?.content?.trim();
+              if (llmSummary) {
+                summary = llmSummary;
+              }
+            } else {
+              console.log(
+                "[ai-analyzer] LLM requested but not enabled, using heuristic summary",
+              );
+            }
+          } catch (llmError: any) {
+            console.error(
+              "[ai-analyzer] LLM call failed, falling back to heuristic summary:",
+              llmError.message,
+            );
+          }
+        }
+
         res.json({
-          summary: `Found ${recurringPayments.length} recurring payment${recurringPayments.length !== 1 ? "s" : ""} totaling $${summaryDollars}/month`,
+          summary,
           recurringPayments,
           totalMonthlyEstimate,
           analyzedTransactions: transactions.length,
           dateRange: { start: startStr, end: endStr },
         });
       } catch (error: any) {
-        console.error("Error in AI finance analyzer:", error);
+        console.error("[ai-analyzer] Error in AI finance analyzer:", error);
         res.status(500).json({ message: "Failed to analyze transactions" });
       }
     },
