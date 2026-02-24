@@ -215,10 +215,27 @@ export default function FinanceTracker() {
   const handleSync = async () => {
     try {
       const result = await syncTransactions.mutateAsync();
-      toast({ 
-        title: "Sync Complete", 
-        description: `Synced ${result.synced_items} items: ${result.added} added, ${result.modified} modified` 
-      });
+      const failedItems = result.results?.filter((r: any) => r.status === "failed") || [];
+      
+      if (failedItems.length > 0 && result.synced_items > 0) {
+        toast({ 
+          title: "Partial Sync", 
+          description: `${result.synced_items} synced, ${result.failed_items} failed. ${result.added} added, ${result.modified} modified.`,
+          variant: "destructive"
+        });
+      } else if (failedItems.length > 0) {
+        const firstErr = failedItems[0];
+        toast({ 
+          title: "Sync Failed", 
+          description: `${firstErr.institution}: ${firstErr.error_message || "Unknown error"}${firstErr.action_required === "unlink_and_relink" ? " — Try unlinking and relinking this account." : ""}`,
+          variant: "destructive" 
+        });
+      } else {
+        toast({ 
+          title: "Sync Complete", 
+          description: `Synced ${result.synced_items} items: ${result.added} added, ${result.modified} modified` 
+        });
+      }
     } catch (error: any) {
       toast({ title: "Sync Failed", description: error.message, variant: "destructive" });
     }
@@ -570,7 +587,7 @@ export default function FinanceTracker() {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold text-gray-900 mb-2" data-testid="text-total">
-                  {formatCents(manualTotal + plaidTotal + (activeTab === "income" ? monthlyBillingTotal : 0))}
+                  {formatCents(manualTotal + plaidTotal + (activeTab === "income" ? monthlyBillingTotal : 0) + (financeTotals.data?.accountStaticTotals?.[activeTab === "bills" ? "bills" : activeTab === "debts" ? "debts" : activeTab === "holdings" ? "holdings" : activeTab === "other" ? "other" : "income"] || 0))}
                 </div>
                 <div className="space-y-1 text-sm text-gray-500">
                   <p>Manual entries: {formatCents(manualTotal)}</p>
@@ -578,6 +595,13 @@ export default function FinanceTracker() {
                   {activeTab === "income" && (
                     <p className="text-green-600 font-medium">Client rent (monthly): {formatCents(monthlyBillingTotal)}</p>
                   )}
+                  {(() => {
+                    const key = activeTab === "bills" ? "bills" : activeTab === "debts" ? "debts" : activeTab === "holdings" ? "holdings" : activeTab === "other" ? "other" : "income";
+                    const staticVal = financeTotals.data?.accountStaticTotals?.[key] || 0;
+                    return staticVal > 0 ? (
+                      <p className="text-blue-600 font-medium">Account balances: {formatCents(staticVal)}</p>
+                    ) : null;
+                  })()}
                 </div>
               </CardContent>
             </Card>
@@ -1130,11 +1154,11 @@ export default function FinanceTracker() {
                     {accountTransactions.data.transactions.map((txn) => (
                       <TableRow key={txn.transaction_id} data-testid={`row-transaction-${txn.transaction_id}`}>
                         <TableCell className="whitespace-nowrap">{formatDate(txn.date)}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{txn.name}</p>
+                        <TableCell className="max-w-[200px] md:max-w-[300px]">
+                          <div className="min-w-0">
+                            <p className="font-medium truncate" title={txn.name}>{txn.name}</p>
                             {txn.merchant_name && txn.merchant_name !== txn.name && (
-                              <p className="text-sm text-gray-500">{txn.merchant_name}</p>
+                              <p className="text-sm text-gray-500 truncate" title={txn.merchant_name}>{txn.merchant_name}</p>
                             )}
                           </div>
                         </TableCell>

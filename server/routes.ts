@@ -45,6 +45,7 @@ import {
   type InvoiceSettings,
 } from "@shared/schema";
 import PDFDocument from "pdfkit";
+import path from "path";
 import {
   getRecurrenceMultiplier,
   isOneTimeInRange,
@@ -2059,8 +2060,20 @@ export async function registerRoutes(
           { align: 'right' }
         );
         
-        // Business info (left side)
+        // Business logo + info (left side)
         let yPos = margin;
+        
+        const pdfLogoPath = path.join(process.cwd(), 'client', 'public', 'pdf-logo.png');
+        try {
+          const fs = await import('fs');
+          if (fs.existsSync(pdfLogoPath)) {
+            doc.image(pdfLogoPath, margin, yPos, { height: 40 });
+            yPos += 48;
+          }
+        } catch (logoErr) {
+          console.error("Could not load PDF logo:", logoErr);
+        }
+        
         if (settings?.businessName) {
           doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
           yPos += 20;
@@ -3790,6 +3803,157 @@ export async function registerRoutes(
   );
 
   // ============================================
+  // AI FINANCIAL ANALYZER (Admin Only)
+  // ============================================
+
+  app.post(
+    "/api/admin/ai-finance/analyze",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const userId = getUserId(req);
+        const { query, days } = req.body as { query?: string; days?: number };
+
+        const lookbackDays = days || 90;
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - lookbackDays);
+
+        const startStr = startDate.toISOString().split("T")[0];
+        const endStr = endDate.toISOString().split("T")[0];
+
+        const items = await db
+          .select()
+          .from(plaidItems)
+          .where(eq(plaidItems.adminUserId, userId!));
+
+        if (items.length === 0) {
+          return res.json({
+            summary: "No linked bank accounts found. Please connect a bank account via Plaid first.",
+            recurringPayments: [],
+            totalMonthlyEstimate: 0,
+            analyzedTransactions: 0,
+            dateRange: { start: startStr, end: endStr },
+          });
+        }
+
+        const itemIds = items.map((i) => i.itemId);
+
+        const transactions = await db
+          .select()
+          .from(plaidTransactions)
+          .where(
+            and(
+              inArray(plaidTransactions.itemId, itemIds),
+              gte(plaidTransactions.date, startStr),
+              lte(plaidTransactions.date, endStr),
+            ),
+          );
+
+        const grouped: Record<
+          string,
+          { name: string; amounts: number[]; dates: string[] }
+        > = {};
+
+        for (const tx of transactions) {
+          const raw = tx.merchantName || tx.name;
+          const key = raw.toLowerCase().trim();
+          if (!grouped[key]) {
+            grouped[key] = { name: raw, amounts: [], dates: [] };
+          }
+          grouped[key].amounts.push(Math.abs(tx.amountCents));
+          grouped[key].dates.push(tx.date);
+        }
+
+        const recurringPayments: Array<{
+          merchantName: string;
+          frequency: string;
+          averageAmount: number;
+          estimatedMonthlyCost: number;
+          transactionCount: number;
+          lastDate: string;
+          confidence: string;
+        }> = [];
+
+        for (const [, group] of Object.entries(grouped)) {
+          if (group.dates.length < 2) continue;
+
+          group.dates.sort();
+          const intervals: number[] = [];
+          for (let i = 1; i < group.dates.length; i++) {
+            const d1 = new Date(group.dates[i - 1]).getTime();
+            const d2 = new Date(group.dates[i]).getTime();
+            intervals.push((d2 - d1) / (1000 * 60 * 60 * 24));
+          }
+
+          const avgInterval =
+            intervals.reduce((a, b) => a + b, 0) / intervals.length;
+          const avgAmount = Math.round(
+            group.amounts.reduce((a, b) => a + b, 0) / group.amounts.length,
+          );
+
+          let frequency: string | null = null;
+          let monthlyMultiplier = 0;
+          let confidence = "medium";
+
+          if (avgInterval >= 6 && avgInterval <= 8) {
+            frequency = "weekly";
+            monthlyMultiplier = 4.33;
+            confidence = "high";
+          } else if (avgInterval >= 13 && avgInterval <= 16) {
+            frequency = "biweekly";
+            monthlyMultiplier = 2.17;
+            confidence = "high";
+          } else if (avgInterval >= 25 && avgInterval <= 35) {
+            frequency = "monthly";
+            monthlyMultiplier = 1;
+            confidence = "high";
+          } else if (avgInterval >= 350 && avgInterval <= 380) {
+            frequency = "yearly";
+            monthlyMultiplier = 1 / 12;
+            confidence = "medium";
+          }
+
+          if (!frequency) continue;
+
+          recurringPayments.push({
+            merchantName: group.name,
+            frequency,
+            averageAmount: avgAmount,
+            estimatedMonthlyCost: Math.round(avgAmount * monthlyMultiplier),
+            transactionCount: group.dates.length,
+            lastDate: group.dates[group.dates.length - 1],
+            confidence,
+          });
+        }
+
+        recurringPayments.sort(
+          (a, b) => b.estimatedMonthlyCost - a.estimatedMonthlyCost,
+        );
+
+        const totalMonthlyEstimate = recurringPayments.reduce(
+          (sum, p) => sum + p.estimatedMonthlyCost,
+          0,
+        );
+
+        const summaryDollars = (totalMonthlyEstimate / 100).toFixed(2);
+
+        res.json({
+          summary: `Found ${recurringPayments.length} recurring payment${recurringPayments.length !== 1 ? "s" : ""} totaling $${summaryDollars}/month`,
+          recurringPayments,
+          totalMonthlyEstimate,
+          analyzedTransactions: transactions.length,
+          dateRange: { start: startStr, end: endStr },
+        });
+      } catch (error: any) {
+        console.error("Error in AI finance analyzer:", error);
+        res.status(500).json({ message: "Failed to analyze transactions" });
+      }
+    },
+  );
+
+  // ============================================
   // PLAID INTEGRATION (Admin Only)
   // ============================================
 
@@ -3999,160 +4163,228 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const dryRun = req.query.dryRun === "1";
 
-        // Get all items for this admin
+        console.log(`[plaid-sync] Starting sync for admin=${userId}, dryRun=${dryRun}`);
+        const syncStart = Date.now();
+
         const items = await db
           .select()
           .from(plaidItems)
           .where(eq(plaidItems.adminUserId, userId!));
 
+        console.log(`[plaid-sync] Found ${items.length} linked items`);
+
+        if (items.length === 0) {
+          return res.json({ synced_items: 0, failed_items: 0, results: [], added: 0, modified: 0, removed: 0 });
+        }
+
+        const results: any[] = [];
         let totalAdded = 0;
         let totalModified = 0;
         let totalRemoved = 0;
+        let syncedCount = 0;
+        let failedCount = 0;
 
         for (const item of items) {
-          // Get current cursor
-          const cursorResult = await db
-            .select()
-            .from(plaidCursors)
-            .where(eq(plaidCursors.itemId, item.itemId))
-            .limit(1);
+          const itemStart = Date.now();
+          try {
+            console.log(`[plaid-sync] Syncing item=${item.itemId}, institution=${item.institutionName}`);
 
-          const currentCursor = cursorResult[0]?.cursor || undefined;
-
-          // Sync transactions
-          const syncResponse = await plaidClient.transactionsSync({
-            access_token: item.accessToken,
-            cursor: currentCursor,
-          });
-
-          // Process added transactions
-          for (const txn of syncResponse.data.added) {
-            const existingTxn = await db
+            const cursorResult = await db
               .select()
-              .from(plaidTransactions)
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              )
+              .from(plaidCursors)
+              .where(eq(plaidCursors.itemId, item.itemId))
               .limit(1);
 
-            if (existingTxn.length === 0) {
-              await db.insert(plaidTransactions).values({
-                transactionId: generatePlaidTransactionRowId(),
-                itemId: item.itemId,
-                plaidTransactionId: txn.transaction_id,
-                plaidAccountId: txn.account_id,
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                isoCurrencyCode: txn.iso_currency_code || "USD",
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-              });
-              totalAdded++;
-            }
-          }
+            const currentCursor = cursorResult[0]?.cursor || undefined;
+            console.log(`[plaid-sync] item=${item.itemId} cursor=${currentCursor ? "exists" : "none"}`);
 
-          // Process modified transactions
-          for (const txn of syncResponse.data.modified) {
-            await db
-              .update(plaidTransactions)
-              .set({
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              );
-            totalModified++;
-          }
-
-          // Process removed transactions
-          for (const removed of syncResponse.data.removed) {
-            if (removed.transaction_id) {
-              await db
-                .delete(plaidTransactions)
-                .where(
-                  and(
-                    eq(plaidTransactions.itemId, item.itemId),
-                    eq(
-                      plaidTransactions.plaidTransactionId,
-                      removed.transaction_id,
-                    ),
-                  ),
-                );
-              totalRemoved++;
-            }
-          }
-
-          // Update accounts balances
-          const accountsResponse = await plaidClient.accountsGet({
-            access_token: item.accessToken,
-          });
-
-          for (const account of accountsResponse.data.accounts) {
-            await db
-              .update(plaidAccounts)
-              .set({
-                currentBalanceCents: account.balances.current
-                  ? Math.round(account.balances.current * 100)
-                  : null,
-                availableBalanceCents: account.balances.available
-                  ? Math.round(account.balances.available * 100)
-                  : null,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidAccounts.itemId, item.itemId),
-                  eq(plaidAccounts.plaidAccountId, account.account_id),
-                ),
-              );
-          }
-
-          // Update cursor
-          await db
-            .insert(plaidCursors)
-            .values({
-              itemId: item.itemId,
-              cursor: syncResponse.data.next_cursor,
-              lastSyncAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: plaidCursors.itemId,
-              set: {
-                cursor: syncResponse.data.next_cursor,
-                lastSyncAt: new Date(),
-              },
+            const syncResponse = await plaidClient.transactionsSync({
+              access_token: item.accessToken,
+              cursor: currentCursor,
             });
+
+            const { added, modified, removed } = syncResponse.data;
+            console.log(`[plaid-sync] item=${item.itemId} plaid response: added=${added.length}, modified=${modified.length}, removed=${removed.length}`);
+
+            let itemAdded = 0, itemModified = 0, itemRemoved = 0;
+
+            if (!dryRun) {
+              for (const txn of added) {
+                const existingTxn = await db
+                  .select()
+                  .from(plaidTransactions)
+                  .where(
+                    and(
+                      eq(plaidTransactions.itemId, item.itemId),
+                      eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
+                    ),
+                  )
+                  .limit(1);
+
+                if (existingTxn.length === 0) {
+                  await db.insert(plaidTransactions).values({
+                    transactionId: generatePlaidTransactionRowId(),
+                    itemId: item.itemId,
+                    plaidTransactionId: txn.transaction_id,
+                    plaidAccountId: txn.account_id,
+                    date: txn.date,
+                    name: txn.name,
+                    merchantName: txn.merchant_name || null,
+                    amountCents: Math.round(txn.amount * 100),
+                    isoCurrencyCode: txn.iso_currency_code || "USD",
+                    pending: txn.pending,
+                    categoryPrimary: txn.personal_finance_category?.primary || null,
+                    rawJson: txn as any,
+                  });
+                  itemAdded++;
+                }
+              }
+
+              for (const txn of modified) {
+                await db
+                  .update(plaidTransactions)
+                  .set({
+                    date: txn.date,
+                    name: txn.name,
+                    merchantName: txn.merchant_name || null,
+                    amountCents: Math.round(txn.amount * 100),
+                    pending: txn.pending,
+                    categoryPrimary: txn.personal_finance_category?.primary || null,
+                    rawJson: txn as any,
+                    updatedAt: new Date(),
+                  })
+                  .where(
+                    and(
+                      eq(plaidTransactions.itemId, item.itemId),
+                      eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
+                    ),
+                  );
+                itemModified++;
+              }
+
+              for (const r of removed) {
+                if (r.transaction_id) {
+                  await db
+                    .delete(plaidTransactions)
+                    .where(
+                      and(
+                        eq(plaidTransactions.itemId, item.itemId),
+                        eq(plaidTransactions.plaidTransactionId, r.transaction_id),
+                      ),
+                    );
+                  itemRemoved++;
+                }
+              }
+
+              const accountsResponse = await plaidClient.accountsGet({
+                access_token: item.accessToken,
+              });
+
+              for (const account of accountsResponse.data.accounts) {
+                await db
+                  .update(plaidAccounts)
+                  .set({
+                    currentBalanceCents: account.balances.current
+                      ? Math.round(account.balances.current * 100)
+                      : null,
+                    availableBalanceCents: account.balances.available
+                      ? Math.round(account.balances.available * 100)
+                      : null,
+                    updatedAt: new Date(),
+                  })
+                  .where(
+                    and(
+                      eq(plaidAccounts.itemId, item.itemId),
+                      eq(plaidAccounts.plaidAccountId, account.account_id),
+                    ),
+                  );
+              }
+
+              await db
+                .insert(plaidCursors)
+                .values({
+                  itemId: item.itemId,
+                  cursor: syncResponse.data.next_cursor,
+                  lastSyncAt: new Date(),
+                })
+                .onConflictDoUpdate({
+                  target: plaidCursors.itemId,
+                  set: {
+                    cursor: syncResponse.data.next_cursor,
+                    lastSyncAt: new Date(),
+                  },
+                });
+            } else {
+              itemAdded = added.length;
+              itemModified = modified.length;
+              itemRemoved = removed.length;
+            }
+
+            totalAdded += itemAdded;
+            totalModified += itemModified;
+            totalRemoved += itemRemoved;
+            syncedCount++;
+
+            results.push({
+              itemId: item.itemId,
+              institution: item.institutionName,
+              status: "success",
+              added: itemAdded,
+              modified: itemModified,
+              removed: itemRemoved,
+              durationMs: Date.now() - itemStart,
+            });
+          } catch (itemError: any) {
+            failedCount++;
+            const plaidErr = itemError?.response?.data || itemError;
+            console.error(`[plaid-sync] FAILED item=${item.itemId}:`, plaidErr);
+
+            const errorInfo: any = {
+              itemId: item.itemId,
+              institution: item.institutionName,
+              status: "failed",
+              durationMs: Date.now() - itemStart,
+            };
+
+            if (plaidErr?.error_code) {
+              errorInfo.error_code = plaidErr.error_code;
+              errorInfo.error_message = plaidErr.error_message;
+              errorInfo.error_type = plaidErr.error_type;
+              if (["ITEM_LOGIN_REQUIRED", "INVALID_ACCESS_TOKEN", "ITEM_LOCKED"].includes(plaidErr.error_code)) {
+                errorInfo.action_required = "unlink_and_relink";
+              }
+            } else {
+              errorInfo.error_message = itemError?.message || "Unknown error";
+            }
+
+            results.push(errorInfo);
+          }
         }
 
+        const totalDuration = Date.now() - syncStart;
+        console.log(`[plaid-sync] Complete: synced=${syncedCount}, failed=${failedCount}, duration=${totalDuration}ms`);
+
         res.json({
-          synced_items: items.length,
+          synced_items: syncedCount,
+          failed_items: failedCount,
           added: totalAdded,
           modified: totalModified,
           removed: totalRemoved,
+          dryRun,
+          durationMs: totalDuration,
+          results,
         });
       } catch (error: any) {
-        console.error(
-          "Error syncing transactions:",
-          error?.response?.data || error,
-        );
-        res.status(500).json({ message: "Failed to sync transactions" });
+        const plaidError = error?.response?.data || error;
+        console.error("[plaid-sync] Critical error:", plaidError);
+        res.status(500).json({ 
+          message: "Failed to sync transactions",
+          error_code: plaidError?.error_code || null,
+          error_message: plaidError?.error_message || error?.message || "Unknown error",
+          error_type: plaidError?.error_type || null,
+        });
       }
     },
   );
@@ -4814,12 +5046,31 @@ export async function registerRoutes(
             }, 0);
         };
 
+        // Calculate static account-level totals: sum current balances of accounts
+        // that have a default finance type assigned (these represent snapshots)
+        const accountStaticTotals: Record<string, number> = { income: 0, bill: 0, debt: 0, holding: 0, other: 0 };
+        accounts.forEach((a) => {
+          if (a.defaultFinanceType && a.currentBalanceCents) {
+            const type = a.defaultFinanceType as string;
+            if (type in accountStaticTotals) {
+              accountStaticTotals[type] += Math.abs(a.currentBalanceCents);
+            }
+          }
+        });
+
         res.json({
           income: Math.round(calculateTotal("income")),
           bills: Math.round(calculateTotal("bill")),
           debts: Math.round(calculateTotal("debt")),
           holdings: Math.round(calculateTotal("holding")),
           other: Math.round(calculateTotal("other")),
+          accountStaticTotals: {
+            income: accountStaticTotals.income,
+            bills: accountStaticTotals.bill,
+            debts: accountStaticTotals.debt,
+            holdings: accountStaticTotals.holding,
+            other: accountStaticTotals.other,
+          },
           period: selectedPeriod,
         });
       } catch (error) {

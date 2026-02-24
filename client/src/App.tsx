@@ -24,6 +24,7 @@ import AccountSummaries from "@/pages/admin/AccountSummaries";
 import SpendingHabits from "@/pages/admin/SpendingHabits";
 import FinanceTracker from "@/pages/admin/FinanceTracker";
 import InvoiceSettings from "@/pages/admin/InvoiceSettings";
+import AIFinancialAnalyzer from "@/pages/admin/AIFinancialAnalyzer";
 
 function Router() {
   return (
@@ -53,6 +54,7 @@ function Router() {
       <Route path="/admin/accounts" component={AccountSummaries} />
       <Route path="/admin/spending" component={SpendingHabits} />
       <Route path="/admin/finance" component={FinanceTracker} />
+      <Route path="/admin/ai-analyzer" component={AIFinancialAnalyzer} />
       
       <Route component={NotFound} />
     </Switch>

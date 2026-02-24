@@ -14,7 +14,8 @@ import {
   Bell,
   Wallet,
   TrendingUp,
-  PieChart
+  PieChart,
+  Brain
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,7 @@ export function Layout({ children, role, clientName }: LayoutProps) {
         { icon: Wallet, label: "Account Summaries", href: "/admin/accounts" },
         { icon: TrendingUp, label: "Finance Tracker", href: "/admin/finance" },
         { icon: PieChart, label: "Spending Habits", href: "/admin/spending" },
+        { icon: Brain, label: "AI Analyzer", href: "/admin/ai-analyzer" },
       ]
     },
     {
@@ -102,10 +104,7 @@ export function Layout({ children, role, clientName }: LayoutProps) {
       >
         <div className="p-6 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">Q</span>
-            </div>
-            <span className="font-bold text-lg tracking-tight">Quick IT</span>
+            <img src="/logo-header.png" alt="Quick IT Projects" className="h-8 w-auto" />
           </div>
           <button 
             onClick={() => setSidebarOpen(false)}

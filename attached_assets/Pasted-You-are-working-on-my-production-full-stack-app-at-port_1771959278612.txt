@@ -1,0 +1,165 @@
+You are working on my production full-stack app at portal.quickitprojects.com (Admin Portal + Finance Tracker + Plaid + Invoice PDF generator).
+
+Goal: Fix the items below, or if you cannot fully fix, then:
+1) reproduce the issue locally/dev,
+2) add targeted logging + error handling,
+3) identify the most likely root cause,
+4) propose 2 to 3 concrete next steps with exact files/lines to touch,
+5) add a small “debug panel” or admin-only diagnostics endpoint when helpful.
+
+IMPORTANT RULES
+- Do not break existing endpoints or DB schema without providing a migration.
+- Any new environment variables must be documented and added to Replit Secrets instructions.
+- Prefer small, safe changes with clear acceptance criteria.
+- After each change, run and report the relevant tests or manual verification steps.
+- Leave a short CHANGELOG note in the repo (or in a /docs/notes file) describing what changed.
+
+--------------------------------------------------------------------
+1) Plaid sync status failing (500)
+Endpoint:
+GET https://portal.quickitprojects.com/api/admin/plaid/sync
+Returns 500 {"message":"Failed to sync transactions"}
+
+Tasks:
+- Locate the route handler for /api/admin/plaid/sync and the underlying Plaid sync function(s).
+- Add granular logs:
+  - which user/admin context, which plaid item_id(s), which account_ids, cursor value, counts
+  - request timing, Plaid response summary, and exact error message/status/code from Plaid SDK
+- Make errors actionable:
+  - return an error body that includes a safe error code and “where it failed” (no secrets)
+  - if Plaid throws an error object with response data, capture and log it
+- Add a “dry-run” mode query param ?dryRun=1 that does everything except writing to DB, and returns what it would have done (counts only).
+- Ensure multi-account support:
+  - if 1 of 3 accounts works, do not fail the entire sync
+  - partial success should return 200 with a summary: { syncedItems: X, failedItems: Y, failedReasons: [...] }
+- If you suspect this is a Plaid link/token state issue, add a clear “unlink/relink likely required” signal in the response summary.
+
+Acceptance criteria:
+- Endpoint no longer returns a generic 500 without context.
+- If one Plaid item fails, others still sync.
+- Response includes a summary of what synced and what failed.
+
+--------------------------------------------------------------------
+2) Finance Tracker page: word wrap or truncation for long Plaid entries
+Problem: long transaction names overflow table width.
+
+Tasks:
+- Update the table UI to handle long strings cleanly.
+- Preferred behavior:
+  - default: truncate with ellipsis in the cell
+  - on hover: show full text tooltip
+  - optional: “expand row” caret to show full details inline
+- Ensure it works on mobile too.
+
+Acceptance criteria:
+- No more overflow off-table.
+- Full text is still accessible via tooltip or expand.
+
+--------------------------------------------------------------------
+3) Finance Tracker: static category totals for entire Plaid account assignments
+Current behavior: static works for individual Plaid entries, but NOT when an entire account is assigned as static to a category.
+Wanted behavior: if an entire account is assigned to category type “static”, include that account’s balance/amount in that category total.
+
+Tasks:
+- Find how category totals are calculated.
+- Add handling for “account-level static category assignment”.
+- Only apply this logic for static category type (NOT income/bill/debt).
+- Make sure it does not double count if individual transactions from that account are also categorized.
+
+Acceptance criteria:
+- Static category total reflects account-level static assignment.
+- No double counting with transaction-level static entries.
+
+--------------------------------------------------------------------
+4) New Admin page: “AI Financial Analyzer”
+Create a new page in the admin portal: “AI Financial Analyzer” (name can vary slightly).
+UI: simple dashboard layout with:
+- left: chat-style prompt input (user asks questions)
+- right: results area that can show:
+  - a summary
+  - a list of detected recurring payments
+  - and optionally a table of matches
+
+Core MVP feature:
+User asks: “Find recurring payments like Netflix, Amazon, phone bill.”
+System:
+- loads Plaid transactions (last 90 days default, configurable)
+- detects recurring merchants and likely subscriptions
+- returns results grouped by merchant with frequency and estimated monthly cost
+
+Implementation guidance:
+- Build the page and backend structure now, even if AI integration is stubbed.
+- Provide TWO modes:
+  Mode A (no external AI): deterministic recurring detection using simple heuristics:
+    - group by merchant/name similarity
+    - detect intervals (weekly, biweekly, monthly) using date differences
+    - estimate monthly spend
+  Mode B (AI-assisted): optionally call an LLM to label/describe results and answer natural language questions
+
+If Mode B:
+- Use OpenAI API (server-side) with a new secret like OPENAI_API_KEY
+- Do not expose the key to the client
+- Create a server endpoint like POST /api/admin/ai-finance/analyze
+- Return structured JSON results
+
+Also acceptable alternative:
+- Use n8n as an optional later integration, but still build the UI and local endpoint contract.
+
+Acceptance criteria:
+- Page exists, navigable in admin.
+- Mode A works today without external services.
+- If Mode B is implemented, it is behind a feature flag and fails gracefully if no key exists.
+
+--------------------------------------------------------------------
+5) Admin Invoice generator PDF: business logo fixes
+I will upload two images into the Replit project during this run:
+- pdf-logo.png  (business logo for invoices)
+- Logo-Removed.png (app header logo replacement)
+
+Tasks for invoice logo:
+- Fix the “business logo” option in invoice generator so it actually works.
+- Use pdf-logo.png as the default saved image for now:
+  Settings > upload logo should default to this file if no logo set.
+- Add the logo above the Company Name in the top-left of the generated PDF.
+- Handle sizing nicely:
+  - scale down to fit within a max width/height bounding box
+  - preserve aspect ratio
+  - do not overflow the PDF margins
+  - if needed, center-crop or letterbox, but prefer scaling
+
+Acceptance criteria:
+- Generated PDF shows the logo above company name, top-left.
+- Logo never overlaps other fields and is appropriately sized.
+- If a user later uploads a new logo, it overrides the default.
+
+--------------------------------------------------------------------
+6) App header top-left logo update
+Current: top-left app logo shows a “Q” and “Quick IT”.
+Replace with the uploaded image: Logo-Removed.png
+
+Tasks:
+- Find header/nav component that renders the logo.
+- Replace existing logo asset with Logo-Removed.png
+- Ensure it looks good in light/dark (if applicable) and scales for mobile.
+
+Acceptance criteria:
+- Header shows the new logo on all pages.
+- No layout shift or broken alignment.
+
+--------------------------------------------------------------------
+DELIVERABLES
+When done, output:
+1) A checklist of what was fixed and what remains
+2) Exact files changed
+3) Any new env vars / secrets and how to set them
+4) How I can manually verify each fix in the browser
+5) If any issue could not be fixed, a short root-cause analysis and next steps
+
+Start by:
+- locating the routes/components for each item
+- adding logging to the Plaid sync endpoint first
+- then address UI table overflow
+- then static totals
+- then build the AI Financial Analyzer page scaffolding
+- then invoice PDF logo
+- then header logo replacement
