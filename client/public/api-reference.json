@@ -1,0 +1,794 @@
+{
+  "title": "Quick IT Projects - API Reference",
+  "version": "1.0.0",
+  "baseUrl": "https://portal.quickitprojects.com",
+  "authentication": {
+    "type": "Replit Auth (OpenID Connect)",
+    "notes": "Session-based authentication via cookies. Admin endpoints require admin role. Client endpoints require client role. Admin impersonation supported via ?asClientId={id} query parameter on client endpoints."
+  },
+  "endpoints": {
+    "auth": [
+      {
+        "method": "GET",
+        "path": "/api/me",
+        "auth": "authenticated",
+        "description": "Get current user profile and role",
+        "response": {
+          "id": "number",
+          "replitId": "string",
+          "username": "string",
+          "role": "admin | client | null",
+          "clientId": "number | null",
+          "email": "string | null",
+          "profileImage": "string | null"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/bootstrap",
+        "auth": "authenticated",
+        "description": "Bootstrap first admin user",
+        "body": {
+          "secret": "string (SETUP_ADMIN_2024)"
+        }
+      }
+    ],
+    "registration": [
+      {
+        "method": "POST",
+        "path": "/api/invite/verify",
+        "auth": "public",
+        "description": "Verify an invite code exists and is unused",
+        "body": { "code": "string" },
+        "response": { "valid": "boolean", "clientName": "string" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/invite/claim",
+        "auth": "authenticated",
+        "description": "Claim invite code to link account to client profile",
+        "body": { "code": "string" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/client-signup/verify",
+        "auth": "public",
+        "description": "Verify client signup code",
+        "body": { "code": "string" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/client-signup/claim",
+        "auth": "authenticated",
+        "description": "Claim client signup code",
+        "body": { "code": "string" }
+      }
+    ],
+    "admin_clients": [
+      {
+        "method": "GET",
+        "path": "/api/admin/clients",
+        "auth": "admin",
+        "description": "List all clients"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/clients/:clientId",
+        "auth": "admin",
+        "description": "Get single client by ID"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/clients",
+        "auth": "admin",
+        "description": "Create a new client",
+        "body": {
+          "name": "string",
+          "email": "string",
+          "phone": "string (optional)",
+          "address": "string (optional)"
+        }
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/clients/:clientId",
+        "auth": "admin",
+        "description": "Delete a client"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/clients/:clientId/status",
+        "auth": "admin",
+        "description": "Update client status",
+        "body": { "status": "active | paused | inactive | behind" }
+      }
+    ],
+    "admin_billing_items": [
+      {
+        "method": "GET",
+        "path": "/api/admin/clients/:clientId/billing-items",
+        "auth": "admin",
+        "description": "Get billing items for a specific client"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/clients/:clientId/billing-items",
+        "auth": "admin",
+        "description": "Create a billing item for a client",
+        "body": {
+          "title": "string",
+          "amountCents": "number",
+          "frequency": "monthly | weekly | biweekly | yearly | one_time",
+          "type": "rent | other",
+          "status": "active | inactive"
+        }
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/clients/:clientId/billing-items/:id",
+        "auth": "admin",
+        "description": "Delete a billing item"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/billing-items",
+        "auth": "admin",
+        "description": "Get all billing items across all clients"
+      }
+    ],
+    "admin_leases": [
+      {
+        "method": "GET",
+        "path": "/api/admin/leases",
+        "auth": "admin",
+        "description": "List all leases"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/leases",
+        "auth": "admin",
+        "description": "Create a lease",
+        "body": {
+          "clientId": "number",
+          "startDate": "string (YYYY-MM-DD)",
+          "endDate": "string (YYYY-MM-DD)",
+          "monthlyRentCents": "number",
+          "status": "active | paused | inactive | behind"
+        }
+      }
+    ],
+    "admin_invoices": [
+      {
+        "method": "GET",
+        "path": "/api/admin/invoices",
+        "auth": "admin",
+        "description": "List all invoices"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/invoices",
+        "auth": "admin",
+        "description": "Create invoice linked to a client",
+        "body": {
+          "clientId": "number",
+          "amountCents": "number",
+          "dueDate": "string (YYYY-MM-DD)",
+          "description": "string (optional)"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/invoices/create",
+        "auth": "admin",
+        "description": "Create standalone invoice (no client required, Bill To fields)",
+        "body": {
+          "billToName": "string",
+          "billToEmail": "string",
+          "billToAddress": "string",
+          "lineItems": "array of { description, quantity, unitPriceCents }",
+          "dueDate": "string (YYYY-MM-DD)",
+          "notes": "string (optional)"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/invoices/:invoiceId",
+        "auth": "admin",
+        "description": "Get single invoice"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/invoices/:invoiceId",
+        "auth": "admin",
+        "description": "Update invoice"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/invoices/:invoiceId",
+        "auth": "admin",
+        "description": "Delete invoice"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/invoices/:invoiceId/pdf",
+        "auth": "admin",
+        "description": "Download invoice as PDF",
+        "response": "application/pdf binary"
+      }
+    ],
+    "admin_invoice_settings": [
+      {
+        "method": "GET",
+        "path": "/api/admin/invoice-settings",
+        "auth": "admin",
+        "description": "Get invoice settings (business info, logo)"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/invoice-settings",
+        "auth": "admin",
+        "description": "Update invoice settings"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/invoice-settings/logo",
+        "auth": "admin",
+        "description": "Upload invoice logo (multipart form, field: logo)"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/invoice-settings/next-number",
+        "auth": "admin",
+        "description": "Get the next auto-generated invoice number"
+      }
+    ],
+    "admin_payments": [
+      {
+        "method": "GET",
+        "path": "/api/admin/payments",
+        "auth": "admin",
+        "description": "List all payments"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/payments",
+        "auth": "admin",
+        "description": "Create a payment record",
+        "body": {
+          "clientId": "number",
+          "amountCents": "number",
+          "method": "string",
+          "status": "pending | posted | confirmed | rejected",
+          "notes": "string (optional)"
+        }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/payments/:paymentId/status",
+        "auth": "admin",
+        "description": "Update payment verification status",
+        "body": { "status": "posted | confirmed | rejected" }
+      }
+    ],
+    "admin_documents": [
+      {
+        "method": "GET",
+        "path": "/api/admin/documents",
+        "auth": "admin",
+        "description": "List all documents"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/documents/upload",
+        "auth": "admin",
+        "description": "Upload a document (multipart form)",
+        "body": {
+          "file": "File (multipart)",
+          "clientId": "number",
+          "category": "invoice | other"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/documents/:documentId/download",
+        "auth": "admin",
+        "description": "Download a document file"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/documents/:documentId",
+        "auth": "admin",
+        "description": "Update document metadata"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/documents/:documentId",
+        "auth": "admin",
+        "description": "Delete a document"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/documents/:documentId/active-agreement",
+        "auth": "admin",
+        "description": "Set or unset a document as active agreement",
+        "body": { "isActive": "boolean" }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/clients/:clientId/active-agreement",
+        "auth": "admin",
+        "description": "Get the active agreement document for a client"
+      }
+    ],
+    "admin_invite_codes": [
+      {
+        "method": "GET",
+        "path": "/api/admin/invite-codes",
+        "auth": "admin",
+        "description": "List all invite codes"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/invite-codes",
+        "auth": "admin",
+        "description": "Generate a new invite code",
+        "body": { "clientId": "number" }
+      }
+    ],
+    "admin_settings": [
+      {
+        "method": "GET",
+        "path": "/api/admin/payment-settings",
+        "auth": "admin",
+        "description": "Get payment method settings (Cash App, Venmo, Bank info)"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/admin/payment-settings",
+        "auth": "admin",
+        "description": "Update payment method settings"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/automation-settings",
+        "auth": "admin",
+        "description": "Get automation/webhook settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/admin/automation-settings",
+        "auth": "admin",
+        "description": "Update automation/webhook settings"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/test-webhook",
+        "auth": "admin",
+        "description": "Test configured webhook endpoint"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/send-signup-email",
+        "auth": "admin",
+        "description": "Send signup email to client via webhook"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/generate-monthly-summary",
+        "auth": "admin",
+        "description": "Generate and send monthly summary email"
+      }
+    ],
+    "admin_external_accounts": [
+      {
+        "method": "GET",
+        "path": "/api/admin/external-accounts",
+        "auth": "admin",
+        "description": "List external financial accounts"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/external-accounts",
+        "auth": "admin",
+        "description": "Create an external account"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/external-accounts/:accountId",
+        "auth": "admin",
+        "description": "Delete an external account"
+      }
+    ],
+    "admin_stats": [
+      {
+        "method": "GET",
+        "path": "/api/admin/stats",
+        "auth": "admin",
+        "description": "Get dashboard statistics (total clients, collected, outstanding, etc.)"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/production-readiness",
+        "auth": "admin",
+        "description": "Check production readiness status"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/security-test",
+        "auth": "admin",
+        "description": "Security test endpoint"
+      }
+    ],
+    "admin_finance_tracker": [
+      {
+        "method": "GET",
+        "path": "/api/admin/finance-entries",
+        "auth": "admin",
+        "description": "List finance entries",
+        "query": { "type": "income | bill | debt | holding | other" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/finance-entries",
+        "auth": "admin",
+        "description": "Create a finance entry",
+        "body": {
+          "title": "string",
+          "amountCents": "number",
+          "date": "string (YYYY-MM-DD)",
+          "financeType": "income | bill | debt | holding | other",
+          "recurrence": "one_time | weekly | biweekly | monthly | yearly | null",
+          "externalUrl": "string (optional)",
+          "plaidAccountId": "string (optional)"
+        }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/finance-entries/:entryId",
+        "auth": "admin",
+        "description": "Update a finance entry"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/finance-entries/:entryId",
+        "auth": "admin",
+        "description": "Delete a finance entry"
+      }
+    ],
+    "admin_ai_analyzer": [
+      {
+        "method": "POST",
+        "path": "/api/admin/ai-finance/analyze",
+        "auth": "admin",
+        "description": "Analyze recurring payments with optional LLM enhancement",
+        "body": {
+          "query": "string (user question)",
+          "days": "number (default 90, lookback period)",
+          "useLLM": "boolean (default false, enable OpenAI enhanced summary)"
+        },
+        "response": {
+          "summary": "string",
+          "recurringPayments": [{
+            "merchantName": "string",
+            "frequency": "weekly | biweekly | monthly | yearly",
+            "averageAmount": "number (cents)",
+            "estimatedMonthlyCost": "number (cents)",
+            "transactionCount": "number",
+            "lastDate": "string (YYYY-MM-DD)",
+            "confidence": "high | medium | low"
+          }],
+          "totalMonthlyEstimate": "number (cents)",
+          "analyzedTransactions": "number",
+          "dateRange": { "start": "string", "end": "string" }
+        }
+      }
+    ],
+    "admin_plaid": [
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/link-token",
+        "auth": "admin",
+        "description": "Create Plaid Link token for connecting bank accounts",
+        "response": { "link_token": "string" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/exchange",
+        "auth": "admin",
+        "description": "Exchange Plaid public token for access token and fetch accounts/transactions",
+        "body": {
+          "publicToken": "string",
+          "institutionId": "string",
+          "institutionName": "string"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/sync",
+        "auth": "admin",
+        "description": "Sync transactions from all linked Plaid items. Supports ?dryRun=1 for dry run mode.",
+        "query": { "dryRun": "0 | 1 (optional)" },
+        "response": {
+          "synced_items": "number",
+          "failed_items": "number",
+          "added": "number",
+          "modified": "number",
+          "results": [{
+            "itemId": "string",
+            "institution": "string",
+            "status": "success | failed",
+            "added": "number",
+            "modified": "number",
+            "error_message": "string | null",
+            "action_required": "string | null"
+          }]
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/items",
+        "auth": "admin",
+        "description": "List all linked Plaid institutions"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/admin/plaid/items/:itemId",
+        "auth": "admin",
+        "description": "Unlink a Plaid institution"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/account-summaries",
+        "auth": "admin",
+        "description": "Get account balances grouped by institution"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/all-accounts",
+        "auth": "admin",
+        "description": "Get all Plaid accounts across all institutions"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/accounts/:plaidAccountId/transactions",
+        "auth": "admin",
+        "description": "Get transactions for a specific account",
+        "query": {
+          "start_date": "string (YYYY-MM-DD, optional)",
+          "end_date": "string (YYYY-MM-DD, optional)",
+          "search": "string (optional)"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/accounts/transactions-bulk",
+        "auth": "admin",
+        "description": "Get transactions for multiple accounts",
+        "body": {
+          "plaidAccountIds": "string[]",
+          "start_date": "string (optional)",
+          "end_date": "string (optional)",
+          "search": "string (optional)"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/search-transactions",
+        "auth": "admin",
+        "description": "Search all Plaid transactions across all accounts",
+        "query": {
+          "search": "string (min 2 chars)",
+          "days": "number (default 90)"
+        }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/plaid/accounts/:accountId/default-type",
+        "auth": "admin",
+        "description": "Set default finance type for an account",
+        "body": { "defaultFinanceType": "income | bill | debt | holding | other | null" }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/plaid/transactions/:transactionId/type",
+        "auth": "admin",
+        "description": "Override finance type for a specific transaction",
+        "body": { "overrideFinanceType": "income | bill | debt | holding | other | null" }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/plaid/transactions/:transactionId/recurrence",
+        "auth": "admin",
+        "description": "Set recurrence for a specific transaction",
+        "body": { "recurrence": "one_time | weekly | biweekly | monthly | yearly | null" }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/sync-status",
+        "auth": "admin",
+        "description": "Get sync status: linked accounts count, last sync timestamp"
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/finance-totals",
+        "auth": "admin",
+        "description": "Get finance totals grouped by type",
+        "query": { "period": "weekly | biweekly | monthly | yearly" }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/typed-transactions",
+        "auth": "admin",
+        "description": "Get transactions filtered by finance type",
+        "query": {
+          "category": "income | bill | debt | holding | other",
+          "days": "number"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/spending-summary",
+        "auth": "admin",
+        "description": "Get spending summary with category breakdown",
+        "query": { "days": "number (default 30)" }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/recurring-groups",
+        "auth": "admin",
+        "description": "List all recurring transaction groups"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/recurring-groups",
+        "auth": "admin",
+        "description": "Create a recurring transaction group",
+        "body": {
+          "name": "string",
+          "financeType": "income | bill | debt | holding | other (optional)",
+          "transactionIds": "string[] (optional)"
+        }
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/admin/plaid/recurring-groups/:groupId",
+        "auth": "admin",
+        "description": "Update a recurring group"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/plaid/recurring-groups/:groupId/transactions",
+        "auth": "admin",
+        "description": "Add or remove transactions from a recurring group",
+        "body": {
+          "transactionIds": "string[]",
+          "action": "add | remove"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/admin/plaid/detect-recurring",
+        "auth": "admin",
+        "description": "Auto-detect recurring transaction patterns and suggest groups"
+      }
+    ],
+    "admin_stripe": [
+      {
+        "method": "GET",
+        "path": "/api/admin/stripe/status",
+        "auth": "admin",
+        "description": "Check if Stripe is configured and connected"
+      },
+      {
+        "method": "POST",
+        "path": "/api/admin/stripe/test",
+        "auth": "admin",
+        "description": "Test Stripe API connection"
+      }
+    ],
+    "client_portal": [
+      {
+        "method": "GET",
+        "path": "/api/client/dashboard",
+        "auth": "client",
+        "description": "Get client dashboard data (balances, recent activity, active agreement)",
+        "notes": "Supports admin impersonation via ?asClientId={id}"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/invoices",
+        "auth": "client",
+        "description": "Get client's invoices"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/payments",
+        "auth": "client",
+        "description": "Get client's payment history"
+      },
+      {
+        "method": "POST",
+        "path": "/api/client/payments",
+        "auth": "client",
+        "description": "Submit a payment (status starts as pending)",
+        "body": {
+          "amountCents": "number",
+          "method": "string (cash_app | venmo | bank_transfer | stripe)",
+          "notes": "string (optional)",
+          "invoiceId": "number (optional)"
+        }
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/documents",
+        "auth": "client",
+        "description": "Get client's documents"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/documents/:documentId/download",
+        "auth": "client",
+        "description": "Download a client document"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/finance-entries",
+        "auth": "client",
+        "description": "Get finance entries assigned to the client"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/profile",
+        "auth": "client",
+        "description": "Get client profile information"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/client/profile",
+        "auth": "client",
+        "description": "Update client profile"
+      },
+      {
+        "method": "GET",
+        "path": "/api/client/payment-settings",
+        "auth": "client",
+        "description": "Get available payment method instructions (Cash App, Venmo, Bank)"
+      }
+    ],
+    "stripe_payments": [
+      {
+        "method": "POST",
+        "path": "/api/payments/stripe/checkout",
+        "auth": "client",
+        "description": "Create a Stripe checkout session for payment",
+        "body": {
+          "amountCents": "number",
+          "invoiceId": "number (optional)"
+        },
+        "response": { "url": "string (Stripe checkout URL)" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/stripe/confirm-checkout",
+        "auth": "client",
+        "description": "Confirm a completed Stripe checkout session",
+        "body": { "sessionId": "string" }
+      },
+      {
+        "method": "POST",
+        "path": "/api/stripe/webhook",
+        "auth": "public",
+        "description": "Stripe webhook receiver (raw body required)",
+        "notes": "Verifies Stripe signature header"
+      }
+    ]
+  },
+  "notes": {
+    "monetary_values": "All monetary amounts are in cents (integer). Divide by 100 for display.",
+    "dates": "All dates use YYYY-MM-DD format.",
+    "authentication_flow": "1. Authenticate via Replit Auth (OpenID Connect). 2. First-time users register with invite code via /api/invite/claim. 3. Session cookie is set automatically.",
+    "admin_impersonation": "Admin users can view client portal as a specific client by appending ?asClientId={clientId} to client endpoints.",
+    "payment_status_flow": "pending → posted/confirmed/rejected. Only confirmed payments count toward Total Collected.",
+    "total_endpoints": 94
+  }
+}
