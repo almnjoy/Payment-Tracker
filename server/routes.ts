@@ -154,8 +154,11 @@ function sanitizeForLog(obj: any): any {
   return sanitized;
 }
 
-// Helper to get user ID from request
+// Helper to get user ID from request (supports both session and mobile JWT)
 function getUserId(req: Request): string | undefined {
+  if ((req as any).mobileUser) {
+    return (req as any).mobileUser.userId;
+  }
   return (req.user as any)?.claims?.sub;
 }
 

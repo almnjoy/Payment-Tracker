@@ -668,6 +668,34 @@ export function generateAccountId(): string {
   return `ACC-${num.toString().padStart(6, "0")}`;
 }
 
+// ============================================
+// MOBILE AUTH (JWT token-based auth for native apps)
+// ============================================
+export const mobileRefreshTokens = pgTable("mobile_refresh_tokens", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: varchar("user_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+  deviceName: text("device_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  lastUsedAt: timestamp("last_used_at"),
+});
+
+export const mobileRevokedJtis = pgTable("mobile_revoked_jtis", {
+  jti: varchar("jti", { length: 64 }).primaryKey(),
+  userId: varchar("user_id").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type MobileRefreshToken = typeof mobileRefreshTokens.$inferSelect;
+export type MobileRevokedJti = typeof mobileRevokedJtis.$inferSelect;
+
+// ============================================
+// ID GENERATORS
+// ============================================
+
 export function generatePlaidItemId(): string {
   const num = Math.floor(Math.random() * 999999) + 1;
   return `ITEM-${num.toString().padStart(6, "0")}`;

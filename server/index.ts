@@ -4,6 +4,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { bearerOrSessionAuth } from "./middleware/bearerAuth";
+import mobileAuthRouter from "./routes/mobileAuth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -62,8 +64,12 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Setup Replit Auth BEFORE other routes
   await setupAuth(app);
+
+  app.use("/api/*", bearerOrSessionAuth);
+
+  app.use("/api/mobile", mobileAuthRouter);
+
   registerAuthRoutes(app);
   registerObjectStorageRoutes(app);
   

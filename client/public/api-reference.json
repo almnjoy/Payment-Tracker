@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "baseUrl": "https://portal.quickitprojects.com",
   "authentication": {
-    "type": "Replit Auth (OpenID Connect)",
-    "notes": "Session-based authentication via cookies. Admin endpoints require admin role. Client endpoints require client role. Admin impersonation supported via ?asClientId={id} query parameter on client endpoints."
+    "type": "Replit Auth (OpenID Connect) + JWT Bearer for mobile",
+    "notes": "Web app uses session-based auth via cookies. Native mobile apps use JWT Bearer tokens via Authorization header. Admin endpoints require admin role. Client endpoints require client role. Admin impersonation supported via ?asClientId={id} query parameter on client endpoints.",
+    "mobile": {
+      "flow": "1. Authenticate via browser session, 2. POST /api/mobile/auth/token to mint tokens, 3. Use Authorization: Bearer <accessToken> for all API calls, 4. POST /api/mobile/auth/refresh when access token expires",
+      "accessTokenTTL": "15 minutes (configurable via MOBILE_ACCESS_TTL_MINUTES)",
+      "refreshTokenTTL": "30 days (configurable via MOBILE_REFRESH_TTL_DAYS)",
+      "tokenFormat": "JWT HS256 with aud=mobile, iss=quickitprojects"
+    }
   },
   "endpoints": {
     "auth": [
@@ -30,6 +36,55 @@
         "description": "Bootstrap first admin user",
         "body": {
           "secret": "string (SETUP_ADMIN_2024)"
+        }
+      }
+    ],
+    "mobileAuth": [
+      {
+        "method": "POST",
+        "path": "/api/mobile/auth/token",
+        "auth": "authenticated (cookie session)",
+        "description": "Exchange browser session for mobile JWT tokens",
+        "body": { "deviceName": "string (optional)" },
+        "response": {
+          "accessToken": "string (JWT)",
+          "refreshToken": "string (opaque)",
+          "tokenType": "Bearer",
+          "expiresInSeconds": "number"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/mobile/auth/refresh",
+        "auth": "public",
+        "description": "Refresh access token using refresh token",
+        "body": { "refreshToken": "string" },
+        "response": {
+          "accessToken": "string (JWT)",
+          "tokenType": "Bearer",
+          "expiresInSeconds": "number"
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/mobile/auth/logout",
+        "auth": "Bearer token or refresh token",
+        "description": "Revoke refresh token and/or access token JTI",
+        "body": { "refreshToken": "string (optional)" },
+        "response": { "ok": "boolean" }
+      },
+      {
+        "method": "GET",
+        "path": "/api/mobile/me",
+        "auth": "Bearer token",
+        "description": "Get user profile via Bearer token (same shape as GET /api/me)",
+        "response": {
+          "userId": "string",
+          "email": "string",
+          "firstName": "string | null",
+          "lastName": "string | null",
+          "profile": "object | null",
+          "hasProfile": "boolean"
         }
       }
     ],
@@ -468,15 +523,17 @@
         },
         "response": {
           "summary": "string",
-          "recurringPayments": [{
-            "merchantName": "string",
-            "frequency": "weekly | biweekly | monthly | yearly",
-            "averageAmount": "number (cents)",
-            "estimatedMonthlyCost": "number (cents)",
-            "transactionCount": "number",
-            "lastDate": "string (YYYY-MM-DD)",
-            "confidence": "high | medium | low"
-          }],
+          "recurringPayments": [
+            {
+              "merchantName": "string",
+              "frequency": "weekly | biweekly | monthly | yearly",
+              "averageAmount": "number (cents)",
+              "estimatedMonthlyCost": "number (cents)",
+              "transactionCount": "number",
+              "lastDate": "string (YYYY-MM-DD)",
+              "confidence": "high | medium | low"
+            }
+          ],
           "totalMonthlyEstimate": "number (cents)",
           "analyzedTransactions": "number",
           "dateRange": { "start": "string", "end": "string" }
@@ -513,15 +570,17 @@
           "failed_items": "number",
           "added": "number",
           "modified": "number",
-          "results": [{
-            "itemId": "string",
-            "institution": "string",
-            "status": "success | failed",
-            "added": "number",
-            "modified": "number",
-            "error_message": "string | null",
-            "action_required": "string | null"
-          }]
+          "results": [
+            {
+              "itemId": "string",
+              "institution": "string",
+              "status": "success | failed",
+              "added": "number",
+              "modified": "number",
+              "error_message": "string | null",
+              "action_required": "string | null"
+            }
+          ]
         }
       },
       {
@@ -586,21 +645,27 @@
         "path": "/api/admin/plaid/accounts/:accountId/default-type",
         "auth": "admin",
         "description": "Set default finance type for an account",
-        "body": { "defaultFinanceType": "income | bill | debt | holding | other | null" }
+        "body": {
+          "defaultFinanceType": "income | bill | debt | holding | other | null"
+        }
       },
       {
         "method": "PATCH",
         "path": "/api/admin/plaid/transactions/:transactionId/type",
         "auth": "admin",
         "description": "Override finance type for a specific transaction",
-        "body": { "overrideFinanceType": "income | bill | debt | holding | other | null" }
+        "body": {
+          "overrideFinanceType": "income | bill | debt | holding | other | null"
+        }
       },
       {
         "method": "PATCH",
         "path": "/api/admin/plaid/transactions/:transactionId/recurrence",
         "auth": "admin",
         "description": "Set recurrence for a specific transaction",
-        "body": { "recurrence": "one_time | weekly | biweekly | monthly | yearly | null" }
+        "body": {
+          "recurrence": "one_time | weekly | biweekly | monthly | yearly | null"
+        }
       },
       {
         "method": "GET",

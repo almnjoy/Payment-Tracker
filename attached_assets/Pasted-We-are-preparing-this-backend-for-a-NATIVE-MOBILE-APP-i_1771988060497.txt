@@ -1,0 +1,112 @@
+We are preparing this backend for a NATIVE MOBILE APP (iOS/Android). Do NOT implement a mobile web/PWA. The native app must authenticate with Bearer tokens (JWT) and must not rely on session cookies after initial token issuance.
+
+Current state:
+- Existing auth uses Replit Auth (OIDC) with session cookies.
+- Existing endpoint GET /api/me works for cookie-authenticated browser sessions.
+Goal:
+- Add a token-based auth layer for native mobile apps while keeping the current cookie/session auth working for the web app unchanged.
+
+Implement:
+
+1) Database tables for mobile auth
+A) mobile_refresh_tokens
+- id (uuid or serial)
+- userId (number)
+- tokenHash (string)  // store hashed refresh token, never plaintext
+- deviceName (string, optional)
+- createdAt, expiresAt
+- revokedAt (nullable)
+- lastUsedAt (nullable)
+
+B) mobile_revoked_jtis (or combine into above)
+- jti (string primary key)
+- userId (number)
+- expiresAt (timestamp)
+- createdAt (timestamp)
+
+2) JWT strategy
+- Access token: JWT HS256 signed with env MOBILE_JWT_SECRET
+  - aud: "mobile"
+  - iss: "quickitprojects"
+  - claims: sub (userId), role, clientId, username, jti, iat, exp
+  - TTL default 15 minutes (env MOBILE_ACCESS_TTL_MINUTES, default 15)
+
+- Refresh token: random 32-64 byte secure value
+  - TTL default 30 days (env MOBILE_REFRESH_TTL_DAYS, default 30)
+  - Store only a hash (SHA-256) in DB
+
+3) New endpoints (mobile auth)
+A) POST /api/mobile/auth/token
+- Purpose: Exchange an existing authenticated browser session (cookie) for mobile tokens.
+- Auth: MUST require existing cookie session (same as /api/me)
+- Body: { deviceName?: string }
+- Response:
+  {
+    "accessToken": "string",
+    "refreshToken": "string",
+    "tokenType": "Bearer",
+    "expiresInSeconds": number
+  }
+- Behavior:
+  - Deny if user has no role (403)
+  - Create refresh token record (hashed), return plaintext refresh token once
+
+B) POST /api/mobile/auth/refresh
+- Purpose: Native app refreshes access token using refresh token.
+- Auth: public (no cookie)
+- Body: { refreshToken: string }
+- Response: { accessToken, tokenType: "Bearer", expiresInSeconds }
+- Behavior:
+  - Hash provided refreshToken and find non-revoked, non-expired record
+  - Update lastUsedAt
+  - Mint new access token
+
+C) POST /api/mobile/auth/logout
+- Auth: Bearer access token OR refresh token (support both)
+- Body: { refreshToken?: string }
+- Behavior:
+  - If refreshToken provided: revoke that refresh token record (set revokedAt)
+  - Always revoke current access token jti (insert into mobile_revoked_jtis until exp)
+- Response: { ok: true }
+
+D) GET /api/mobile/me
+- Auth: Bearer access token
+- Response: same shape as GET /api/me
+
+4) Middleware: accept Bearer tokens for protected endpoints
+- Create middleware that authenticates request using:
+  - If Authorization: Bearer exists -> verify JWT, check revoked jti, set req.user
+  - Else fall back to existing cookie session auth (unchanged)
+- Update role checks so they work for BOTH auth types:
+  - requireAuth
+  - requireRole("admin"|"client")
+
+5) CORS for native apps
+- Add configurable allowed origins via env MOBILE_CORS_ORIGINS
+  - Default empty (no change)
+  - When set, allow Authorization header and typical methods for /api/*
+- Do NOT open CORS wildcard in production.
+- Ensure preflight handles Authorization.
+
+6) Security requirements
+- MOBILE_JWT_SECRET must be required in production
+- Refresh token must be stored hashed in DB
+- Rate limit /api/mobile/auth/refresh to reduce brute force attempts (basic in-memory limit is fine for now)
+- Access tokens must be short-lived (15m default)
+- Include aud check = "mobile"
+
+7) Documentation
+- Add docs section: "Native Mobile Auth"
+  - How to mint tokens from an authenticated session (POST /api/mobile/auth/token)
+  - How to refresh (POST /api/mobile/auth/refresh)
+  - How to call APIs with Authorization header
+  - Notes about token TTLs and logout
+
+Acceptance Criteria
+- Web app continues using cookie sessions with zero behavior change.
+- Native app can:
+  - Mint tokens once (while user is logged-in in browser OR later when we add native OIDC)
+  - Call any existing admin/client endpoints with Authorization: Bearer <accessToken>
+  - Refresh access token without cookies using refresh token
+  - Logout revokes refresh token and access token jti
+- Role gates still enforced.

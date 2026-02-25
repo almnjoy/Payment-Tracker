@@ -65,12 +65,24 @@ A full-stack payment and finance management portal with dual interfaces (Admin a
 12. **plaid_cursors** - Sync cursors for transactions
 13. **client_billing_items** - Per-client charges (rent/other) with frequency tracking
 14. **automation_settings** - Webhook URLs and tokens for automation integrations
+15. **mobile_refresh_tokens** - JWT refresh tokens for native mobile app auth (hashed)
+16. **mobile_revoked_jtis** - Revoked access token JTIs for mobile auth
 
 ## Authentication Flow
+
+### Web App (Cookie/Session)
 1. Users authenticate via Replit Auth (/api/login)
 2. First-time users must register with a magic number (/auth/register)
 3. The magic number links their account to an existing client profile
 4. Admins are created via bootstrap endpoint (POST /api/admin/bootstrap)
+
+### Native Mobile App (JWT Bearer)
+1. User authenticates in browser first, then mints tokens: `POST /api/mobile/auth/token`
+2. App receives `accessToken` (JWT, 15min TTL) and `refreshToken` (opaque, 30-day TTL)
+3. All API calls use `Authorization: Bearer <accessToken>` header
+4. When access token expires, refresh via `POST /api/mobile/auth/refresh`
+5. Logout revokes both tokens: `POST /api/mobile/auth/logout`
+6. Bearer middleware runs on all `/api/*` routes; if no Bearer header, falls back to cookie auth (zero change for web app)
 
 ## Admin Bootstrap
 To create the first admin user:
@@ -94,6 +106,12 @@ Run `npx tsx server/seed.ts` to populate test data:
 ### Auth
 - GET `/api/auth/user` - Get current user
 - POST `/api/admin/bootstrap` - Bootstrap admin user
+
+### Mobile Auth (JWT Bearer)
+- POST `/api/mobile/auth/token` - Mint access + refresh tokens (requires cookie session)
+- POST `/api/mobile/auth/refresh` - Refresh access token using refresh token (public)
+- POST `/api/mobile/auth/logout` - Revoke tokens (Bearer or refresh token)
+- GET `/api/mobile/me` - Get user profile via Bearer token
 
 ### Admin Endpoints (requires admin role)
 - GET/POST `/api/admin/clients` - List/create clients
@@ -138,6 +156,10 @@ Run `npx tsx server/seed.ts` to populate test data:
 - `PLAID_CLIENT_ID` - Plaid API client ID
 - `PLAID_SECRET` - Plaid API secret
 - `PLAID_ENV` - Plaid environment (sandbox, development, production)
+- `MOBILE_JWT_SECRET` - JWT signing secret for mobile tokens (required in production)
+- `MOBILE_ACCESS_TTL_MINUTES` - Mobile access token TTL (default: 15)
+- `MOBILE_REFRESH_TTL_DAYS` - Mobile refresh token TTL (default: 30)
+- `MOBILE_CORS_ORIGINS` - Comma-separated allowed origins for mobile app requests
 
 ## Development Notes
 - All monetary amounts are stored in cents (integer) to avoid floating point issues
