@@ -109,6 +109,20 @@ const webhookTestRateLimiter = rateLimit({
 // SECURITY HELPERS
 // ============================================
 
+const DEFAULT_ORGANIZATION_ID = "org-default";
+
+function getActiveOrganizationId(req: Request): string {
+  const headerOrgId = req.headers["x-organization-id"];
+  const queryOrgId = req.query.orgId;
+  const bodyOrgId = (req.body as any)?.organizationId;
+  const orgId =
+    (typeof headerOrgId === "string" && headerOrgId) ||
+    (typeof queryOrgId === "string" && queryOrgId) ||
+    (typeof bodyOrgId === "string" && bodyOrgId) ||
+    DEFAULT_ORGANIZATION_ID;
+  return orgId.trim();
+}
+
 // Helper to get linked clientId for authenticated client (NEVER trusts browser input)
 function getLinkedClientId(req: Request): string | null {
   const profile = (req as any).userProfile;
@@ -223,11 +237,15 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  const organizationId = getActiveOrganizationId(req);
   const profile = await storage.getUserProfile(userId);
-  if (!profile) {
-    return res
-      .status(403)
-      .json({ message: "Forbidden: No user profile found" });
+  if (!profile || profile.status !== "active") {
+    return res.status(403).json({ message: "Forbidden: No active user profile found" });
+  }
+
+  const orgMembership = await storage.getOrganizationMembership(userId, organizationId);
+  if (!orgMembership || orgMembership.status !== "active") {
+    return res.status(403).json({ message: "Forbidden: No active membership for this organization" });
   }
 
   const organizationId = getActiveOrganizationId(req);
@@ -241,16 +259,17 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     // Admin impersonating a client
     const client = await storage.getClient(asClientId, getActiveOrganizationId(req));
     if (!client) {
-      return res
-        .status(404)
-        .json({ message: "Client not found for impersonation" });
+      return res.status(404).json({ message: "Client not found for impersonation" });
     }
     (req as any).activeOrganizationId = profile.organizationId || "org-default";
     (req as any).userProfile = {
       ...profile,
+      organizationId,
+      role: orgMembership.role,
       clientId: asClientId,
       impersonating: true,
     };
+    (req as any).organizationMembership = orgMembership;
     (req as any).impersonatedClient = client;
     return next();
   }
@@ -411,6 +430,9 @@ export async function registerRoutes(
 
       const profile = await storage.getUserProfile(userId);
       const userClaims = (req.user as any)?.claims;
+      const organizationId = getActiveOrganizationId(req);
+      const organizationMembership = await storage.getOrganizationMembership(userId, organizationId);
+      const clientMembership = await storage.getClientMembershipForUser(userId, organizationId);
 
       const memberships = await storage.getActiveMembershipsByUser(userId);
       const activeMembership = memberships[0] || null;
@@ -424,6 +446,14 @@ export async function registerRoutes(
         firstName: userClaims?.first_name,
         lastName: userClaims?.last_name,
         profile: profile || null,
+        membership: organizationMembership
+          ? {
+              organizationId,
+              role: organizationMembership.role,
+              status: organizationMembership.status,
+              clientId: clientMembership?.clientId || null,
+            }
+          : null,
         hasProfile: !!profile,
         activeOrganizationId: activeMembership?.organizationId || null,
         membership: activeMembership,
@@ -516,10 +546,22 @@ export async function registerRoutes(
             .json({ success: false, message: "Failed to claim invite" });
         }
 
-        // Create/update user profile
+        // Create/update global user profile
         await storage.upsertUserProfile({
           userId,
+          status: "active",
+        });
+
+        // Create org-scoped memberships
+        await storage.upsertOrganizationMembership({
+          organizationId: code.organizationId,
+          userId,
           role: "client",
+          status: "active",
+        });
+        await storage.upsertClientMembership({
+          organizationId: code.organizationId,
+          userId,
           clientId: code.clientId,
           status: "active",
           organizationId: getActiveOrganizationId(req),
@@ -613,23 +655,31 @@ export async function registerRoutes(
           });
         }
 
-        // Check if this client is already linked to another user
-        const existingProfiles = await db
-          .select()
-          .from(usersProfile)
-          .where(eq(usersProfile.clientId, normalizedId));
+        const organizationId = getActiveOrganizationId(req);
 
-        if (existingProfiles.length > 0 && existingProfiles[0].userId !== userId) {
+        // Check if this client is already linked to another user within this org
+        const existingMembership = await storage.findClientMembership(organizationId, normalizedId);
+        if (existingMembership && existingMembership.userId !== userId) {
           return res.status(400).json({
             success: false,
-            message: "This client account is already linked to another user.",
+            message: "This client account is already linked to another user in the selected organization.",
           });
         }
 
-        // Create/update user profile
+        // Create/update global profile and org-scoped memberships
         await storage.upsertUserProfile({
           userId,
+          status: "active",
+        });
+        await storage.upsertOrganizationMembership({
+          organizationId,
+          userId,
           role: "client",
+          status: "active",
+        });
+        await storage.upsertClientMembership({
+          organizationId,
+          userId,
           clientId: normalizedId,
           status: "active",
           organizationId: getActiveOrganizationId(req),
@@ -3030,8 +3080,10 @@ export async function registerRoutes(
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + expiresInDays);
 
+        const organizationId = (req as any).userProfile.organizationId;
         const code = await storage.createInviteCode({
           magicNumber: undefined as any, // Will be generated
+          organizationId,
           clientId,
           leaseId,
           expiresAt,
@@ -3966,8 +4018,12 @@ export async function registerRoutes(
         // Keep users_profile bridge for legacy client linkage and routing.
         await storage.upsertUserProfile({
           userId: userId!,
+          status: "active",
+        });
+        await storage.upsertOrganizationMembership({
+          organizationId: DEFAULT_ORGANIZATION_ID,
+          userId: userId!,
           role: "admin",
-          clientId: null,
           status: "active",
           organizationId: getActiveOrganizationId(req),
         });

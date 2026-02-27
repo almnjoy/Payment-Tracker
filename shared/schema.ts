@@ -48,11 +48,9 @@ export const usersProfile = pgTable("users_profile", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const usersProfileRelations = relations(usersProfile, ({ one }) => ({
-  client: one(clients, {
-    fields: [usersProfile.clientId],
-    references: [clients.clientId],
-  }),
+export const usersProfileRelations = relations(usersProfile, ({ many }) => ({
+  organizationMemberships: many(organizationMemberships),
+  clientMemberships: many(clientMemberships),
 }));
 
 export const insertUsersProfileSchema = createInsertSchema(usersProfile);
@@ -171,6 +169,10 @@ export const inviteCodes = pgTable("invite_codes", {
 });
 
 export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
+  organizationMembership: one(organizationMemberships, {
+    fields: [inviteCodes.organizationId, inviteCodes.createdByUserId],
+    references: [organizationMemberships.organizationId, organizationMemberships.userId],
+  }),
   client: one(clients, {
     fields: [inviteCodes.clientId],
     references: [clients.clientId],
