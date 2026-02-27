@@ -5,6 +5,8 @@ import {
   clients,
   leases,
   inviteCodes,
+  organizationMemberships,
+  clientMemberships,
   invoices,
   payments,
   documents,
@@ -27,6 +29,10 @@ import {
   type InsertLease,
   type InviteCode,
   type InsertInviteCode,
+  type OrganizationMembership,
+  type InsertOrganizationMembership,
+  type ClientMembership,
+  type InsertClientMembership,
   type Invoice,
   type InsertInvoice,
   type Payment,
@@ -44,8 +50,16 @@ import {
 export interface IStorage {
   // Users Profile
   getUserProfile(userId: string): Promise<UsersProfile | undefined>;
-  getUserProfileByClientId(clientId: string): Promise<UsersProfile | undefined>;
   upsertUserProfile(data: InsertUsersProfile): Promise<UsersProfile>;
+
+  // Organization memberships
+  getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined>;
+  upsertOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership>;
+
+  // Client memberships
+  getClientMembershipForUser(userId: string, organizationId: string): Promise<ClientMembership | undefined>;
+  findClientMembership(organizationId: string, clientId: string): Promise<ClientMembership | undefined>;
+  upsertClientMembership(data: InsertClientMembership): Promise<ClientMembership>;
 
   // Clients
   getClient(clientId: string): Promise<Client | undefined>;
@@ -120,11 +134,6 @@ export class DatabaseStorage implements IStorage {
     return profile;
   }
 
-  async getUserProfileByClientId(clientId: string): Promise<UsersProfile | undefined> {
-    const [profile] = await db.select().from(usersProfile).where(eq(usersProfile.clientId, clientId));
-    return profile;
-  }
-
   async upsertUserProfile(data: InsertUsersProfile): Promise<UsersProfile> {
     const [profile] = await db
       .insert(usersProfile)
@@ -138,6 +147,74 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return profile;
+  }
+
+  async getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.userId, userId),
+        eq(organizationMemberships.organizationId, organizationId),
+      ));
+    return membership;
+  }
+
+  async upsertOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership> {
+    const [membership] = await db
+      .insert(organizationMemberships)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [organizationMemberships.organizationId, organizationMemberships.userId],
+        set: {
+          role: data.role,
+          status: data.status ?? "active",
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return membership;
+  }
+
+  async getClientMembershipForUser(userId: string, organizationId: string): Promise<ClientMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(clientMemberships)
+      .where(and(
+        eq(clientMemberships.userId, userId),
+        eq(clientMemberships.organizationId, organizationId),
+        eq(clientMemberships.status, "active"),
+      ))
+      .limit(1);
+    return membership;
+  }
+
+  async findClientMembership(organizationId: string, clientId: string): Promise<ClientMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(clientMemberships)
+      .where(and(
+        eq(clientMemberships.organizationId, organizationId),
+        eq(clientMemberships.clientId, clientId),
+        eq(clientMemberships.status, "active"),
+      ))
+      .limit(1);
+    return membership;
+  }
+
+  async upsertClientMembership(data: InsertClientMembership): Promise<ClientMembership> {
+    const [membership] = await db
+      .insert(clientMemberships)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [clientMemberships.organizationId, clientMemberships.userId, clientMemberships.clientId],
+        set: {
+          status: data.status ?? "active",
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return membership;
   }
 
   // ============================================
@@ -172,6 +249,7 @@ export class DatabaseStorage implements IStorage {
 
   async deleteClient(clientId: string): Promise<boolean> {
     // Delete all related data in order (foreign key constraints)
+    await db.delete(clientMemberships).where(eq(clientMemberships.clientId, clientId));
     await db.delete(clientBillingItems).where(eq(clientBillingItems.clientId, clientId));
     await db.delete(documents).where(eq(documents.clientId, clientId));
     await db.delete(payments).where(eq(payments.clientId, clientId));
@@ -478,8 +556,11 @@ export class DatabaseStorage implements IStorage {
   async hasExistingAdmin(): Promise<boolean> {
     const [admin] = await db
       .select()
-      .from(usersProfile)
-      .where(eq(usersProfile.role, "admin"))
+      .from(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.role, "admin"),
+        eq(organizationMemberships.status, "active"),
+      ))
       .limit(1);
     return !!admin;
   }

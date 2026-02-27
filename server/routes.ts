@@ -29,7 +29,6 @@ import {
   paymentSettings,
   payments,
   documents,
-  usersProfile,
   generatePlaidItemId,
   generatePlaidAccountRowId,
   generatePlaidTransactionRowId,
@@ -113,6 +112,20 @@ const webhookTestRateLimiter = rateLimit({
 // SECURITY HELPERS
 // ============================================
 
+const DEFAULT_ORGANIZATION_ID = "org-default";
+
+function getActiveOrganizationId(req: Request): string {
+  const headerOrgId = req.headers["x-organization-id"];
+  const queryOrgId = req.query.orgId;
+  const bodyOrgId = (req.body as any)?.organizationId;
+  const orgId =
+    (typeof headerOrgId === "string" && headerOrgId) ||
+    (typeof queryOrgId === "string" && queryOrgId) ||
+    (typeof bodyOrgId === "string" && bodyOrgId) ||
+    DEFAULT_ORGANIZATION_ID;
+  return orgId.trim();
+}
+
 // Helper to get linked clientId for authenticated client (NEVER trusts browser input)
 function getLinkedClientId(req: Request): string | null {
   const profile = (req as any).userProfile;
@@ -151,14 +164,20 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  const organizationId = getActiveOrganizationId(req);
   const profile = await storage.getUserProfile(userId);
-  if (!profile || profile.role !== "admin") {
-    return res
-      .status(403)
-      .json({ message: "Forbidden: Admin access required" });
+  const membership = await storage.getOrganizationMembership(userId, organizationId);
+
+  if (!profile || profile.status !== "active" || !membership || membership.status !== "active" || membership.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden: Admin membership required for active organization" });
   }
 
-  (req as any).userProfile = profile;
+  (req as any).userProfile = {
+    ...profile,
+    organizationId,
+    role: membership.role,
+  };
+  (req as any).organizationMembership = membership;
   next();
 }
 
@@ -169,40 +188,54 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  const organizationId = getActiveOrganizationId(req);
   const profile = await storage.getUserProfile(userId);
-  if (!profile) {
-    return res
-      .status(403)
-      .json({ message: "Forbidden: No user profile found" });
+  if (!profile || profile.status !== "active") {
+    return res.status(403).json({ message: "Forbidden: No active user profile found" });
   }
 
-  // Check for admin impersonation
+  const orgMembership = await storage.getOrganizationMembership(userId, organizationId);
+  if (!orgMembership || orgMembership.status !== "active") {
+    return res.status(403).json({ message: "Forbidden: No active membership for this organization" });
+  }
+
   const asClientId = req.query.asClientId as string | undefined;
-  if (asClientId && profile.role === "admin") {
-    // Admin impersonating a client
+  if (asClientId && orgMembership.role === "admin") {
+    const targetClientMembership = await storage.findClientMembership(organizationId, asClientId);
+    if (!targetClientMembership) {
+      return res.status(404).json({ message: "Client not found in active organization for impersonation" });
+    }
+
     const client = await storage.getClient(asClientId);
     if (!client) {
-      return res
-        .status(404)
-        .json({ message: "Client not found for impersonation" });
+      return res.status(404).json({ message: "Client not found for impersonation" });
     }
+
     (req as any).userProfile = {
       ...profile,
+      organizationId,
+      role: orgMembership.role,
       clientId: asClientId,
       impersonating: true,
     };
+    (req as any).organizationMembership = orgMembership;
     (req as any).impersonatedClient = client;
     return next();
   }
 
-  // Client role required (admins can also access for impersonation/support purposes)
-  if (profile.role !== "client" && profile.role !== "admin") {
-    return res
-      .status(403)
-      .json({ message: "Forbidden: Client access required" });
+  if (orgMembership.role !== "client" && orgMembership.role !== "admin") {
+    return res.status(403).json({ message: "Forbidden: Client access required" });
   }
 
-  (req as any).userProfile = profile;
+  const clientMembership = await storage.getClientMembershipForUser(userId, organizationId);
+
+  (req as any).userProfile = {
+    ...profile,
+    organizationId,
+    role: orgMembership.role,
+    clientId: clientMembership?.clientId ?? null,
+  };
+  (req as any).organizationMembership = orgMembership;
   next();
 }
 
@@ -348,6 +381,9 @@ export async function registerRoutes(
 
       const profile = await storage.getUserProfile(userId);
       const userClaims = (req.user as any)?.claims;
+      const organizationId = getActiveOrganizationId(req);
+      const organizationMembership = await storage.getOrganizationMembership(userId, organizationId);
+      const clientMembership = await storage.getClientMembershipForUser(userId, organizationId);
 
       res.json({
         userId,
@@ -355,6 +391,14 @@ export async function registerRoutes(
         firstName: userClaims?.first_name,
         lastName: userClaims?.last_name,
         profile: profile || null,
+        membership: organizationMembership
+          ? {
+              organizationId,
+              role: organizationMembership.role,
+              status: organizationMembership.status,
+              clientId: clientMembership?.clientId || null,
+            }
+          : null,
         hasProfile: !!profile,
       });
     } catch (error) {
@@ -444,10 +488,22 @@ export async function registerRoutes(
             .json({ success: false, message: "Failed to claim invite" });
         }
 
-        // Create/update user profile
+        // Create/update global user profile
         await storage.upsertUserProfile({
           userId,
+          status: "active",
+        });
+
+        // Create org-scoped memberships
+        await storage.upsertOrganizationMembership({
+          organizationId: code.organizationId,
+          userId,
           role: "client",
+          status: "active",
+        });
+        await storage.upsertClientMembership({
+          organizationId: code.organizationId,
+          userId,
           clientId: code.clientId,
           status: "active",
         });
@@ -540,23 +596,31 @@ export async function registerRoutes(
           });
         }
 
-        // Check if this client is already linked to another user
-        const existingProfiles = await db
-          .select()
-          .from(usersProfile)
-          .where(eq(usersProfile.clientId, normalizedId));
+        const organizationId = getActiveOrganizationId(req);
 
-        if (existingProfiles.length > 0 && existingProfiles[0].userId !== userId) {
+        // Check if this client is already linked to another user within this org
+        const existingMembership = await storage.findClientMembership(organizationId, normalizedId);
+        if (existingMembership && existingMembership.userId !== userId) {
           return res.status(400).json({
             success: false,
-            message: "This client account is already linked to another user.",
+            message: "This client account is already linked to another user in the selected organization.",
           });
         }
 
-        // Create/update user profile
+        // Create/update global profile and org-scoped memberships
         await storage.upsertUserProfile({
           userId,
+          status: "active",
+        });
+        await storage.upsertOrganizationMembership({
+          organizationId,
+          userId,
           role: "client",
+          status: "active",
+        });
+        await storage.upsertClientMembership({
+          organizationId,
+          userId,
           clientId: normalizedId,
           status: "active",
         });
@@ -2747,8 +2811,10 @@ export async function registerRoutes(
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + expiresInDays);
 
+        const organizationId = (req as any).userProfile.organizationId;
         const code = await storage.createInviteCode({
           magicNumber: undefined as any, // Will be generated
+          organizationId,
           clientId,
           leaseId,
           expiresAt,
@@ -3664,16 +3730,20 @@ export async function registerRoutes(
           return res.status(403).json({ message: "Invalid bootstrap secret" });
         }
 
-        // Create admin profile
+        // Create admin profile and default org membership
         const profile = await storage.upsertUserProfile({
           userId: userId!,
+          status: "active",
+        });
+        await storage.upsertOrganizationMembership({
+          organizationId: DEFAULT_ORGANIZATION_ID,
+          userId: userId!,
           role: "admin",
-          clientId: null,
           status: "active",
         });
 
         console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
-        res.json({ success: true, profile });
+        res.json({ success: true, profile, organizationId: DEFAULT_ORGANIZATION_ID });
       } catch (error) {
         console.error("Error bootstrapping admin:", error);
         res.status(500).json({ message: "Failed to bootstrap admin" });
@@ -3693,14 +3763,11 @@ export async function registerRoutes(
       try {
         const results: Array<{ test: string; status: "pass" | "fail"; details: string }> = [];
         
-        // Get current admin profile
-        const adminProfile = (req as any).userProfile;
-        
         // Test 1: Verify admin middleware works
         results.push({
           test: "Admin role enforcement",
-          status: adminProfile?.role === "admin" ? "pass" : "fail",
-          details: `Current user role: ${adminProfile?.role || "unknown"}`,
+          status: (req as any).organizationMembership?.role === "admin" ? "pass" : "fail",
+          details: `Current org-scoped role: ${(req as any).organizationMembership?.role || "unknown"}`,
         });
         
         // Test 2: Verify client routes require linkedClientId (not browser-provided)

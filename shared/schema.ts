@@ -8,6 +8,7 @@ import {
   date,
   boolean,
   index,
+  primaryKey,
   jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
@@ -21,23 +22,89 @@ export * from "./models/auth";
 // ============================================
 export const usersProfile = pgTable("users_profile", {
   userId: varchar("user_id").primaryKey(),
-  role: text("role").notNull().default("client"),
-  clientId: varchar("client_id"),
+  displayName: text("display_name"),
   status: text("status").notNull().default("active"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const usersProfileRelations = relations(usersProfile, ({ one }) => ({
-  client: one(clients, {
-    fields: [usersProfile.clientId],
-    references: [clients.clientId],
-  }),
+export const usersProfileRelations = relations(usersProfile, ({ many }) => ({
+  organizationMemberships: many(organizationMemberships),
+  clientMemberships: many(clientMemberships),
 }));
 
 export const insertUsersProfileSchema = createInsertSchema(usersProfile);
 export type InsertUsersProfile = z.infer<typeof insertUsersProfileSchema>;
 export type UsersProfile = typeof usersProfile.$inferSelect;
+
+// ============================================
+// ORGANIZATION MEMBERSHIPS (Org-scoped access)
+// ============================================
+export const organizationMemberships = pgTable(
+  "organization_memberships",
+  {
+    organizationId: varchar("organization_id").notNull(),
+    userId: varchar("user_id").notNull(),
+    role: text("role").notNull(), // admin | client | staff
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.userId] }),
+    userIdx: index("organization_memberships_user_id_idx").on(table.userId),
+  }),
+);
+
+export const organizationMembershipsRelations = relations(organizationMemberships, ({ one, many }) => ({
+  userProfile: one(usersProfile, {
+    fields: [organizationMemberships.userId],
+    references: [usersProfile.userId],
+  }),
+  clientMemberships: many(clientMemberships),
+}));
+
+export const insertOrganizationMembershipSchema = createInsertSchema(organizationMemberships);
+export type InsertOrganizationMembership = z.infer<typeof insertOrganizationMembershipSchema>;
+export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
+
+// ============================================
+// CLIENT MEMBERSHIPS (Optional org-scoped client mapping)
+// ============================================
+export const clientMemberships = pgTable(
+  "client_memberships",
+  {
+    organizationId: varchar("organization_id").notNull(),
+    userId: varchar("user_id").notNull(),
+    clientId: varchar("client_id").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.userId, table.clientId] }),
+    orgClientIdx: index("client_memberships_org_client_idx").on(table.organizationId, table.clientId),
+  }),
+);
+
+export const clientMembershipsRelations = relations(clientMemberships, ({ one }) => ({
+  userProfile: one(usersProfile, {
+    fields: [clientMemberships.userId],
+    references: [usersProfile.userId],
+  }),
+  organizationMembership: one(organizationMemberships, {
+    fields: [clientMemberships.organizationId, clientMemberships.userId],
+    references: [organizationMemberships.organizationId, organizationMemberships.userId],
+  }),
+  client: one(clients, {
+    fields: [clientMemberships.clientId],
+    references: [clients.clientId],
+  }),
+}));
+
+export const insertClientMembershipSchema = createInsertSchema(clientMemberships);
+export type InsertClientMembership = z.infer<typeof insertClientMembershipSchema>;
+export type ClientMembership = typeof clientMemberships.$inferSelect;
 
 // ============================================
 // CLIENTS (Business records)
@@ -109,6 +176,7 @@ export type Lease = typeof leases.$inferSelect;
 // ============================================
 export const inviteCodes = pgTable("invite_codes", {
   magicNumber: varchar("magic_number").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   clientId: varchar("client_id").notNull(),
   leaseId: varchar("lease_id"),
   expiresAt: timestamp("expires_at").notNull(),
@@ -119,6 +187,10 @@ export const inviteCodes = pgTable("invite_codes", {
 });
 
 export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
+  organizationMembership: one(organizationMemberships, {
+    fields: [inviteCodes.organizationId, inviteCodes.createdByUserId],
+    references: [organizationMemberships.organizationId, organizationMemberships.userId],
+  }),
   client: one(clients, {
     fields: [inviteCodes.clientId],
     references: [clients.clientId],

@@ -13,6 +13,7 @@ import {
 } from "@shared/schema";
 
 async function seed() {
+  const organizationId = "org-default";
   console.log("Seeding database...");
 
   // Create sample clients
@@ -99,6 +100,7 @@ async function seed() {
   // Create invite codes for clients without linked users
   const inviteCodeData = insertedClients.map((client) => ({
     magicNumber: generateMagicNumber(),
+    organizationId,
     clientId: client.clientId,
     leaseId: insertedLeases.find(l => l.clientId === client.clientId)?.leaseId,
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
