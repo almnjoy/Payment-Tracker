@@ -5,6 +5,7 @@ import {
   invoices,
   payments,
   inviteCodes,
+  organizations,
   generateClientId,
   generateLeaseId,
   generateInvoiceId,
@@ -14,13 +15,15 @@ import {
 
 async function seed() {
   console.log("Seeding database...");
+  const organizationId = "org-default";
+  await db.insert(organizations).values({ organizationId, name: "Default Organization", slug: "default" }).onConflictDoNothing();
 
   // Create sample clients
   const clientData = [
-    { clientId: generateClientId(), displayName: "Sarah Miller", email: "sarah@example.com", phone: "+1 (555) 123-4567", address: "123 Main St, Unit 402, New York, NY 10001" },
-    { clientId: generateClientId(), displayName: "James Chen", email: "james@example.com", phone: "+1 (555) 234-5678", address: "456 Oak Ave, Suite 12, San Francisco, CA 94102" },
-    { clientId: generateClientId(), displayName: "Emily Johnson", email: "emily@example.com", phone: "+1 (555) 345-6789", address: "789 Pine Rd, Apt 8, Chicago, IL 60601" },
-    { clientId: generateClientId(), displayName: "Michael Stark", email: "michael@example.com", phone: "+1 (555) 456-7890", address: "321 Elm Blvd, Unit 15, Austin, TX 78701" },
+    { organizationId, clientId: generateClientId(), displayName: "Sarah Miller", email: "sarah@example.com", phone: "+1 (555) 123-4567", address: "123 Main St, Unit 402, New York, NY 10001" },
+    { organizationId, clientId: generateClientId(), displayName: "James Chen", email: "james@example.com", phone: "+1 (555) 234-5678", address: "456 Oak Ave, Suite 12, San Francisco, CA 94102" },
+    { organizationId, clientId: generateClientId(), displayName: "Emily Johnson", email: "emily@example.com", phone: "+1 (555) 345-6789", address: "789 Pine Rd, Apt 8, Chicago, IL 60601" },
+    { organizationId, clientId: generateClientId(), displayName: "Michael Stark", email: "michael@example.com", phone: "+1 (555) 456-7890", address: "321 Elm Blvd, Unit 15, Austin, TX 78701" },
   ];
 
   const insertedClients = await db.insert(clients).values(clientData).returning();
@@ -29,6 +32,7 @@ async function seed() {
   // Create leases for each client
   const leaseData = insertedClients.map((client, i) => ({
     leaseId: generateLeaseId(),
+    organizationId,
     clientId: client.clientId,
     description: `12 Month Lease - Unit ${400 + i}`,
     rentAmountCents: 125000 + (i * 25000), // $1250 - $2000
@@ -52,6 +56,9 @@ async function seed() {
     for (let month = 1; month <= 3; month++) {
       invoiceData.push({
         invoiceId: generateInvoiceId(),
+        organizationId,
+        invoiceNumber: generateInvoiceId(),
+        issueDate: `2025-0${month}-01`,
         clientId: client.clientId,
         leaseId: lease.leaseId,
         title: `${['January', 'February', 'March'][month-1]} 2025 Rent`,
@@ -64,6 +71,9 @@ async function seed() {
     // Current month invoice (open for some, overdue for one)
     invoiceData.push({
       invoiceId: generateInvoiceId(),
+      organizationId,
+      invoiceNumber: generateInvoiceId(),
+      issueDate: "2025-04-01",
       clientId: client.clientId,
       leaseId: lease.leaseId,
       title: "April 2025 Rent",
@@ -84,6 +94,7 @@ async function seed() {
     .forEach((invoice) => {
       paymentData.push({
         paymentId: generatePaymentId(),
+        organizationId,
         clientId: invoice.clientId,
         invoiceId: invoice.invoiceId,
         amountCents: invoice.amountCents,
@@ -99,6 +110,7 @@ async function seed() {
   // Create invite codes for clients without linked users
   const inviteCodeData = insertedClients.map((client) => ({
     magicNumber: generateMagicNumber(),
+    organizationId,
     clientId: client.clientId,
     leaseId: insertedLeases.find(l => l.clientId === client.clientId)?.leaseId,
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days

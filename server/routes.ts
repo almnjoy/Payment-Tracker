@@ -144,6 +144,10 @@ function getUserId(req: Request): string | undefined {
   return (req.user as any)?.claims?.sub;
 }
 
+function getActiveOrganizationId(req: Request): string {
+  return (req as any).activeOrganizationId || (req as any).userProfile?.organizationId || "org-default";
+}
+
 // Middleware to check if user is admin
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
@@ -159,6 +163,7 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
   }
 
   (req as any).userProfile = profile;
+  (req as any).activeOrganizationId = profile.organizationId || "org-default";
   next();
 }
 
@@ -180,12 +185,13 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   const asClientId = req.query.asClientId as string | undefined;
   if (asClientId && profile.role === "admin") {
     // Admin impersonating a client
-    const client = await storage.getClient(asClientId);
+    const client = await storage.getClient(asClientId, getActiveOrganizationId(req));
     if (!client) {
       return res
         .status(404)
         .json({ message: "Client not found for impersonation" });
     }
+    (req as any).activeOrganizationId = profile.organizationId || "org-default";
     (req as any).userProfile = {
       ...profile,
       clientId: asClientId,
@@ -203,6 +209,7 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   }
 
   (req as any).userProfile = profile;
+  (req as any).activeOrganizationId = profile.organizationId || "org-default";
   next();
 }
 
@@ -210,7 +217,8 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
 async function sendPaymentReceivedWebhook(
   payment: { paymentId: string; clientId: string; amountCents: number; method: string; status: string; createdAt: Date | null; webhookSentAt?: Date | null },
   baseUrl: string,
-  executionMode: "test" | "live" = "live"
+  executionMode: "test" | "live" = "live",
+  organizationId: string = "org-default"
 ): Promise<{ sent: boolean; reason?: string }> {
   try {
     // 1. Idempotency check - don't send if already sent
@@ -220,7 +228,7 @@ async function sendPaymentReceivedWebhook(
     }
 
     // 2. Get automation settings
-    const settings = await storage.getAutomationSettings();
+    const settings = await storage.getAutomationSettings(organizationId);
     
     // 3. Check global toggle
     if (!settings?.paymentReceivedAlertsGlobalEnabled) {
@@ -240,7 +248,7 @@ async function sendPaymentReceivedWebhook(
     }
 
     // 5. Get client info and check client notification toggle
-    const client = await storage.getClient(payment.clientId);
+    const client = await storage.getClient(payment.clientId, organizationId);
     if (!client) {
       console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} not found`);
       return { sent: false, reason: "client_not_found" };
@@ -450,6 +458,7 @@ export async function registerRoutes(
           role: "client",
           clientId: code.clientId,
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -559,6 +568,7 @@ export async function registerRoutes(
           role: "client",
           clientId: normalizedId,
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -582,7 +592,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const clients = await storage.getAllClients();
+        const clients = await storage.getAllClients(getActiveOrganizationId(req));
         const now = new Date();
 
         // Get all active billing items
@@ -744,7 +754,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const client = await storage.createClient(req.body);
+        const client = await storage.createClient({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(client);
       } catch (error) {
         console.error("Error creating client:", error);
@@ -838,7 +848,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const lease = await storage.createLease(req.body);
+        const lease = await storage.createLease({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(lease);
       } catch (error) {
         console.error("Error creating lease:", error);
@@ -864,7 +874,7 @@ export async function registerRoutes(
           );
           return res.json(invoices);
         }
-        const invoices = await storage.getAllInvoices();
+        const invoices = await storage.getAllInvoices(getActiveOrganizationId(req));
         res.json(invoices);
       } catch (error) {
         console.error("Error fetching invoices:", error);
@@ -879,7 +889,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const invoice = await storage.createInvoice(req.body);
+        const invoice = await storage.createInvoice({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(invoice);
       } catch (error) {
         console.error("Error creating invoice:", error);
@@ -1196,14 +1206,14 @@ export async function registerRoutes(
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         if (existing) {
           // Update existing
           const [updated] = await db
             .update(invoiceSettings)
             .set({ ...req.body, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId))
+            .where(eq(invoiceSettings.organizationId, settingsId))
             .returning();
           return res.json(updated);
         }
@@ -1263,13 +1273,13 @@ export async function registerRoutes(
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         if (existing) {
           await db
             .update(invoiceSettings)
             .set({ businessLogo: publicUrl, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, settingsId));
         } else {
           await db
             .insert(invoiceSettings)
@@ -1326,7 +1336,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getPaymentSettings();
+        const settings = await storage.getPaymentSettings(getActiveOrganizationId(req));
         
         if (!settings) {
           return res.json({
@@ -1375,7 +1385,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         if (!settings) {
           return res.json({
             id: null,
@@ -1490,7 +1500,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { webhookType } = req.body;
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         
         let webhookUrl: string | null = null;
         let token: string | null = null;
@@ -1615,7 +1625,7 @@ export async function registerRoutes(
         }
 
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         const webhookUrl = settings?.signupEmailWebhookUrl;
         
         if (!webhookUrl) {
@@ -1675,7 +1685,7 @@ export async function registerRoutes(
         const userId = getUserId(req);
         
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         
         // Check global toggle
         if (!settings?.monthlySummaryGlobalEnabled) {
@@ -2193,7 +2203,7 @@ export async function registerRoutes(
         let [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
@@ -2233,7 +2243,7 @@ export async function registerRoutes(
           await db
             .update(invoiceSettings)
             .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, settingsId));
         } else {
           await db
             .insert(invoiceSettings)
@@ -2269,7 +2279,7 @@ export async function registerRoutes(
           );
           return res.json(payments);
         }
-        const payments = await storage.getAllPayments();
+        const payments = await storage.getAllPayments(getActiveOrganizationId(req));
         res.json(payments);
       } catch (error) {
         console.error("Error fetching payments:", error);
@@ -2298,7 +2308,7 @@ export async function registerRoutes(
         if (payment.status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
           
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
             console.error("[AdminPaymentCreate] Webhook error (non-blocking):", err.message);
           });
         }
@@ -2337,7 +2347,7 @@ export async function registerRoutes(
         if (status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
           
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
             console.error("[PaymentStatusUpdate] Webhook error (non-blocking):", err.message);
           });
         }
@@ -2367,7 +2377,7 @@ export async function registerRoutes(
           );
           return res.json(documents);
         }
-        const documents = await storage.getAllDocuments();
+        const documents = await storage.getAllDocuments(getActiveOrganizationId(req));
         res.json(documents);
       } catch (error) {
         console.error("Error fetching documents:", error);
@@ -2830,8 +2840,8 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const clients = await storage.getAllClients();
-        const payments = await storage.getAllPayments();
+        const clients = await storage.getAllClients(getActiveOrganizationId(req));
+        const payments = await storage.getAllPayments(getActiveOrganizationId(req));
         
         // Get all active billing items directly from database
         const allBillingItems = await db
@@ -3402,7 +3412,7 @@ export async function registerRoutes(
         // Fire payment received webhook for confirmed Stripe payment (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[Stripe Confirm] Webhook error (non-blocking):", err.message);
         });
 
@@ -3499,7 +3509,7 @@ export async function registerRoutes(
     isClient,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getPaymentSettings();
+        const settings = await storage.getPaymentSettings(getActiveOrganizationId(req));
         
         // Return sanitized settings (no admin userId)
         res.json({
@@ -3670,6 +3680,7 @@ export async function registerRoutes(
           role: "admin",
           clientId: null,
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
         console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
@@ -3711,7 +3722,7 @@ export async function registerRoutes(
         });
         
         // Test 3: Verify webhook tokens are not exposed to frontend
-        const automationSettings = await storage.getAutomationSettings();
+        const automationSettings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         const tokensExposed = automationSettings && (
           "signupEmailToken" in automationSettings ||
           "paymentReceivedToken" in automationSettings ||
@@ -5641,7 +5652,7 @@ export async function registerRoutes(
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[StripeWebhook checkout.session.completed] Webhook error (non-blocking):", err.message);
         });
 
@@ -5686,7 +5697,7 @@ export async function registerRoutes(
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):", err.message);
         });
 
