@@ -219,7 +219,6 @@ export type OrganizationSettings = typeof organizationSettings.$inferSelect;
 // ============================================
 export const invoiceSettings = pgTable("invoice_settings", {
   organizationId: varchar("organization_id").primaryKey(),
-  adminUserId: varchar("admin_user_id").notNull(),
   businessLogo: text("business_logo"), // URL to stored logo image
   businessName: text("business_name"),
   businessAddress: text("business_address"),
@@ -244,7 +243,6 @@ export type InvoiceSettings = typeof invoiceSettings.$inferSelect;
 // ============================================
 export const paymentSettings = pgTable("payment_settings", {
   organizationId: varchar("organization_id").primaryKey(),
-  adminUserId: varchar("admin_user_id").notNull(),
   cashAppHandle: text("cash_app_handle"),
   cashAppLink: text("cash_app_link"),
   venmoHandle: text("venmo_handle"),
@@ -267,7 +265,6 @@ export type PaymentSettings = typeof paymentSettings.$inferSelect;
 // ============================================
 export const automationSettings = pgTable("automation_settings", {
   organizationId: varchar("organization_id").primaryKey(),
-  adminUserId: varchar("admin_user_id").notNull(),
   // Client Signup Email Webhook
   signupEmailWebhookUrl: text("signup_email_webhook_url"),
   signupEmailToken: text("signup_email_token"),
@@ -295,6 +292,17 @@ export const insertAutomationSettingsSchema = createInsertSchema(automationSetti
 });
 export type InsertAutomationSettings = z.infer<typeof insertAutomationSettingsSchema>;
 export type AutomationSettings = typeof automationSettings.$inferSelect;
+
+// ============================================
+// ADMIN PREFERENCES (Per-admin, non-org defaults)
+// ============================================
+export const adminPreferences = pgTable("admin_preferences", {
+  adminUserId: varchar("admin_user_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
+  defaultInvoiceView: text("default_invoice_view").default("list"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 // Line item schema for invoice line items (stored as JSONB)
 export const invoiceLineItemSchema = z.object({

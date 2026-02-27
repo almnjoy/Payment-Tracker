@@ -7,10 +7,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Settings, Upload, Building2 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
 
+function withOrganizationScope(path: string, organizationId?: string) {
+  if (!organizationId) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}organizationId=${encodeURIComponent(organizationId)}`;
+}
+
 interface InvoiceSettingsData {
-  id: string | null;
+  organizationId: string | null;
   businessLogo: string | null;
   businessName: string;
   businessAddress: string;
@@ -22,13 +29,15 @@ interface InvoiceSettingsData {
 }
 
 export default function InvoiceSettings() {
+  const { user } = useAuth();
+  const organizationId = user?.id;
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [settings, setSettings] = useState<InvoiceSettingsData>({
-    id: null,
+    organizationId: null,
     businessLogo: null,
     businessName: "",
     businessAddress: "",
@@ -46,7 +55,7 @@ export default function InvoiceSettings() {
   const loadSettings = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/admin/invoice-settings", { credentials: "include" });
+      const response = await fetch(withOrganizationScope("/api/admin/invoice-settings", organizationId), { credentials: "include" });
       if (response.ok) {
         const data = await response.json();
         setSettings(data);
@@ -61,7 +70,7 @@ export default function InvoiceSettings() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await apiRequest("POST", "/api/admin/invoice-settings", {
+      const response = await apiRequest("POST", withOrganizationScope("/api/admin/invoice-settings", organizationId), {
         businessName: settings.businessName,
         businessAddress: settings.businessAddress,
         businessEmail: settings.businessEmail,
@@ -96,7 +105,7 @@ export default function InvoiceSettings() {
     formData.append("logo", file);
 
     try {
-      const response = await fetch("/api/admin/invoice-settings/logo", {
+      const response = await fetch(withOrganizationScope("/api/admin/invoice-settings/logo", organizationId), {
         method: "POST",
         body: formData,
         credentials: "include",

@@ -127,7 +127,7 @@ export interface IStorage {
   
   // Payment Settings
   getPaymentSettings(organizationId?: string): Promise<PaymentSettings | undefined>;
-  upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings>;
+  upsertPaymentSettings(organizationId: string, data: Omit<InsertPaymentSettings, "organizationId">): Promise<PaymentSettings>;
 
   // Organization Settings
   getOrganizationSettings(): Promise<OrganizationSettings | undefined>;
@@ -135,7 +135,7 @@ export interface IStorage {
 
   // Automation Settings
   getAutomationSettings(organizationId?: string): Promise<AutomationSettings | undefined>;
-  upsertAutomationSettings(data: InsertAutomationSettings): Promise<AutomationSettings>;
+  upsertAutomationSettings(organizationId: string, data: Omit<InsertAutomationSettings, "organizationId">): Promise<AutomationSettings>;
   
   // Documents - additional methods
   updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined>;
@@ -565,15 +565,22 @@ export class DatabaseStorage implements IStorage {
   // ============================================
   // PAYMENT SETTINGS
   // ============================================
-  async getPaymentSettings(organizationId: string = DEFAULT_ORG_ID): Promise<PaymentSettings | undefined> {
+  async getPaymentSettings(organizationId?: string): Promise<PaymentSettings | undefined> {
+    if (!organizationId) {
+      const [settings] = await db.select().from(paymentSettings).orderBy(desc(paymentSettings.updatedAt)).limit(1);
+      return settings;
+    }
     const [settings] = await db.select().from(paymentSettings).where(eq(paymentSettings.organizationId, organizationId));
     return settings;
   }
 
-  async upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings> {
+  async upsertPaymentSettings(
+    organizationId: string,
+    data: Omit<InsertPaymentSettings, "organizationId">,
+  ): Promise<PaymentSettings> {
     const [settings] = await db
       .insert(paymentSettings)
-      .values(data as any)
+      .values({ ...data, organizationId })
       .onConflictDoUpdate({
         target: paymentSettings.organizationId,
         set: {
@@ -586,40 +593,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ============================================
-  // ORGANIZATION SETTINGS
-  // ============================================
-  async getOrganizationSettings(): Promise<OrganizationSettings | undefined> {
-    const [settings] = await db.select().from(organizationSettings).where(eq(organizationSettings.id, "default"));
-    return settings;
-  }
-
-  async upsertOrganizationSettings(data: InsertOrganizationSettings): Promise<OrganizationSettings> {
-    const [settings] = await db
-      .insert(organizationSettings)
-      .values({ ...data, id: "default" })
-      .onConflictDoUpdate({
-        target: organizationSettings.id,
-        set: {
-          ...data,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
-    return settings;
-  }
-
-  // ============================================
   // AUTOMATION SETTINGS
   // ============================================
-  async getAutomationSettings(organizationId: string = DEFAULT_ORG_ID): Promise<AutomationSettings | undefined> {
+  async getAutomationSettings(organizationId?: string): Promise<AutomationSettings | undefined> {
+    if (!organizationId) {
+      const [settings] = await db.select().from(automationSettings).orderBy(desc(automationSettings.updatedAt)).limit(1);
+      return settings;
+    }
     const [settings] = await db.select().from(automationSettings).where(eq(automationSettings.organizationId, organizationId));
     return settings;
   }
 
-  async upsertAutomationSettings(data: InsertAutomationSettings): Promise<AutomationSettings> {
+  async upsertAutomationSettings(
+    organizationId: string,
+    data: Omit<InsertAutomationSettings, "organizationId">,
+  ): Promise<AutomationSettings> {
     const [settings] = await db
       .insert(automationSettings)
-      .values(data as any)
+      .values({ ...data, organizationId })
       .onConflictDoUpdate({
         target: automationSettings.organizationId,
         set: {
