@@ -138,6 +138,29 @@ export type InsertInviteCode = z.infer<typeof insertInviteCodeSchema>;
 export type InviteCode = typeof inviteCodes.$inferSelect;
 
 // ============================================
+// ORGANIZATION SETTINGS (Branding defaults)
+// ============================================
+export const organizationSettings = pgTable("organization_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  adminUserId: varchar("admin_user_id").notNull(),
+  displayName: text("display_name").notNull().default("Quick IT Projects"),
+  logoUrl: text("logo_url"),
+  primaryColor: text("primary_color").notNull().default("#007BFF"),
+  accentColor: text("accent_color").notNull().default("#FF6A00"),
+  domain: text("domain"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOrganizationSettingsSchema = createInsertSchema(organizationSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertOrganizationSettings = z.infer<typeof insertOrganizationSettingsSchema>;
+export type OrganizationSettings = typeof organizationSettings.$inferSelect;
+
+// ============================================
 // INVOICE SETTINGS (Business defaults)
 // ============================================
 export const invoiceSettings = pgTable("invoice_settings", {

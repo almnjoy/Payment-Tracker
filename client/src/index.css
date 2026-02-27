@@ -76,8 +76,8 @@
 
   /* Secondary/Accent - Orange: #FF6A00 -> 25 100% 50% */
   /* Using Orange as accent for key actions/highlights */
-  --accent: 25 100% 95%; /* Very light orange for hover backgrounds */
-  --accent-foreground: 25 100% 50%;
+  --accent: 25 100% 50%;
+  --accent-foreground: 0 0% 100%;
 
   /* Secondary UI elements - soft gray */
   --secondary: 210 10% 96%;
@@ -179,11 +179,11 @@
   
   /* Primary Orange Button style specifically requested */
   .btn-primary-orange {
-    @apply bg-[#FF6A00] text-white hover:bg-[#FF6A00]/90 shadow-md hover:scale-[1.02] transition-all duration-200 rounded-full font-semibold;
+    @apply bg-accent text-accent-foreground hover:opacity-90 shadow-md hover:scale-[1.02] transition-all duration-200 rounded-full font-semibold;
   }
   
   /* Secondary Blue Outline Button */
   .btn-secondary-blue {
-    @apply border-2 border-[#007BFF] text-[#007BFF] hover:bg-[#007BFF] hover:text-white transition-all duration-200 rounded-full font-medium bg-transparent;
+    @apply border-2 border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-all duration-200 rounded-full font-medium bg-transparent;
   }
 }
