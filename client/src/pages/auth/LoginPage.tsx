@@ -5,10 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useAuth } from "@/hooks/use-auth";
 import { Building2, ArrowRight, Shield, CreditCard, FileText } from "lucide-react";
 import { motion } from "framer-motion";
+import { usePublicBranding } from "@/lib/api";
 
 export default function LoginPage() {
   const { user, isLoading, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const { data: branding } = usePublicBranding();
+  const orgName = branding?.displayName || "Quick IT Projects";
 
   useEffect(() => {
     if (!isLoading && isAuthenticated && user) {
@@ -31,7 +34,7 @@ export default function LoginPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading...</p>
         </div>
       </div>
@@ -39,8 +42,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-white flex">
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-[#007BFF] to-blue-700 p-12 flex-col justify-between relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-primary/10 to-white flex">
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary to-primary/80 p-12 flex-col justify-between relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZ3JpZCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48cGF0aCBkPSJNIDQwIDAgTCAwIDAgMCA0MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDUpIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-30" />
         
         <motion.div 
@@ -54,8 +57,8 @@ export default function LoginPage() {
               <Building2 className="h-7 w-7 text-white" />
             </div>
             <div>
-              <span className="text-2xl font-bold">Quick IT Projects</span>
-              <p className="text-sm text-blue-100">Finance Portal</p>
+              <span className="text-2xl font-bold">{orgName}</span>
+              <p className="text-sm text-primary-foreground/80">Finance Portal</p>
             </div>
           </div>
         </motion.div>
@@ -69,24 +72,24 @@ export default function LoginPage() {
           <h1 className="text-4xl font-bold text-white leading-tight mb-4">
             Manage your payments and documents in one place
           </h1>
-          <p className="text-xl text-blue-100">
+          <p className="text-xl text-primary-foreground/80">
             Secure access to invoices, payment history, and important documents.
           </p>
           
           <div className="mt-8 space-y-4">
-            <div className="flex items-center gap-3 text-blue-100">
+            <div className="flex items-center gap-3 text-primary-foreground/80">
               <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center">
                 <CreditCard className="h-5 w-5" />
               </div>
               <span>View and pay invoices online</span>
             </div>
-            <div className="flex items-center gap-3 text-blue-100">
+            <div className="flex items-center gap-3 text-primary-foreground/80">
               <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center">
                 <FileText className="h-5 w-5" />
               </div>
               <span>Access contracts and receipts</span>
             </div>
-            <div className="flex items-center gap-3 text-blue-100">
+            <div className="flex items-center gap-3 text-primary-foreground/80">
               <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center">
                 <Shield className="h-5 w-5" />
               </div>
@@ -95,8 +98,8 @@ export default function LoginPage() {
           </div>
         </motion.div>
         
-        <div className="relative z-10 text-sm text-blue-200">
-          © {new Date().getFullYear()} Quick IT Projects. All rights reserved.
+        <div className="relative z-10 text-sm text-primary-foreground/70">
+          © {new Date().getFullYear()} {orgName}. All rights reserved.
         </div>
       </div>
 
@@ -110,10 +113,10 @@ export default function LoginPage() {
           <Card className="border-0 shadow-xl">
             <CardHeader className="text-center pb-4">
               <div className="lg:hidden flex items-center justify-center gap-2 mb-4">
-                <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center">
+                <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center">
                   <Building2 className="h-6 w-6 text-white" />
                 </div>
-                <span className="text-xl font-bold text-gray-900">Quick IT Projects</span>
+                <span className="text-xl font-bold text-gray-900">{orgName}</span>
               </div>
               <CardTitle className="text-2xl font-bold text-gray-900">Welcome back</CardTitle>
               <CardDescription className="text-gray-500">
@@ -122,7 +125,7 @@ export default function LoginPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <Button 
-                className="w-full h-12 text-base font-medium bg-[#007BFF] hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+                className="w-full h-12 text-base font-medium bg-primary hover:opacity-90 transition-all shadow-lg shadow-primary/30"
                 onClick={() => window.location.href = "/api/login"}
                 data-testid="button-login"
               >
@@ -140,10 +143,10 @@ export default function LoginPage() {
               </div>
               
               <p className="text-center text-sm text-gray-500">
-                If you've received an invite code from Quick IT Projects,{" "}
+                If you've received an invite code from {orgName},{" "}
                 <a 
                   href="/register" 
-                  className="font-medium text-blue-600 hover:underline"
+                  className="font-medium text-primary hover:underline"
                   data-testid="link-register"
                 >
                   click here to register
