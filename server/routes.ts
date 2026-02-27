@@ -144,6 +144,14 @@ function getUserId(req: Request): string | undefined {
   return (req.user as any)?.claims?.sub;
 }
 
+function getOrganizationId(req: Request): string | undefined {
+  const orgIdFromQuery = req.query.organizationId;
+  if (typeof orgIdFromQuery === "string" && orgIdFromQuery.trim()) {
+    return orgIdFromQuery;
+  }
+  return getUserId(req);
+}
+
 // Middleware to check if user is admin
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
@@ -895,7 +903,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { invoiceId } = req.params;
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         
         // Get current invoice to check if status is changing
         const currentInvoice = await storage.getInvoice(invoiceId);
@@ -920,7 +928,7 @@ export async function registerRoutes(
             const [settings] = await db
               .select()
               .from(invoiceSettings)
-              .where(eq(invoiceSettings.adminUserId, userId!));
+              .where(eq(invoiceSettings.organizationId, organizationId!));
             
             // Generate PDF buffer using billTo fields (not client)
             const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
@@ -1156,16 +1164,16 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         const [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.adminUserId, userId!));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         if (!settings) {
           // Return default settings if none exist
           return res.json({
-            id: null,
+            organizationId: null,
             businessLogo: null,
             businessName: "",
             businessAddress: "",
@@ -1190,20 +1198,19 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
-        const settingsId = `IS-${userId}`;
+        const organizationId = getOrganizationId(req);
         
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         if (existing) {
           // Update existing
           const [updated] = await db
             .update(invoiceSettings)
             .set({ ...req.body, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId))
+            .where(eq(invoiceSettings.organizationId, organizationId!))
             .returning();
           return res.json(updated);
         }
@@ -1212,8 +1219,7 @@ export async function registerRoutes(
         const [created] = await db
           .insert(invoiceSettings)
           .values({
-            id: settingsId,
-            adminUserId: userId!,
+            organizationId: organizationId!,
             ...req.body,
           })
           .returning();
@@ -1233,6 +1239,7 @@ export async function registerRoutes(
     upload.single("logo"),
     async (req: Request, res: Response) => {
       try {
+        const organizationId = getOrganizationId(req);
         const userId = getUserId(req);
         const file = req.file;
         
@@ -1259,23 +1266,21 @@ export async function registerRoutes(
         const publicUrl = `/api/assets/${storageKey}`;
         
         // Update settings with logo URL
-        const settingsId = `IS-${userId}`;
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         if (existing) {
           await db
             .update(invoiceSettings)
             .set({ businessLogo: publicUrl, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, organizationId!));
         } else {
           await db
             .insert(invoiceSettings)
             .values({
-              id: settingsId,
-              adminUserId: userId!,
+              organizationId: organizationId!,
               businessLogo: publicUrl,
             });
         }
@@ -1295,11 +1300,11 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         const [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.adminUserId, userId!));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
@@ -1326,11 +1331,12 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getPaymentSettings();
+        const organizationId = getOrganizationId(req);
+        const settings = await storage.getPaymentSettings(organizationId!);
         
         if (!settings) {
           return res.json({
-            id: null,
+            organizationId: null,
             cashAppHandle: null,
             cashAppLink: null,
             venmoHandle: null,
@@ -1353,11 +1359,8 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
-        const settings = await storage.upsertPaymentSettings({
-          adminUserId: userId!,
-          ...req.body,
-        });
+        const organizationId = getOrganizationId(req);
+        const settings = await storage.upsertPaymentSettings(organizationId!, req.body);
         res.json(settings);
       } catch (error) {
         console.error("Error updating payment settings:", error);
@@ -1375,10 +1378,11 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getAutomationSettings();
+        const organizationId = getOrganizationId(req);
+        const settings = await storage.getAutomationSettings(organizationId!);
         if (!settings) {
           return res.json({
-            id: null,
+            organizationId: null,
             // Client Signup Email
             signupEmailWebhookUrl: null,
             signupEmailEnabled: false,
@@ -1398,7 +1402,7 @@ export async function registerRoutes(
         }
         // Return settings with token presence indicators (not actual tokens)
         res.json({
-          id: settings.id,
+          organizationId: settings.organizationId,
           // Client Signup Email
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
           signupEmailEnabled: settings.signupEmailEnabled ?? false,
@@ -1428,7 +1432,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         const {
           signupEmailWebhookUrl,
           signupEmailToken,
@@ -1444,7 +1448,7 @@ export async function registerRoutes(
         } = req.body;
         
         // Build update object with only provided fields
-        const updateData: any = { adminUserId: userId! };
+        const updateData: any = {};
         
         if (signupEmailWebhookUrl !== undefined) updateData.signupEmailWebhookUrl = signupEmailWebhookUrl;
         if (signupEmailToken !== undefined) updateData.signupEmailToken = signupEmailToken;
@@ -1458,10 +1462,10 @@ export async function registerRoutes(
         if (paymentReceivedAlertsGlobalEnabled !== undefined) updateData.paymentReceivedAlertsGlobalEnabled = paymentReceivedAlertsGlobalEnabled;
         if (monthlySummaryGlobalEnabled !== undefined) updateData.monthlySummaryGlobalEnabled = monthlySummaryGlobalEnabled;
         
-        const settings = await storage.upsertAutomationSettings(updateData);
+        const settings = await storage.upsertAutomationSettings(organizationId!, updateData);
         
         res.json({
-          id: settings.id,
+          organizationId: settings.organizationId,
           signupEmailWebhookUrl: settings.signupEmailWebhookUrl,
           signupEmailEnabled: settings.signupEmailEnabled ?? false,
           hasSignupEmailToken: !!(settings.signupEmailToken || settings.automationToken),
@@ -1489,8 +1493,9 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const organizationId = getOrganizationId(req);
         const { webhookType } = req.body;
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(organizationId);
         
         let webhookUrl: string | null = null;
         let token: string | null = null;
@@ -1598,6 +1603,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const organizationId = getOrganizationId(req);
         const { clientId } = req.body;
         
         if (!clientId) {
@@ -1615,7 +1621,7 @@ export async function registerRoutes(
         }
 
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(organizationId);
         const webhookUrl = settings?.signupEmailWebhookUrl;
         
         if (!webhookUrl) {
@@ -1673,9 +1679,10 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(organizationId);
         
         // Check global toggle
         if (!settings?.monthlySummaryGlobalEnabled) {
@@ -2011,7 +2018,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { invoiceId } = req.params;
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         
         // Get invoice
         const invoice = await storage.getInvoice(invoiceId);
@@ -2023,7 +2030,7 @@ export async function registerRoutes(
         const [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.adminUserId, userId!));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         // Create PDF
         const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
@@ -2186,14 +2193,13 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = getOrganizationId(req);
         
         // Get settings for auto-numbering
-        const settingsId = `IS-${userId}`;
         let [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, organizationId!));
         
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
@@ -2233,13 +2239,12 @@ export async function registerRoutes(
           await db
             .update(invoiceSettings)
             .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, organizationId!));
         } else {
           await db
             .insert(invoiceSettings)
             .values({
-              id: settingsId,
-              adminUserId: userId!,
+              organizationId: organizationId!,
               nextInvoiceNumber: 2,
             });
         }
@@ -3691,6 +3696,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const organizationId = getOrganizationId(req);
         const results: Array<{ test: string; status: "pass" | "fail"; details: string }> = [];
         
         // Get current admin profile
@@ -3711,7 +3717,7 @@ export async function registerRoutes(
         });
         
         // Test 3: Verify webhook tokens are not exposed to frontend
-        const automationSettings = await storage.getAutomationSettings();
+        const automationSettings = await storage.getAutomationSettings(organizationId);
         const tokensExposed = automationSettings && (
           "signupEmailToken" in automationSettings ||
           "paymentReceivedToken" in automationSettings ||

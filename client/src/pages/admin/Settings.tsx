@@ -20,7 +20,14 @@ import {
   formatDate 
 } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
+function withOrganizationScope(path: string, organizationId?: string) {
+  if (!organizationId) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}organizationId=${encodeURIComponent(organizationId)}`;
+}
 
 function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?: () => void }) {
   const createLinkToken = useCreatePlaidLinkToken();
@@ -93,7 +100,7 @@ function PlaidLinkButton({ onSuccess, onOpen }: { onSuccess: () => void; onOpen?
 }
 
 interface PaymentSettings {
-  id: string | null;
+  organizationId: string | null;
   cashAppHandle: string | null;
   cashAppLink: string | null;
   venmoHandle: string | null;
@@ -103,11 +110,13 @@ interface PaymentSettings {
 }
 
 function PaymentSettingsCard() {
+  const { user } = useAuth();
+  const organizationId = user?.id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<PaymentSettings>({
-    id: null,
+    organizationId: null,
     cashAppHandle: "",
     cashAppLink: "",
     venmoHandle: "",
@@ -119,7 +128,7 @@ function PaymentSettingsCard() {
   const { data: settings, isLoading } = useQuery<PaymentSettings>({
     queryKey: ["admin", "payment-settings"],
     queryFn: async () => {
-      const response = await fetch("/api/admin/payment-settings", { credentials: "include" });
+      const response = await fetch(withOrganizationScope("/api/admin/payment-settings", organizationId), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch payment settings");
       return response.json();
     },
@@ -128,7 +137,7 @@ function PaymentSettingsCard() {
   useEffect(() => {
     if (settings) {
       setFormData({
-        id: settings.id,
+        organizationId: settings.organizationId,
         cashAppHandle: settings.cashAppHandle || "",
         cashAppLink: settings.cashAppLink || "",
         venmoHandle: settings.venmoHandle || "",
@@ -141,7 +150,7 @@ function PaymentSettingsCard() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: Partial<PaymentSettings>) => {
-      const response = await fetch("/api/admin/payment-settings", {
+      const response = await fetch(withOrganizationScope("/api/admin/payment-settings", organizationId), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -174,7 +183,7 @@ function PaymentSettingsCard() {
   const handleCancel = () => {
     if (settings) {
       setFormData({
-        id: settings.id,
+        organizationId: settings.organizationId,
         cashAppHandle: settings.cashAppHandle || "",
         cashAppLink: settings.cashAppLink || "",
         venmoHandle: settings.venmoHandle || "",
@@ -326,7 +335,7 @@ function PaymentSettingsCard() {
 }
 
 interface AutomationSettings {
-  id: string | null;
+  organizationId: string | null;
   signupEmailWebhookUrl: string | null;
   signupEmailEnabled: boolean;
   hasSignupEmailToken: boolean;
@@ -618,13 +627,15 @@ function StripeGatewayCard() {
 }
 
 function NotificationsCard() {
+  const { user } = useAuth();
+  const organizationId = user?.id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: settings, isLoading } = useQuery<AutomationSettings>({
     queryKey: ["admin", "automation-settings"],
     queryFn: async () => {
-      const response = await fetch("/api/admin/automation-settings", { credentials: "include" });
+      const response = await fetch(withOrganizationScope("/api/admin/automation-settings", organizationId), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch automation settings");
       return response.json();
     },
@@ -632,7 +643,7 @@ function NotificationsCard() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
-      const response = await fetch("/api/admin/automation-settings", {
+      const response = await fetch(withOrganizationScope("/api/admin/automation-settings", organizationId), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -704,6 +715,8 @@ function NotificationsCard() {
 }
 
 function AutomationSettingsCard() {
+  const { user } = useAuth();
+  const organizationId = user?.id;
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editingWebhook, setEditingWebhook] = useState<string | null>(null);
@@ -717,7 +730,7 @@ function AutomationSettingsCard() {
   const { data: settings, isLoading } = useQuery<AutomationSettings>({
     queryKey: ["admin", "automation-settings"],
     queryFn: async () => {
-      const response = await fetch("/api/admin/automation-settings", { credentials: "include" });
+      const response = await fetch(withOrganizationScope("/api/admin/automation-settings", organizationId), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch automation settings");
       return response.json();
     },
@@ -725,7 +738,7 @@ function AutomationSettingsCard() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: Record<string, any>) => {
-      const response = await fetch("/api/admin/automation-settings", {
+      const response = await fetch(withOrganizationScope("/api/admin/automation-settings", organizationId), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

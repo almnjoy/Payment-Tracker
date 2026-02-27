@@ -95,12 +95,12 @@ export interface IStorage {
   deleteExternalAccount(accountId: string): Promise<boolean>;
   
   // Payment Settings
-  getPaymentSettings(): Promise<PaymentSettings | undefined>;
-  upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings>;
+  getPaymentSettings(organizationId?: string): Promise<PaymentSettings | undefined>;
+  upsertPaymentSettings(organizationId: string, data: Omit<InsertPaymentSettings, "organizationId">): Promise<PaymentSettings>;
 
   // Automation Settings
-  getAutomationSettings(): Promise<AutomationSettings | undefined>;
-  upsertAutomationSettings(data: InsertAutomationSettings): Promise<AutomationSettings>;
+  getAutomationSettings(organizationId?: string): Promise<AutomationSettings | undefined>;
+  upsertAutomationSettings(organizationId: string, data: Omit<InsertAutomationSettings, "organizationId">): Promise<AutomationSettings>;
   
   // Documents - additional methods
   updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined>;
@@ -402,17 +402,24 @@ export class DatabaseStorage implements IStorage {
   // ============================================
   // PAYMENT SETTINGS
   // ============================================
-  async getPaymentSettings(): Promise<PaymentSettings | undefined> {
-    const [settings] = await db.select().from(paymentSettings).where(eq(paymentSettings.id, "default"));
+  async getPaymentSettings(organizationId?: string): Promise<PaymentSettings | undefined> {
+    if (!organizationId) {
+      const [settings] = await db.select().from(paymentSettings).orderBy(desc(paymentSettings.updatedAt)).limit(1);
+      return settings;
+    }
+    const [settings] = await db.select().from(paymentSettings).where(eq(paymentSettings.organizationId, organizationId));
     return settings;
   }
 
-  async upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings> {
+  async upsertPaymentSettings(
+    organizationId: string,
+    data: Omit<InsertPaymentSettings, "organizationId">,
+  ): Promise<PaymentSettings> {
     const [settings] = await db
       .insert(paymentSettings)
-      .values({ ...data, id: "default" })
+      .values({ ...data, organizationId })
       .onConflictDoUpdate({
-        target: paymentSettings.id,
+        target: paymentSettings.organizationId,
         set: {
           ...data,
           updatedAt: new Date(),
@@ -425,17 +432,24 @@ export class DatabaseStorage implements IStorage {
   // ============================================
   // AUTOMATION SETTINGS
   // ============================================
-  async getAutomationSettings(): Promise<AutomationSettings | undefined> {
-    const [settings] = await db.select().from(automationSettings).where(eq(automationSettings.id, "default"));
+  async getAutomationSettings(organizationId?: string): Promise<AutomationSettings | undefined> {
+    if (!organizationId) {
+      const [settings] = await db.select().from(automationSettings).orderBy(desc(automationSettings.updatedAt)).limit(1);
+      return settings;
+    }
+    const [settings] = await db.select().from(automationSettings).where(eq(automationSettings.organizationId, organizationId));
     return settings;
   }
 
-  async upsertAutomationSettings(data: InsertAutomationSettings): Promise<AutomationSettings> {
+  async upsertAutomationSettings(
+    organizationId: string,
+    data: Omit<InsertAutomationSettings, "organizationId">,
+  ): Promise<AutomationSettings> {
     const [settings] = await db
       .insert(automationSettings)
-      .values({ ...data, id: "default" })
+      .values({ ...data, organizationId })
       .onConflictDoUpdate({
-        target: automationSettings.id,
+        target: automationSettings.organizationId,
         set: {
           ...data,
           updatedAt: new Date(),

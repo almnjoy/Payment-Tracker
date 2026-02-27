@@ -141,8 +141,7 @@ export type InviteCode = typeof inviteCodes.$inferSelect;
 // INVOICE SETTINGS (Business defaults)
 // ============================================
 export const invoiceSettings = pgTable("invoice_settings", {
-  id: varchar("id").primaryKey().default("default"),
-  adminUserId: varchar("admin_user_id").notNull(),
+  organizationId: varchar("organization_id").primaryKey(),
   businessLogo: text("business_logo"), // URL to stored logo image
   businessName: text("business_name"),
   businessAddress: text("business_address"),
@@ -156,7 +155,6 @@ export const invoiceSettings = pgTable("invoice_settings", {
 });
 
 export const insertInvoiceSettingsSchema = createInsertSchema(invoiceSettings).omit({
-  id: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -167,8 +165,7 @@ export type InvoiceSettings = typeof invoiceSettings.$inferSelect;
 // PAYMENT SETTINGS (Admin-configured payment methods)
 // ============================================
 export const paymentSettings = pgTable("payment_settings", {
-  id: varchar("id").primaryKey().default("default"),
-  adminUserId: varchar("admin_user_id").notNull(),
+  organizationId: varchar("organization_id").primaryKey(),
   cashAppHandle: text("cash_app_handle"),
   cashAppLink: text("cash_app_link"),
   venmoHandle: text("venmo_handle"),
@@ -180,7 +177,6 @@ export const paymentSettings = pgTable("payment_settings", {
 });
 
 export const insertPaymentSettingsSchema = createInsertSchema(paymentSettings).omit({
-  id: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -191,8 +187,7 @@ export type PaymentSettings = typeof paymentSettings.$inferSelect;
 // AUTOMATION SETTINGS (Webhooks, integrations)
 // ============================================
 export const automationSettings = pgTable("automation_settings", {
-  id: varchar("id").primaryKey().default("default"),
-  adminUserId: varchar("admin_user_id").notNull(),
+  organizationId: varchar("organization_id").primaryKey(),
   // Client Signup Email Webhook
   signupEmailWebhookUrl: text("signup_email_webhook_url"),
   signupEmailToken: text("signup_email_token"),
@@ -215,12 +210,22 @@ export const automationSettings = pgTable("automation_settings", {
 });
 
 export const insertAutomationSettingsSchema = createInsertSchema(automationSettings).omit({
-  id: true,
   createdAt: true,
   updatedAt: true,
 });
 export type InsertAutomationSettings = z.infer<typeof insertAutomationSettingsSchema>;
 export type AutomationSettings = typeof automationSettings.$inferSelect;
+
+// ============================================
+// ADMIN PREFERENCES (Per-admin, non-org defaults)
+// ============================================
+export const adminPreferences = pgTable("admin_preferences", {
+  adminUserId: varchar("admin_user_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
+  defaultInvoiceView: text("default_invoice_view").default("list"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 // Line item schema for invoice line items (stored as JSONB)
 export const invoiceLineItemSchema = z.object({
