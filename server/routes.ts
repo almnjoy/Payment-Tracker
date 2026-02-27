@@ -26,6 +26,7 @@ import {
   clients as clientsTable,
   invoices,
   invoiceSettings,
+  organizationSettings,
   paymentSettings,
   payments,
   documents,
@@ -137,6 +138,33 @@ function sanitizeForLog(obj: any): any {
     }
   }
   return sanitized;
+}
+
+async function getBrandingForRequest(req: Request) {
+  const requestHost = (req.hostname || "").toLowerCase();
+  const [domainMatch] = requestHost
+    ? await db
+        .select()
+        .from(organizationSettings)
+        .where(eq(organizationSettings.domain, requestHost))
+        .limit(1)
+    : [];
+
+  const [defaultSettings] = domainMatch
+    ? [domainMatch]
+    : await db
+        .select()
+        .from(organizationSettings)
+        .where(eq(organizationSettings.id, "default"))
+        .limit(1);
+
+  return {
+    displayName: defaultSettings?.displayName || "Quick IT Projects",
+    logoUrl: defaultSettings?.logoUrl || null,
+    primaryColor: defaultSettings?.primaryColor || "#007BFF",
+    accentColor: defaultSettings?.accentColor || "#FF6A00",
+    domain: defaultSettings?.domain || null,
+  };
 }
 
 // Helper to get user ID from request
@@ -933,6 +961,8 @@ export async function registerRoutes(
               .where(eq(invoiceSettings.adminUserId, userId!));
             
             // Generate PDF buffer using billTo fields (not client)
+            const branding = await getBrandingForRequest(req);
+            const invoiceHeaderName = settings?.businessName || branding.displayName;
             const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
               const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
               const chunks: Buffer[] = [];
@@ -959,8 +989,8 @@ export async function registerRoutes(
               
               // Business info (left side)
               let yPos = margin;
-              if (settings?.businessName) {
-                doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+              if (invoiceHeaderName) {
+                doc.fontSize(14).font('Helvetica-Bold').text(invoiceHeaderName, margin, yPos);
                 yPos += 20;
               }
               if (settings?.businessAddress) {
@@ -1325,6 +1355,68 @@ export async function registerRoutes(
       }
     },
   );
+
+  // ============================================
+  // BRANDING / ORGANIZATION SETTINGS
+  // ============================================
+
+  app.get("/api/public/branding", async (req: Request, res: Response) => {
+    try {
+      const branding = await getBrandingForRequest(req);
+      res.json(branding);
+    } catch (error) {
+      console.error("Error fetching public branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  app.get("/api/branding", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const branding = await getBrandingForRequest(req);
+      res.json(branding);
+    } catch (error) {
+      console.error("Error fetching branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  app.get("/api/admin/organization-settings", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const settings = await storage.getOrganizationSettings();
+      if (!settings) {
+        return res.json({
+          id: null,
+          displayName: "Quick IT Projects",
+          logoUrl: null,
+          primaryColor: "#007BFF",
+          accentColor: "#FF6A00",
+          domain: null,
+        });
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching organization settings:", error);
+      res.status(500).json({ message: "Failed to fetch organization settings" });
+    }
+  });
+
+  app.put("/api/admin/organization-settings", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const settings = await storage.upsertOrganizationSettings({
+        adminUserId: userId!,
+        displayName: req.body.displayName || "Quick IT Projects",
+        logoUrl: req.body.logoUrl || null,
+        primaryColor: req.body.primaryColor || "#007BFF",
+        accentColor: req.body.accentColor || "#FF6A00",
+        domain: req.body.domain || null,
+      });
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating organization settings:", error);
+      res.status(500).json({ message: "Failed to update organization settings" });
+    }
+  });
 
   // ============================================
   // ADMIN: PAYMENT SETTINGS
@@ -2071,8 +2163,10 @@ export async function registerRoutes(
         
         // Business info (left side)
         let yPos = margin;
-        if (settings?.businessName) {
-          doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+        const branding = await getBrandingForRequest(req);
+        const invoiceHeaderName = settings?.businessName || branding.displayName;
+        if (invoiceHeaderName) {
+          doc.fontSize(14).font('Helvetica-Bold').text(invoiceHeaderName, margin, yPos);
           yPos += 20;
         }
         if (settings?.businessAddress) {
@@ -3292,7 +3386,7 @@ export async function registerRoutes(
                 currency: "usd",
                 product_data: {
                   name: `Payment - ${client.displayName || "Client"}`,
-                  description: note || `Payment to Quick IT Projects`,
+                  description: note || `Payment to ${(await getBrandingForRequest(req)).displayName}`,
                 },
                 unit_amount: amountCents,
               },
@@ -3814,7 +3908,7 @@ export async function registerRoutes(
         const userId = getUserId(req);
 
         const response = await plaidClient.linkTokenCreate({
-          client_name: "Quick IT Projects",
+          client_name: (await getBrandingForRequest(req)).displayName,
           products: [Products.Transactions],
           country_codes: [CountryCode.Us],
           language: "en",

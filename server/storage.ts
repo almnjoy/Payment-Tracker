@@ -10,6 +10,7 @@ import {
   documents,
   externalAccounts,
   paymentSettings,
+  organizationSettings,
   automationSettings,
   clientBillingItems,
   generateClientId,
@@ -37,6 +38,8 @@ import {
   type InsertExternalAccount,
   type PaymentSettings,
   type InsertPaymentSettings,
+  type OrganizationSettings,
+  type InsertOrganizationSettings,
   type AutomationSettings,
   type InsertAutomationSettings,
 } from "@shared/schema";
@@ -99,6 +102,10 @@ export interface IStorage {
   // Payment Settings
   getPaymentSettings(organizationId?: string): Promise<PaymentSettings | undefined>;
   upsertPaymentSettings(data: InsertPaymentSettings): Promise<PaymentSettings>;
+
+  // Organization Settings
+  getOrganizationSettings(): Promise<OrganizationSettings | undefined>;
+  upsertOrganizationSettings(data: InsertOrganizationSettings): Promise<OrganizationSettings>;
 
   // Automation Settings
   getAutomationSettings(organizationId?: string): Promise<AutomationSettings | undefined>;
@@ -417,6 +424,29 @@ export class DatabaseStorage implements IStorage {
       .values(data as any)
       .onConflictDoUpdate({
         target: paymentSettings.organizationId,
+        set: {
+          ...data,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return settings;
+  }
+
+  // ============================================
+  // ORGANIZATION SETTINGS
+  // ============================================
+  async getOrganizationSettings(): Promise<OrganizationSettings | undefined> {
+    const [settings] = await db.select().from(organizationSettings).where(eq(organizationSettings.id, "default"));
+    return settings;
+  }
+
+  async upsertOrganizationSettings(data: InsertOrganizationSettings): Promise<OrganizationSettings> {
+    const [settings] = await db
+      .insert(organizationSettings)
+      .values({ ...data, id: "default" })
+      .onConflictDoUpdate({
+        target: organizationSettings.id,
         set: {
           ...data,
           updatedAt: new Date(),
