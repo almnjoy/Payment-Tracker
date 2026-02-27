@@ -31,12 +31,7 @@ import {
   payments,
   documents,
   usersProfile,
-  generatePlaidItemId,
-  generatePlaidAccountRowId,
-  generatePlaidTransactionRowId,
-  generateFinanceEntryId,
   generateClientBillingItemId,
-  generateRecurringGroupId,
   generatePaymentId,
   formatInvoiceNumber,
   insertFinanceEntrySchema,
@@ -172,8 +167,20 @@ function getUserId(req: Request): string | undefined {
   return (req.user as any)?.claims?.sub;
 }
 
-function getActiveOrganizationId(req: Request): string {
-  return (req as any).activeOrganizationId || (req as any).userProfile?.organizationId || "org-default";
+// Tenant-safe query checklist (applies to admin + client route handlers)
+const TENANT_SAFE_QUERY_CHECKLIST = [
+  "Resolve organizationId from authenticated identity (never from request body/query).",
+  "Require organizationId in storage-layer write signatures for tenant-owned tables.",
+  "Scope every tenant-owned query by organizationId/adminUserId.",
+  "Reject cross-tenant IDs before write/delete mutations.",
+];
+
+function requireOrganizationId(req: Request): string {
+  const organizationId = getUserId(req);
+  if (!organizationId) {
+    throw new Error("organizationId is required for tenant-owned operations");
+  }
+  return organizationId;
 }
 
 // Middleware to check if user is admin
@@ -350,6 +357,7 @@ export async function registerRoutes(
   // CORS CONFIGURATION
   // ============================================
   const allowedOrigins = getAllowedOrigins();
+  console.info("[TenantSafe] Checklist:", TENANT_SAFE_QUERY_CHECKLIST.join(" | "));
   app.use(cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, curl, etc)
@@ -3950,16 +3958,14 @@ export async function registerRoutes(
         const accessToken = exchangeResponse.data.access_token;
         const plaidItemIdValue = exchangeResponse.data.item_id;
 
+        const organizationId = requireOrganizationId(req);
+
         // Insert into plaid_items
-        const itemId = generatePlaidItemId();
-        await db.insert(plaidItems).values({
-          itemId,
-          adminUserId: userId!,
+        const itemId = await storage.createPlaidItemForOrganization(organizationId, {
           plaidItemId: plaidItemIdValue,
           accessToken,
           institutionId: institution_id || null,
           institutionName: institution_name || null,
-          status: "linked",
         });
 
         // Fetch accounts
@@ -3968,55 +3974,21 @@ export async function registerRoutes(
         });
 
         for (const account of accountsResponse.data.accounts) {
-          const existingAccount = await db
-            .select()
-            .from(plaidAccounts)
-            .where(
-              and(
-                eq(plaidAccounts.itemId, itemId),
-                eq(plaidAccounts.plaidAccountId, account.account_id),
-              ),
-            )
-            .limit(1);
-
-          if (existingAccount.length === 0) {
-            await db.insert(plaidAccounts).values({
-              accountId: generatePlaidAccountRowId(),
-              itemId,
-              plaidAccountId: account.account_id,
-              name: account.name,
-              officialName: account.official_name || null,
-              mask: account.mask || null,
-              type: account.type,
-              subtype: account.subtype || null,
-              currentBalanceCents: account.balances.current
-                ? Math.round(account.balances.current * 100)
-                : null,
-              availableBalanceCents: account.balances.available
-                ? Math.round(account.balances.available * 100)
-                : null,
-              isoCurrencyCode: account.balances.iso_currency_code || "USD",
-            });
-          } else {
-            await db
-              .update(plaidAccounts)
-              .set({
-                name: account.name,
-                officialName: account.official_name || null,
-                mask: account.mask || null,
-                type: account.type,
-                subtype: account.subtype || null,
-                currentBalanceCents: account.balances.current
-                  ? Math.round(account.balances.current * 100)
-                  : null,
-                availableBalanceCents: account.balances.available
-                  ? Math.round(account.balances.available * 100)
-                  : null,
-                isoCurrencyCode: account.balances.iso_currency_code || "USD",
-                updatedAt: new Date(),
-              })
-              .where(eq(plaidAccounts.accountId, existingAccount[0].accountId));
-          }
+          await storage.upsertPlaidAccountForOrganization(organizationId, itemId, {
+            plaidAccountId: account.account_id,
+            name: account.name,
+            officialName: account.official_name || null,
+            mask: account.mask || null,
+            type: account.type,
+            subtype: account.subtype || null,
+            currentBalanceCents: account.balances.current
+              ? Math.round(account.balances.current * 100)
+              : null,
+            availableBalanceCents: account.balances.available
+              ? Math.round(account.balances.available * 100)
+              : null,
+            isoCurrencyCode: account.balances.iso_currency_code || "USD",
+          });
         }
 
         // Initialize transactions sync
@@ -4026,50 +3998,26 @@ export async function registerRoutes(
 
         // Upsert added transactions
         for (const txn of syncResponse.data.added) {
-          const existingTxn = await db
-            .select()
-            .from(plaidTransactions)
-            .where(
-              and(
-                eq(plaidTransactions.itemId, itemId),
-                eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-              ),
-            )
-            .limit(1);
-
-          if (existingTxn.length === 0) {
-            await db.insert(plaidTransactions).values({
-              transactionId: generatePlaidTransactionRowId(),
-              itemId,
-              plaidTransactionId: txn.transaction_id,
-              plaidAccountId: txn.account_id,
-              date: txn.date,
-              name: txn.name,
-              merchantName: txn.merchant_name || null,
-              amountCents: Math.round(txn.amount * 100),
-              isoCurrencyCode: txn.iso_currency_code || "USD",
-              pending: txn.pending,
-              categoryPrimary: txn.personal_finance_category?.primary || null,
-              rawJson: txn as any,
-            });
-          }
+          await storage.upsertPlaidTransactionForOrganization(organizationId, itemId, {
+            plaidTransactionId: txn.transaction_id,
+            plaidAccountId: txn.account_id,
+            date: txn.date,
+            name: txn.name,
+            merchantName: txn.merchant_name || null,
+            amountCents: Math.round(txn.amount * 100),
+            isoCurrencyCode: txn.iso_currency_code || "USD",
+            pending: txn.pending,
+            categoryPrimary: txn.personal_finance_category?.primary || null,
+            rawJson: txn as any,
+          });
         }
 
         // Store cursor
-        await db
-          .insert(plaidCursors)
-          .values({
-            itemId,
-            cursor: syncResponse.data.next_cursor,
-            lastSyncAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: plaidCursors.itemId,
-            set: {
-              cursor: syncResponse.data.next_cursor,
-              lastSyncAt: new Date(),
-            },
-          });
+        await storage.upsertPlaidCursorForOrganization(
+          organizationId,
+          itemId,
+          syncResponse.data.next_cursor,
+        );
 
         res.json({
           item_id: itemId,
@@ -4093,6 +4041,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
 
         // Get all items for this admin
         const items = await db
@@ -4122,56 +4071,35 @@ export async function registerRoutes(
 
           // Process added transactions
           for (const txn of syncResponse.data.added) {
-            const existingTxn = await db
-              .select()
-              .from(plaidTransactions)
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              )
-              .limit(1);
-
-            if (existingTxn.length === 0) {
-              await db.insert(plaidTransactions).values({
-                transactionId: generatePlaidTransactionRowId(),
-                itemId: item.itemId,
-                plaidTransactionId: txn.transaction_id,
-                plaidAccountId: txn.account_id,
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                isoCurrencyCode: txn.iso_currency_code || "USD",
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-              });
-              totalAdded++;
-            }
+            const created = await storage.upsertPlaidTransactionForOrganization(organizationId, item.itemId, {
+              plaidTransactionId: txn.transaction_id,
+              plaidAccountId: txn.account_id,
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              isoCurrencyCode: txn.iso_currency_code || "USD",
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+            });
+            if (created) totalAdded++;
           }
 
           // Process modified transactions
           for (const txn of syncResponse.data.modified) {
-            await db
-              .update(plaidTransactions)
-              .set({
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              );
+            await storage.upsertPlaidTransactionForOrganization(organizationId, item.itemId, {
+              plaidTransactionId: txn.transaction_id,
+              plaidAccountId: txn.account_id,
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              isoCurrencyCode: txn.iso_currency_code || "USD",
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+            });
             totalModified++;
           }
 
@@ -4199,40 +4127,29 @@ export async function registerRoutes(
           });
 
           for (const account of accountsResponse.data.accounts) {
-            await db
-              .update(plaidAccounts)
-              .set({
-                currentBalanceCents: account.balances.current
-                  ? Math.round(account.balances.current * 100)
-                  : null,
-                availableBalanceCents: account.balances.available
-                  ? Math.round(account.balances.available * 100)
-                  : null,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidAccounts.itemId, item.itemId),
-                  eq(plaidAccounts.plaidAccountId, account.account_id),
-                ),
-              );
+            await storage.upsertPlaidAccountForOrganization(organizationId, item.itemId, {
+              plaidAccountId: account.account_id,
+              name: account.name,
+              officialName: account.official_name || null,
+              mask: account.mask || null,
+              type: account.type,
+              subtype: account.subtype || null,
+              currentBalanceCents: account.balances.current
+                ? Math.round(account.balances.current * 100)
+                : null,
+              availableBalanceCents: account.balances.available
+                ? Math.round(account.balances.available * 100)
+                : null,
+              isoCurrencyCode: account.balances.iso_currency_code || "USD",
+            });
           }
 
           // Update cursor
-          await db
-            .insert(plaidCursors)
-            .values({
-              itemId: item.itemId,
-              cursor: syncResponse.data.next_cursor,
-              lastSyncAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: plaidCursors.itemId,
-              set: {
-                cursor: syncResponse.data.next_cursor,
-                lastSyncAt: new Date(),
-              },
-            });
+          await storage.upsertPlaidCursorForOrganization(
+            organizationId,
+            item.itemId,
+            syncResponse.data.next_cursor,
+          );
         }
 
         res.json({
@@ -4301,32 +4218,13 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { itemId } = req.params;
 
-        // Verify item belongs to this admin
-        const item = await db
-          .select()
-          .from(plaidItems)
-          .where(
-            and(
-              eq(plaidItems.itemId, itemId),
-              eq(plaidItems.adminUserId, userId!),
-            ),
-          )
-          .limit(1);
-
-        if (item.length === 0) {
+        const deleted = await storage.deletePlaidItemForOrganization(organizationId, itemId);
+        if (!deleted) {
           return res.status(404).json({ message: "Item not found" });
         }
-
-        // Delete in order: transactions, accounts, cursors, items
-        await db
-          .delete(plaidTransactions)
-          .where(eq(plaidTransactions.itemId, itemId));
-        await db.delete(plaidAccounts).where(eq(plaidAccounts.itemId, itemId));
-        await db.delete(plaidCursors).where(eq(plaidCursors.itemId, itemId));
-        await db.delete(plaidItems).where(eq(plaidItems.itemId, itemId));
 
         res.json({ success: true });
       } catch (error) {
@@ -5193,33 +5091,12 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const data = req.body;
 
-        const entryId = generateFinanceEntryId();
+        const entry = await storage.createFinanceEntryForOrganization(organizationId, data);
 
-        await db.insert(financeEntries).values({
-          entryId,
-          adminUserId: userId!,
-          clientId: data.clientId || null,
-          entryType: data.entryType || "manual",
-          categoryGroup: data.categoryGroup,
-          title: data.title,
-          amountCents: data.amountCents,
-          date: data.date,
-          recurrence: data.recurrence || null,
-          notes: data.notes || null,
-          plaidAccountId: data.plaidAccountId || null,
-          externalUrl: data.externalUrl || null,
-        });
-
-        const entry = await db
-          .select()
-          .from(financeEntries)
-          .where(eq(financeEntries.entryId, entryId))
-          .limit(1);
-
-        res.status(201).json(entry[0]);
+        res.status(201).json(entry);
       } catch (error) {
         console.error("Error creating finance entry:", error);
         res.status(500).json({ message: "Failed to create finance entry" });
@@ -5234,27 +5111,13 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { entryId } = req.params;
 
-        const entry = await db
-          .select()
-          .from(financeEntries)
-          .where(
-            and(
-              eq(financeEntries.entryId, entryId),
-              eq(financeEntries.adminUserId, userId!),
-            ),
-          )
-          .limit(1);
-
-        if (entry.length === 0) {
+        const deleted = await storage.deleteFinanceEntryForOrganization(organizationId, entryId);
+        if (!deleted) {
           return res.status(404).json({ message: "Entry not found" });
         }
-
-        await db
-          .delete(financeEntries)
-          .where(eq(financeEntries.entryId, entryId));
 
         res.json({ success: true });
       } catch (error) {
@@ -5317,13 +5180,12 @@ export async function registerRoutes(
           return res.status(400).json({ message: "Invalid recurrence value" });
         }
 
-        await db
-          .update(plaidTransactions)
-          .set({ 
-            overrideRecurrence: recurrence,
-            updatedAt: new Date() 
-          })
-          .where(eq(plaidTransactions.transactionId, transactionId));
+        const organizationId = requireOrganizationId(req);
+        await storage.updateTransactionRecurrenceForOrganization(
+          organizationId,
+          transactionId,
+          recurrence,
+        );
 
         res.json({ success: true, overrideRecurrence: recurrence });
       } catch (error) {
@@ -5363,41 +5225,29 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { label, recurrence, financeType, transactionIds } = req.body;
 
         if (!label || !recurrence) {
           return res.status(400).json({ message: "Label and recurrence are required" });
         }
 
-        const groupId = generateRecurringGroupId();
-
-        await db.insert(plaidRecurringGroups).values({
-          groupId,
-          adminUserId: userId!,
+        const group = await storage.createRecurringGroupForOrganization(organizationId, {
           label,
           recurrence,
           financeType: financeType || null,
-          isActive: true,
         });
 
         // Link transactions to the group if provided
         if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: groupId, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
+          await storage.setTransactionRecurringGroupForOrganization(
+            organizationId,
+            transactionIds,
+            group.groupId,
+          );
         }
 
-        const group = await db
-          .select()
-          .from(plaidRecurringGroups)
-          .where(eq(plaidRecurringGroups.groupId, groupId))
-          .limit(1);
-
-        res.status(201).json(group[0]);
+        res.status(201).json(group);
       } catch (error) {
         console.error("Error creating recurring group:", error);
         res.status(500).json({ message: "Failed to create recurring group" });
@@ -5412,33 +5262,27 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { groupId } = req.params;
         const { label, recurrence, financeType, isActive } = req.body;
 
-        const updates: any = { updatedAt: new Date() };
+        const updates: any = {};
         if (label !== undefined) updates.label = label;
         if (recurrence !== undefined) updates.recurrence = recurrence;
         if (financeType !== undefined) updates.financeType = financeType;
         if (isActive !== undefined) updates.isActive = isActive;
 
-        await db
-          .update(plaidRecurringGroups)
-          .set(updates)
-          .where(
-            and(
-              eq(plaidRecurringGroups.groupId, groupId),
-              eq(plaidRecurringGroups.adminUserId, userId!),
-            ),
-          );
+        const group = await storage.updateRecurringGroupForOrganization(
+          organizationId,
+          groupId,
+          updates,
+        );
 
-        const group = await db
-          .select()
-          .from(plaidRecurringGroups)
-          .where(eq(plaidRecurringGroups.groupId, groupId))
-          .limit(1);
+        if (!group) {
+          return res.status(404).json({ message: "Recurring group not found" });
+        }
 
-        res.json(group[0]);
+        res.json(group);
       } catch (error) {
         console.error("Error updating recurring group:", error);
         res.status(500).json({ message: "Failed to update recurring group" });
@@ -5453,6 +5297,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const organizationId = requireOrganizationId(req);
         const { groupId } = req.params;
         const { transactionIds, action } = req.body;
 
@@ -5460,21 +5305,11 @@ export async function registerRoutes(
           return res.status(400).json({ message: "transactionIds array is required" });
         }
 
-        if (action === "remove") {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: null, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
-        } else {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: groupId, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
-        }
+        await storage.setTransactionRecurringGroupForOrganization(
+          organizationId,
+          transactionIds,
+          action === "remove" ? null : groupId,
+        );
 
         res.json({ success: true });
       } catch (error) {

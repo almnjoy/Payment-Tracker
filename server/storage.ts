@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { db } from "./db";
 import {
   usersProfile,
@@ -13,6 +13,12 @@ import {
   organizationSettings,
   automationSettings,
   clientBillingItems,
+  plaidItems,
+  plaidAccounts,
+  plaidTransactions,
+  plaidCursors,
+  plaidRecurringGroups,
+  financeEntries,
   generateClientId,
   generateLeaseId,
   generateInvoiceId,
@@ -20,6 +26,11 @@ import {
   generateDocumentId,
   generateAccountId,
   generateMagicNumber,
+  generatePlaidItemId,
+  generatePlaidAccountRowId,
+  generatePlaidTransactionRowId,
+  generateFinanceEntryId,
+  generateRecurringGroupId,
   type UsersProfile,
   type InsertUsersProfile,
   type Client,
@@ -112,9 +123,63 @@ export interface IStorage {
   upsertAutomationSettings(data: InsertAutomationSettings): Promise<AutomationSettings>;
   
   // Documents - additional methods
-  updateDocument(documentId: string, data: Partial<InsertDocument>, organizationId?: string): Promise<Document | undefined>;
-  clearActiveAgreementForClient(clientId: string, organizationId?: string): Promise<void>;
-  getActiveAgreementForClient(clientId: string, organizationId?: string): Promise<Document | undefined>;
+  updateDocument(documentId: string, data: Partial<InsertDocument>): Promise<Document | undefined>;
+  clearActiveAgreementForClient(clientId: string): Promise<void>;
+  getActiveAgreementForClient(clientId: string): Promise<Document | undefined>;
+
+  // Tenant-safe helpers (organizationId maps to adminUserId)
+  createPlaidItemForOrganization(organizationId: string, data: {
+    plaidItemId: string;
+    accessToken: string;
+    institutionId?: string | null;
+    institutionName?: string | null;
+  }): Promise<string>;
+  upsertPlaidAccountForOrganization(organizationId: string, itemId: string, account: {
+    plaidAccountId: string;
+    name: string;
+    officialName?: string | null;
+    mask?: string | null;
+    type?: string | null;
+    subtype?: string | null;
+    currentBalanceCents?: number | null;
+    availableBalanceCents?: number | null;
+    isoCurrencyCode?: string | null;
+  }): Promise<void>;
+  upsertPlaidTransactionForOrganization(organizationId: string, itemId: string, txn: {
+    plaidTransactionId: string;
+    plaidAccountId: string;
+    date: string;
+    name: string;
+    merchantName?: string | null;
+    amountCents: number;
+    isoCurrencyCode?: string | null;
+    pending: boolean;
+    categoryPrimary?: string | null;
+    rawJson?: unknown;
+  }): Promise<boolean>;
+  upsertPlaidCursorForOrganization(organizationId: string, itemId: string, cursor: string): Promise<void>;
+  deletePlaidItemForOrganization(organizationId: string, itemId: string): Promise<boolean>;
+  createFinanceEntryForOrganization(organizationId: string, data: {
+    clientId?: string | null;
+    entryType?: string | null;
+    categoryGroup: string;
+    title: string;
+    amountCents: number;
+    date: string;
+    recurrence?: string | null;
+    notes?: string | null;
+    plaidAccountId?: string | null;
+    externalUrl?: string | null;
+  }): Promise<any>;
+  deleteFinanceEntryForOrganization(organizationId: string, entryId: string): Promise<boolean>;
+  createRecurringGroupForOrganization(organizationId: string, data: {
+    label: string;
+    recurrence: string;
+    financeType?: string | null;
+  }): Promise<any>;
+  updateRecurringGroupForOrganization(organizationId: string, groupId: string, updates: Record<string, unknown>): Promise<any>;
+  setTransactionRecurringGroupForOrganization(organizationId: string, transactionIds: string[], recurringGroupId: string | null): Promise<void>;
+  updateTransactionRecurrenceForOrganization(organizationId: string, transactionId: string, recurrence: string | null): Promise<void>;
   
   // Admin utilities
   hasExistingAdmin(): Promise<boolean>;
@@ -504,6 +569,316 @@ export class DatabaseStorage implements IStorage {
       .from(documents)
       .where(and(eq(documents.clientId, clientId), eq(documents.organizationId, organizationId), eq(documents.isActiveAgreement, true)));
     return doc;
+  }
+
+
+  private assertOrganizationId(organizationId: string): string {
+    if (!organizationId || !organizationId.trim()) {
+      throw new Error("organizationId is required for tenant-owned table operations");
+    }
+    return organizationId;
+  }
+
+  async createPlaidItemForOrganization(
+    organizationId: string,
+    data: { plaidItemId: string; accessToken: string; institutionId?: string | null; institutionName?: string | null },
+  ): Promise<string> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const itemId = generatePlaidItemId();
+
+    await db.insert(plaidItems).values({
+      itemId,
+      adminUserId: tenantId,
+      plaidItemId: data.plaidItemId,
+      accessToken: data.accessToken,
+      institutionId: data.institutionId || null,
+      institutionName: data.institutionName || null,
+      status: "linked",
+    });
+
+    return itemId;
+  }
+
+  async upsertPlaidAccountForOrganization(
+    organizationId: string,
+    itemId: string,
+    account: {
+      plaidAccountId: string;
+      name: string;
+      officialName?: string | null;
+      mask?: string | null;
+      type?: string | null;
+      subtype?: string | null;
+      currentBalanceCents?: number | null;
+      availableBalanceCents?: number | null;
+      isoCurrencyCode?: string | null;
+    },
+  ): Promise<void> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const [item] = await db
+      .select()
+      .from(plaidItems)
+      .where(and(eq(plaidItems.itemId, itemId), eq(plaidItems.adminUserId, tenantId)))
+      .limit(1);
+
+    if (!item) throw new Error("Plaid item not found for organization");
+
+    const [existingAccount] = await db
+      .select()
+      .from(plaidAccounts)
+      .where(and(eq(plaidAccounts.itemId, itemId), eq(plaidAccounts.plaidAccountId, account.plaidAccountId)))
+      .limit(1);
+
+    if (!existingAccount) {
+      await db.insert(plaidAccounts).values({
+        accountId: generatePlaidAccountRowId(),
+        itemId,
+        plaidAccountId: account.plaidAccountId,
+        name: account.name,
+        officialName: account.officialName || null,
+        mask: account.mask || null,
+        type: account.type || null,
+        subtype: account.subtype || null,
+        currentBalanceCents: account.currentBalanceCents ?? null,
+        availableBalanceCents: account.availableBalanceCents ?? null,
+        isoCurrencyCode: account.isoCurrencyCode || "USD",
+      });
+      return;
+    }
+
+    await db
+      .update(plaidAccounts)
+      .set({
+        name: account.name,
+        officialName: account.officialName || null,
+        mask: account.mask || null,
+        type: account.type || null,
+        subtype: account.subtype || null,
+        currentBalanceCents: account.currentBalanceCents ?? null,
+        availableBalanceCents: account.availableBalanceCents ?? null,
+        isoCurrencyCode: account.isoCurrencyCode || "USD",
+        updatedAt: new Date(),
+      })
+      .where(eq(plaidAccounts.accountId, existingAccount.accountId));
+  }
+
+  async upsertPlaidTransactionForOrganization(
+    organizationId: string,
+    itemId: string,
+    txn: {
+      plaidTransactionId: string;
+      plaidAccountId: string;
+      date: string;
+      name: string;
+      merchantName?: string | null;
+      amountCents: number;
+      isoCurrencyCode?: string | null;
+      pending: boolean;
+      categoryPrimary?: string | null;
+      rawJson?: unknown;
+    },
+  ): Promise<boolean> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const [item] = await db
+      .select()
+      .from(plaidItems)
+      .where(and(eq(plaidItems.itemId, itemId), eq(plaidItems.adminUserId, tenantId)))
+      .limit(1);
+
+    if (!item) throw new Error("Plaid item not found for organization");
+
+    const [existingTxn] = await db
+      .select()
+      .from(plaidTransactions)
+      .where(and(eq(plaidTransactions.itemId, itemId), eq(plaidTransactions.plaidTransactionId, txn.plaidTransactionId)))
+      .limit(1);
+
+    if (!existingTxn) {
+      await db.insert(plaidTransactions).values({
+        transactionId: generatePlaidTransactionRowId(),
+        itemId,
+        plaidTransactionId: txn.plaidTransactionId,
+        plaidAccountId: txn.plaidAccountId,
+        date: txn.date,
+        name: txn.name,
+        merchantName: txn.merchantName || null,
+        amountCents: txn.amountCents,
+        isoCurrencyCode: txn.isoCurrencyCode || "USD",
+        pending: txn.pending,
+        categoryPrimary: txn.categoryPrimary || null,
+        rawJson: (txn.rawJson as any) || null,
+      });
+      return true;
+    }
+
+    await db
+      .update(plaidTransactions)
+      .set({
+        date: txn.date,
+        name: txn.name,
+        merchantName: txn.merchantName || null,
+        amountCents: txn.amountCents,
+        pending: txn.pending,
+        categoryPrimary: txn.categoryPrimary || null,
+        rawJson: (txn.rawJson as any) || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(plaidTransactions.transactionId, existingTxn.transactionId));
+
+    return false;
+  }
+
+  async upsertPlaidCursorForOrganization(organizationId: string, itemId: string, cursor: string): Promise<void> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const [item] = await db
+      .select()
+      .from(plaidItems)
+      .where(and(eq(plaidItems.itemId, itemId), eq(plaidItems.adminUserId, tenantId)))
+      .limit(1);
+
+    if (!item) throw new Error("Plaid item not found for organization");
+
+    await db
+      .insert(plaidCursors)
+      .values({ itemId, cursor, lastSyncAt: new Date() })
+      .onConflictDoUpdate({
+        target: plaidCursors.itemId,
+        set: { cursor, lastSyncAt: new Date() },
+      });
+  }
+
+  async deletePlaidItemForOrganization(organizationId: string, itemId: string): Promise<boolean> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const [item] = await db
+      .select()
+      .from(plaidItems)
+      .where(and(eq(plaidItems.itemId, itemId), eq(plaidItems.adminUserId, tenantId)))
+      .limit(1);
+
+    if (!item) return false;
+
+    await db.delete(plaidTransactions).where(eq(plaidTransactions.itemId, itemId));
+    await db.delete(plaidAccounts).where(eq(plaidAccounts.itemId, itemId));
+    await db.delete(plaidCursors).where(eq(plaidCursors.itemId, itemId));
+    await db.delete(plaidItems).where(eq(plaidItems.itemId, itemId));
+    return true;
+  }
+
+  async createFinanceEntryForOrganization(
+    organizationId: string,
+    data: {
+      clientId?: string | null;
+      entryType?: string | null;
+      categoryGroup: string;
+      title: string;
+      amountCents: number;
+      date: string;
+      recurrence?: string | null;
+      notes?: string | null;
+      plaidAccountId?: string | null;
+      externalUrl?: string | null;
+    },
+  ): Promise<any> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const entryId = generateFinanceEntryId();
+    await db.insert(financeEntries).values({
+      entryId,
+      adminUserId: tenantId,
+      clientId: data.clientId || null,
+      entryType: data.entryType || "manual",
+      categoryGroup: data.categoryGroup,
+      title: data.title,
+      amountCents: data.amountCents,
+      date: data.date,
+      recurrence: data.recurrence || null,
+      notes: data.notes || null,
+      plaidAccountId: data.plaidAccountId || null,
+      externalUrl: data.externalUrl || null,
+    });
+
+    const [entry] = await db.select().from(financeEntries).where(eq(financeEntries.entryId, entryId)).limit(1);
+    return entry;
+  }
+
+  async deleteFinanceEntryForOrganization(organizationId: string, entryId: string): Promise<boolean> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const result = await db
+      .delete(financeEntries)
+      .where(and(eq(financeEntries.entryId, entryId), eq(financeEntries.adminUserId, tenantId)))
+      .returning({ entryId: financeEntries.entryId });
+    return result.length > 0;
+  }
+
+  async createRecurringGroupForOrganization(
+    organizationId: string,
+    data: { label: string; recurrence: string; financeType?: string | null },
+  ): Promise<any> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    const groupId = generateRecurringGroupId();
+    await db.insert(plaidRecurringGroups).values({
+      groupId,
+      adminUserId: tenantId,
+      label: data.label,
+      recurrence: data.recurrence,
+      financeType: data.financeType || null,
+      isActive: true,
+    });
+    const [group] = await db.select().from(plaidRecurringGroups).where(eq(plaidRecurringGroups.groupId, groupId)).limit(1);
+    return group;
+  }
+
+  async updateRecurringGroupForOrganization(
+    organizationId: string,
+    groupId: string,
+    updates: Record<string, unknown>,
+  ): Promise<any> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    await db
+      .update(plaidRecurringGroups)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(and(eq(plaidRecurringGroups.groupId, groupId), eq(plaidRecurringGroups.adminUserId, tenantId)));
+    const [group] = await db
+      .select()
+      .from(plaidRecurringGroups)
+      .where(and(eq(plaidRecurringGroups.groupId, groupId), eq(plaidRecurringGroups.adminUserId, tenantId)))
+      .limit(1);
+    return group;
+  }
+
+  async setTransactionRecurringGroupForOrganization(
+    organizationId: string,
+    transactionIds: string[],
+    recurringGroupId: string | null,
+  ): Promise<void> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    if (transactionIds.length === 0) return;
+
+    await db
+      .update(plaidTransactions)
+      .set({ recurringGroupId, updatedAt: new Date() })
+      .where(
+        and(
+          inArray(plaidTransactions.transactionId, transactionIds),
+          sql`${plaidTransactions.itemId} IN (select ${plaidItems.itemId} from ${plaidItems} where ${plaidItems.adminUserId} = ${tenantId})`,
+        ),
+      );
+  }
+
+  async updateTransactionRecurrenceForOrganization(
+    organizationId: string,
+    transactionId: string,
+    recurrence: string | null,
+  ): Promise<void> {
+    const tenantId = this.assertOrganizationId(organizationId);
+    await db
+      .update(plaidTransactions)
+      .set({ overrideRecurrence: recurrence, updatedAt: new Date() })
+      .where(
+        and(
+          eq(plaidTransactions.transactionId, transactionId),
+          sql`${plaidTransactions.itemId} IN (select ${plaidItems.itemId} from ${plaidItems} where ${plaidItems.adminUserId} = ${tenantId})`,
+        ),
+      );
   }
 
   // ============================================
