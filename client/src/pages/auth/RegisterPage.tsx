@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, CheckCircle, XCircle, Loader2, Key, User, Mail } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
-import { useVerifyInvite, useClaimInvite, useBootstrapAdmin } from "@/lib/api";
+import { useVerifyInvite, useClaimInvite, useBootstrapAdmin, usePublicBranding } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -16,6 +16,8 @@ import { apiRequest } from "@/lib/queryClient";
 export default function RegisterPage() {
   const [, navigate] = useLocation();
   const { user, isLoading: authLoading, isAuthenticated } = useAuth();
+  const { data: branding } = usePublicBranding();
+  const orgName = branding?.displayName || "Quick IT Projects";
   const [signupTab, setSignupTab] = useState<"client-id" | "invite">("client-id");
   
   const [clientId, setClientId] = useState("");
@@ -136,13 +138,13 @@ export default function RegisterPage() {
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-white flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-primary/10 to-white flex items-center justify-center p-4">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -157,7 +159,7 @@ export default function RegisterPage() {
               </a>
             </Link>
             <CardTitle className="text-2xl font-bold text-gray-900">
-              {showAdminSetup ? "Initial Owner Setup" : "Join Quick IT Projects"}
+              {showAdminSetup ? "Admin Setup" : `Join ${orgName}`}
             </CardTitle>
             <CardDescription>
               {showAdminSetup 
@@ -250,7 +252,7 @@ export default function RegisterPage() {
                       <Button 
                         onClick={handleClaimClientId}
                         disabled={claimClientIdMutation.isPending}
-                        className="w-full h-11 bg-blue-600 hover:bg-blue-700"
+                        className="w-full h-11 bg-primary hover:opacity-90"
                         data-testid="button-claim-client"
                       >
                         {claimClientIdMutation.isPending ? (
@@ -311,7 +313,7 @@ export default function RegisterPage() {
                       <Button 
                         onClick={handleClaim}
                         disabled={claimMutation.isPending}
-                        className="w-full h-11 bg-blue-600 hover:bg-blue-700"
+                        className="w-full h-11 bg-primary hover:opacity-90"
                         data-testid="button-claim"
                       >
                         {claimMutation.isPending ? (

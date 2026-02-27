@@ -161,6 +161,31 @@ export interface InviteClaimResponse {
   redirectTo?: string;
 }
 
+export interface OrganizationBranding {
+  displayName: string;
+  logoUrl: string | null;
+  primaryColor: string;
+  accentColor: string;
+  domain: string | null;
+}
+
+export function usePublicBranding() {
+  return useQuery<OrganizationBranding>({
+    queryKey: ["branding", "public"],
+    queryFn: () => fetchApi("/api/public/branding"),
+    staleTime: 1000 * 60 * 10,
+    retry: 1,
+  });
+}
+
+export function useBranding() {
+  return useQuery<OrganizationBranding>({
+    queryKey: ["branding", "auth"],
+    queryFn: () => fetchApi("/api/branding"),
+    staleTime: 1000 * 60 * 10,
+  });
+}
+
 export function useMe() {
   return useQuery<UserProfile>({
     queryKey: ["me"],
