@@ -190,15 +190,22 @@ const TENANT_SAFE_QUERY_CHECKLIST = [
 ];
 
 function requireOrganizationId(req: Request): string {
-  const organizationId = getUserId(req);
+  const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
   if (!organizationId) {
     throw new Error("organizationId is required for tenant-owned operations");
   }
   return organizationId;
 }
 
-// Middleware to check if user is admin
-async function isAdmin(req: Request, res: Response, next: NextFunction) {
+function getOrganizationId(req: Request): string {
+  return (req as any).organizationId || getActiveOrganizationId(req);
+}
+
+async function requireOrgMembership(
+  req: Request,
+  res: Response,
+  allowedRoles: Array<"owner" | "admin" | "client">,
+) {
   const userId = getUserId(req);
   if (!userId) {
     res.status(401).json({ message: "Unauthorized" });
@@ -215,7 +222,6 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
 
   (req as any).organizationId = organizationId;
   (req as any).organizationMembership = membership;
-
   return { userId, organizationId, membership };
 }
 
@@ -226,7 +232,7 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
 
   const profile = await storage.getUserProfile(memberContext.userId);
   (req as any).userProfile = profile;
-  (req as any).activeOrganizationId = profile.organizationId || "org-default";
+  (req as any).activeOrganizationId = profile?.organizationId || memberContext.organizationId;
   next();
 }
 
@@ -248,8 +254,7 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     return res.status(403).json({ message: "Forbidden: No active membership for this organization" });
   }
 
-  const organizationId = getActiveOrganizationId(req);
-  const membership = await storage.getOrganizationMembership(userId, organizationId);
+  const membership = orgMembership;
   (req as any).organizationId = organizationId;
   (req as any).organizationMembership = membership;
 
@@ -261,7 +266,7 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     if (!client) {
       return res.status(404).json({ message: "Client not found for impersonation" });
     }
-    (req as any).activeOrganizationId = profile.organizationId || "org-default";
+    (req as any).activeOrganizationId = profile?.organizationId || organizationId;
     (req as any).userProfile = {
       ...profile,
       organizationId,
@@ -282,7 +287,7 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   }
 
   (req as any).userProfile = profile;
-  (req as any).activeOrganizationId = profile.organizationId || "org-default";
+  (req as any).activeOrganizationId = organizationId;
   next();
 }
 
@@ -446,7 +451,7 @@ export async function registerRoutes(
         firstName: userClaims?.first_name,
         lastName: userClaims?.last_name,
         profile: profile || null,
-        membership: organizationMembership
+        organizationMembership: organizationMembership
           ? {
               organizationId,
               role: organizationMembership.role,
@@ -549,6 +554,7 @@ export async function registerRoutes(
         // Create/update global user profile
         await storage.upsertUserProfile({
           userId,
+          organizationId: code.organizationId,
           status: "active",
         });
 
@@ -564,7 +570,6 @@ export async function registerRoutes(
           userId,
           clientId: code.clientId,
           status: "active",
-          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -669,6 +674,7 @@ export async function registerRoutes(
         // Create/update global profile and org-scoped memberships
         await storage.upsertUserProfile({
           userId,
+          organizationId,
           status: "active",
         });
         await storage.upsertOrganizationMembership({
@@ -682,7 +688,6 @@ export async function registerRoutes(
           userId,
           clientId: normalizedId,
           status: "active",
-          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -856,7 +861,7 @@ export async function registerRoutes(
         const allBillingItems = await db
           .select()
           .from(clientBillingItems)
-          .where(eq(clientBillingItems.status, "active"));
+          .where(and(eq(clientBillingItems.status, "active"), eq(clientBillingItems.organizationId, getOrganizationId(req))));
 
         // Get additional data for each client
         const enrichedClients = await Promise.all(
@@ -1530,7 +1535,7 @@ export async function registerRoutes(
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.organizationId, settingsId));
+          .where(eq(invoiceSettings.organizationId, organizationId));
         
         if (existing) {
           await db
@@ -2522,7 +2527,7 @@ export async function registerRoutes(
         let [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.organizationId, settingsId));
+          .where(eq(invoiceSettings.organizationId, organizationId));
         
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
@@ -2538,6 +2543,7 @@ export async function registerRoutes(
         
         // Create invoice (standalone - no client link required)
         const invoice = await storage.createInvoice({
+          organizationId,
           billToName: req.body.billToName,
           billToEmail: req.body.billToEmail || null,
           billToAddress: req.body.billToAddress || null,
@@ -2562,7 +2568,7 @@ export async function registerRoutes(
           await db
             .update(invoiceSettings)
             .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
-            .where(eq(invoiceSettings.organizationId, settingsId));
+            .where(eq(invoiceSettings.organizationId, organizationId));
         } else {
           await db
             .insert(invoiceSettings)
@@ -2614,6 +2620,7 @@ export async function registerRoutes(
       try {
         const payment = await storage.createPayment({
           ...req.body,
+          organizationId: getOrganizationId(req),
           paidAt: req.body.paidAt || new Date(),
         });
 
@@ -2751,11 +2758,12 @@ export async function registerRoutes(
 
         // If setting as active agreement, clear any existing active agreements for this client
         if (isActiveAgreement === "true") {
-          await storage.clearActiveAgreementForClient(clientId);
+          await storage.clearActiveAgreementForClient(clientId, getOrganizationId(req));
         }
 
         // Save document metadata
         const document = await storage.createDocument({
+          organizationId: getOrganizationId(req),
           clientId,
           leaseId: leaseId || null,
           invoiceId: invoiceId || null,
@@ -2786,7 +2794,7 @@ export async function registerRoutes(
       try {
         const { documentId } = req.params;
         const isPreview = req.query.preview === "true";
-        const document = await storage.getDocument(documentId);
+        const document = await storage.getDocument(documentId, getOrganizationId(req));
 
         if (!document) {
           return res.status(404).json({ message: "Document not found" });
@@ -2823,7 +2831,7 @@ export async function registerRoutes(
         const { documentId } = req.params;
         const { isActive } = req.body;
 
-        const document = await storage.getDocument(documentId);
+        const document = await storage.getDocument(documentId, getOrganizationId(req));
         if (!document) {
           return res.status(404).json({ message: "Document not found" });
         }
@@ -2895,7 +2903,7 @@ export async function registerRoutes(
         const items = await db
           .select()
           .from(clientBillingItems)
-          .where(eq(clientBillingItems.clientId, clientId))
+          .where(and(eq(clientBillingItems.clientId, clientId), eq(clientBillingItems.organizationId, getOrganizationId(req))))
           .orderBy(desc(clientBillingItems.createdAt));
         res.json(items);
       } catch (error) {
@@ -2925,6 +2933,7 @@ export async function registerRoutes(
           .insert(clientBillingItems)
           .values({
             id: generateClientBillingItemId(),
+            organizationId: getOrganizationId(req),
             clientId,
             type: type || "other",
             title,
@@ -2984,7 +2993,7 @@ export async function registerRoutes(
         let query = db
           .select()
           .from(clientBillingItems)
-          .where(eq(clientBillingItems.status, "active"));
+          .where(and(eq(clientBillingItems.status, "active"), eq(clientBillingItems.organizationId, getOrganizationId(req))));
 
         if (startDate && endDate) {
           query = db
@@ -2993,6 +3002,7 @@ export async function registerRoutes(
             .where(
               and(
                 eq(clientBillingItems.status, "active"),
+                eq(clientBillingItems.organizationId, getOrganizationId(req)),
                 gte(clientBillingItems.dueDate, startDate as string),
                 lte(clientBillingItems.dueDate, endDate as string),
               ),
@@ -3167,7 +3177,7 @@ export async function registerRoutes(
         const allBillingItems = await db
           .select()
           .from(clientBillingItems)
-          .where(eq(clientBillingItems.status, "active"));
+          .where(and(eq(clientBillingItems.status, "active"), eq(clientBillingItems.organizationId, getOrganizationId(req))));
 
         // Get active clients only (exclude paused/inactive)
         const activeClients = clients.filter(c => c.status === "active" || c.status === "behind");
@@ -3542,6 +3552,7 @@ export async function registerRoutes(
         }
         
         const payment = await storage.createPayment({
+          organizationId: getOrganizationId(req),
           clientId: profile.clientId,
           amountCents,
           method,
@@ -3718,6 +3729,7 @@ export async function registerRoutes(
           : `Stripe Session: ${session.id}`;
         
         const payment = await storage.createPayment({
+          organizationId: getOrganizationId(req),
           clientId,
           amountCents,
           method: "stripe",
@@ -3885,7 +3897,7 @@ export async function registerRoutes(
         const { documentId } = req.params;
         const isPreview = req.query.preview === "true";
 
-        const document = await storage.getDocument(documentId);
+        const document = await storage.getDocument(documentId, getOrganizationId(req));
 
         if (!document) {
           return res.status(404).json({ message: "Document not found" });
@@ -4013,6 +4025,7 @@ export async function registerRoutes(
         // Keep users_profile bridge for legacy client linkage and routing.
         await storage.upsertUserProfile({
           userId: userId!,
+          organizationId,
           status: "active",
         });
         await storage.upsertOrganizationMembership({
@@ -4020,7 +4033,6 @@ export async function registerRoutes(
           userId: userId!,
           role: "admin",
           status: "active",
-          organizationId: getActiveOrganizationId(req),
         });
 
         console.log(`[SECURITY] Owner bootstrapped successfully. User: ${userId}`);
@@ -5806,6 +5818,7 @@ export async function registerRoutes(
         // Create payment record - use session.id as fallback if payment_intent is null
         const amountCents = session.amount_total || 0;
         const payment = await storage.createPayment({
+          organizationId: getOrganizationId(req),
           clientId,
           amountCents,
           method: "stripe",
@@ -5851,6 +5864,7 @@ export async function registerRoutes(
 
         // Create payment record
         const payment = await storage.createPayment({
+          organizationId: getOrganizationId(req),
           clientId,
           amountCents: paymentIntent.amount,
           method: "stripe",

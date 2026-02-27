@@ -16,7 +16,6 @@ import {
 async function seed() {
   const organizationId = "org-default";
   console.log("Seeding database...");
-  const organizationId = "org-default";
   await db.insert(organizations).values({ organizationId, name: "Default Organization", slug: "default" }).onConflictDoNothing();
 
   // Create sample clients
