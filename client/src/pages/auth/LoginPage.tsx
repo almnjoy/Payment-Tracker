@@ -15,7 +15,7 @@ export default function LoginPage() {
       fetch("/api/me", { credentials: "include" })
         .then(res => res.json())
         .then(data => {
-          if (data.profile?.role === "admin") {
+          if (data.effectiveRole === "admin" || data.profile?.role === "admin") {
             navigate("/admin/dashboard");
           } else if (data.profile?.role === "client") {
             navigate("/client/dashboard");

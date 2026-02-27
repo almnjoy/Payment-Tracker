@@ -40,6 +40,35 @@ export type InsertUsersProfile = z.infer<typeof insertUsersProfileSchema>;
 export type UsersProfile = typeof usersProfile.$inferSelect;
 
 // ============================================
+// ORGANIZATION MEMBERSHIPS (Org-scoped authorization)
+// ============================================
+export const organizationMemberships = pgTable(
+  "organization_memberships",
+  {
+    id: varchar("id").primaryKey(),
+    userId: varchar("user_id").notNull(),
+    organizationId: varchar("organization_id").notNull(),
+    role: text("role").notNull().default("client"), // owner | admin | client
+    status: text("status").notNull().default("active"), // active | inactive
+    invitedByUserId: varchar("invited_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userOrgIdx: index("organization_memberships_user_org_idx").on(table.userId, table.organizationId),
+    organizationIdx: index("organization_memberships_org_idx").on(table.organizationId),
+  }),
+);
+
+export const insertOrganizationMembershipSchema = createInsertSchema(organizationMemberships).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertOrganizationMembership = z.infer<typeof insertOrganizationMembershipSchema>;
+export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
+
+// ============================================
 // CLIENTS (Business records)
 // ============================================
 export const clients = pgTable("clients", {

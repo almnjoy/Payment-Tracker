@@ -12,6 +12,7 @@ import {
   paymentSettings,
   automationSettings,
   clientBillingItems,
+  organizationMemberships,
   generateClientId,
   generateLeaseId,
   generateInvoiceId,
@@ -19,6 +20,8 @@ import {
   generateDocumentId,
   generateAccountId,
   generateMagicNumber,
+  type OrganizationMembership,
+  type InsertOrganizationMembership,
   type UsersProfile,
   type InsertUsersProfile,
   type Client,
@@ -40,6 +43,9 @@ import {
   type AutomationSettings,
   type InsertAutomationSettings,
 } from "@shared/schema";
+
+
+export type MembershipRole = "owner" | "admin" | "client";
 
 export interface IStorage {
   // Users Profile
@@ -107,6 +113,15 @@ export interface IStorage {
   clearActiveAgreementForClient(clientId: string): Promise<void>;
   getActiveAgreementForClient(clientId: string): Promise<Document | undefined>;
   
+
+  // Organization memberships
+  getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined>;
+  getActiveMembershipsByOrganization(organizationId: string): Promise<OrganizationMembership[]>;
+  getActiveMembershipsByUser(userId: string): Promise<OrganizationMembership[]>;
+  createOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership>;
+  updateOrganizationMembershipRole(userId: string, organizationId: string, role: MembershipRole): Promise<OrganizationMembership | undefined>;
+  updateOrganizationMembershipStatus(userId: string, organizationId: string, status: "active" | "inactive"): Promise<OrganizationMembership | undefined>;
+
   // Admin utilities
   hasExistingAdmin(): Promise<boolean>;
 }
@@ -472,14 +487,69 @@ export class DatabaseStorage implements IStorage {
     return doc;
   }
 
+
+  // ============================================
+  // ORGANIZATION MEMBERSHIPS
+  // ============================================
+  async getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.organizationId, organizationId)))
+      .limit(1);
+    return membership;
+  }
+
+  async getActiveMembershipsByOrganization(organizationId: string): Promise<OrganizationMembership[]> {
+    return db
+      .select()
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.status, "active")))
+      .orderBy(desc(organizationMemberships.createdAt));
+  }
+
+  async getActiveMembershipsByUser(userId: string): Promise<OrganizationMembership[]> {
+    return db
+      .select()
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.status, "active")))
+      .orderBy(desc(organizationMemberships.createdAt));
+  }
+
+  async createOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership> {
+    const [membership] = await db
+      .insert(organizationMemberships)
+      .values({ ...data, id: `MEM-${crypto.randomUUID()}` })
+      .returning();
+    return membership;
+  }
+
+  async updateOrganizationMembershipRole(userId: string, organizationId: string, role: MembershipRole): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .update(organizationMemberships)
+      .set({ role, updatedAt: new Date() })
+      .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.organizationId, organizationId)))
+      .returning();
+    return membership;
+  }
+
+  async updateOrganizationMembershipStatus(userId: string, organizationId: string, status: "active" | "inactive"): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .update(organizationMemberships)
+      .set({ status, updatedAt: new Date() })
+      .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.organizationId, organizationId)))
+      .returning();
+    return membership;
+  }
+
   // ============================================
   // ADMIN UTILITIES
   // ============================================
   async hasExistingAdmin(): Promise<boolean> {
     const [admin] = await db
       .select()
-      .from(usersProfile)
-      .where(eq(usersProfile.role, "admin"))
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.status, "active"), sql`${organizationMemberships.role} in ('owner', 'admin')`))
       .limit(1);
     return !!admin;
   }
