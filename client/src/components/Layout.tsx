@@ -14,7 +14,8 @@ import {
   Bell,
   Wallet,
   TrendingUp,
-  PieChart
+  PieChart,
+  UserCog
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -76,6 +77,7 @@ export function Layout({ children, role, clientName }: LayoutProps) {
       label: "System",
       items: [
         { icon: Settings, label: "Settings", href: "/admin/settings" },
+        { icon: UserCog, label: "Admin User Management", href: "/admin/user-management" },
       ]
     }
   ];

@@ -187,16 +187,30 @@ function requireOrganizationId(req: Request): string {
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
   if (!userId) {
-    return res.status(401).json({ message: "Unauthorized" });
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
   }
 
-  const profile = await storage.getUserProfile(userId);
-  if (!profile || profile.role !== "admin") {
-    return res
-      .status(403)
-      .json({ message: "Forbidden: Admin access required" });
+  const organizationId = getActiveOrganizationId(req);
+  const membership = await storage.getOrganizationMembership(userId, organizationId);
+
+  if (!membership || membership.status !== "active" || !allowedRoles.includes(membership.role as any)) {
+    res.status(403).json({ message: "Forbidden: Organization membership required" });
+    return null;
   }
 
+  (req as any).organizationId = organizationId;
+  (req as any).organizationMembership = membership;
+
+  return { userId, organizationId, membership };
+}
+
+// Middleware to check if user is admin
+async function isAdmin(req: Request, res: Response, next: NextFunction) {
+  const memberContext = await requireOrgMembership(req, res, ["owner", "admin"]);
+  if (!memberContext) return;
+
+  const profile = await storage.getUserProfile(memberContext.userId);
   (req as any).userProfile = profile;
   (req as any).activeOrganizationId = profile.organizationId || "org-default";
   next();
@@ -216,9 +230,14 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
       .json({ message: "Forbidden: No user profile found" });
   }
 
+  const organizationId = getActiveOrganizationId(req);
+  const membership = await storage.getOrganizationMembership(userId, organizationId);
+  (req as any).organizationId = organizationId;
+  (req as any).organizationMembership = membership;
+
   // Check for admin impersonation
   const asClientId = req.query.asClientId as string | undefined;
-  if (asClientId && profile.role === "admin") {
+  if (asClientId && ["owner", "admin"].includes((req as any).organizationMembership?.role || profile.role)) {
     // Admin impersonating a client
     const client = await storage.getClient(asClientId, getActiveOrganizationId(req));
     if (!client) {
@@ -237,7 +256,7 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
   }
 
   // Client role required (admins can also access for impersonation/support purposes)
-  if (profile.role !== "client" && profile.role !== "admin") {
+  if (profile.role !== "client" && !["owner", "admin"].includes((membership?.role || "") as string)) {
     return res
       .status(403)
       .json({ message: "Forbidden: Client access required" });
@@ -375,7 +394,7 @@ export async function registerRoutes(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Organization-Id"],
   }));
 
   // ============================================
@@ -393,6 +412,12 @@ export async function registerRoutes(
       const profile = await storage.getUserProfile(userId);
       const userClaims = (req.user as any)?.claims;
 
+      const memberships = await storage.getActiveMembershipsByUser(userId);
+      const activeMembership = memberships[0] || null;
+      const effectiveRole = activeMembership && ["owner", "admin"].includes(activeMembership.role)
+        ? "admin"
+        : profile?.role || null;
+
       res.json({
         userId,
         email: userClaims?.email,
@@ -400,6 +425,9 @@ export async function registerRoutes(
         lastName: userClaims?.last_name,
         profile: profile || null,
         hasProfile: !!profile,
+        activeOrganizationId: activeMembership?.organizationId || null,
+        membership: activeMembership,
+        effectiveRole,
       });
     } catch (error) {
       console.error("Error fetching user profile:", error);
@@ -614,6 +642,149 @@ export async function registerRoutes(
       } catch (error) {
         console.error("Error claiming client ID:", error);
         res.status(500).json({ success: false, message: "Server error" });
+      }
+    },
+  );
+
+  // ============================================
+  // ADMIN: USER MANAGEMENT (Organization memberships)
+  // ============================================
+
+  app.get(
+    "/api/admin/memberships/admins",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const memberships = await storage.getActiveMembershipsByOrganization(organizationId);
+        const adminMemberships = memberships.filter((m) => ["owner", "admin"].includes(m.role));
+
+        const withProfiles = await Promise.all(
+          adminMemberships.map(async (membership) => {
+            const profile = await storage.getUserProfile(membership.userId);
+            return {
+              ...membership,
+              profile: profile || null,
+            };
+          }),
+        );
+
+        res.json(withProfiles);
+      } catch (error) {
+        console.error("Error listing admin memberships:", error);
+        res.status(500).json({ message: "Failed to list admin memberships" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/memberships/invite",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const actorMembership = (req as any).organizationMembership;
+        const actorId = getUserId(req)!;
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const parsed = z.object({
+          userId: z.string().min(1),
+          role: z.enum(["admin", "client"]).default("admin"),
+        }).safeParse(req.body);
+
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid payload", errors: parsed.error.issues });
+        }
+
+        if (parsed.data.role === "admin" && !["owner", "admin"].includes(actorMembership?.role)) {
+          return res.status(403).json({ message: "Only admins can invite admin members" });
+        }
+
+        const existing = await storage.getOrganizationMembership(parsed.data.userId, organizationId);
+        if (existing) {
+          await storage.updateOrganizationMembershipRole(parsed.data.userId, organizationId, parsed.data.role as any);
+          const reactivated = await storage.updateOrganizationMembershipStatus(parsed.data.userId, organizationId, "active");
+          return res.json(reactivated);
+        }
+
+        const created = await storage.createOrganizationMembership({
+          userId: parsed.data.userId,
+          organizationId,
+          role: parsed.data.role,
+          status: "active",
+          invitedByUserId: actorId,
+        });
+
+        res.status(201).json(created);
+      } catch (error) {
+        console.error("Error inviting membership:", error);
+        res.status(500).json({ message: "Failed to invite membership" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/memberships/:userId/role",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const actorMembership = (req as any).organizationMembership;
+        const actorId = getUserId(req)!;
+        const targetUserId = req.params.userId;
+        const parsed = z.object({ role: z.enum(["owner", "admin", "client"]) }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid role" });
+        }
+
+        if (parsed.data.role === "owner" && actorMembership?.role !== "owner") {
+          return res.status(403).json({ message: "Only owners can assign owner role" });
+        }
+
+        if (targetUserId === actorId && parsed.data.role === "client") {
+          return res.status(400).json({ message: "Cannot demote your own admin access to client" });
+        }
+
+        const membership = await storage.updateOrganizationMembershipRole(targetUserId, organizationId, parsed.data.role);
+        if (!membership) {
+          return res.status(404).json({ message: "Membership not found" });
+        }
+
+        res.json(membership);
+      } catch (error) {
+        console.error("Error updating membership role:", error);
+        res.status(500).json({ message: "Failed to update membership role" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/memberships/:userId/status",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const actorId = getUserId(req)!;
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const parsed = z.object({ status: z.enum(["active", "inactive"]) }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid status" });
+        }
+
+        if (req.params.userId === actorId && parsed.data.status === "inactive") {
+          return res.status(400).json({ message: "Cannot deactivate your own membership" });
+        }
+
+        const membership = await storage.updateOrganizationMembershipStatus(req.params.userId, organizationId, parsed.data.status);
+        if (!membership) {
+          return res.status(404).json({ message: "Membership not found" });
+        }
+
+        res.json(membership);
+      } catch (error) {
+        console.error("Error updating membership status:", error);
+        res.status(500).json({ message: "Failed to update membership status" });
       }
     },
   );
@@ -3776,8 +3947,24 @@ export async function registerRoutes(
           return res.status(403).json({ message: "Invalid bootstrap secret" });
         }
 
-        // Create admin profile
-        const profile = await storage.upsertUserProfile({
+        const organizationId = DEFAULT_ORGANIZATION_ID;
+
+        const existingMembership = await storage.getOrganizationMembership(userId!, organizationId);
+        if (!existingMembership) {
+          await storage.createOrganizationMembership({
+            userId: userId!,
+            organizationId,
+            role: "owner",
+            status: "active",
+            invitedByUserId: userId!,
+          });
+        } else {
+          await storage.updateOrganizationMembershipRole(userId!, organizationId, "owner");
+          await storage.updateOrganizationMembershipStatus(userId!, organizationId, "active");
+        }
+
+        // Keep users_profile bridge for legacy client linkage and routing.
+        await storage.upsertUserProfile({
           userId: userId!,
           role: "admin",
           clientId: null,
@@ -3785,8 +3972,8 @@ export async function registerRoutes(
           organizationId: getActiveOrganizationId(req),
         });
 
-        console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
-        res.json({ success: true, profile });
+        console.log(`[SECURITY] Owner bootstrapped successfully. User: ${userId}`);
+        res.json({ success: true, role: "owner", organizationId });
       } catch (error) {
         console.error("Error bootstrapping admin:", error);
         res.status(500).json({ message: "Failed to bootstrap admin" });
@@ -3808,12 +3995,13 @@ export async function registerRoutes(
         
         // Get current admin profile
         const adminProfile = (req as any).userProfile;
+        const adminMembership = (req as any).organizationMembership;
         
         // Test 1: Verify admin middleware works
         results.push({
           test: "Admin role enforcement",
-          status: adminProfile?.role === "admin" ? "pass" : "fail",
-          details: `Current user role: ${adminProfile?.role || "unknown"}`,
+          status: ["owner", "admin"].includes(adminMembership?.role) ? "pass" : "fail",
+          details: `Current org role: ${adminMembership?.role || "unknown"}, profile role: ${adminProfile?.role || "unknown"}`,
         });
         
         // Test 2: Verify client routes require linkedClientId (not browser-provided)

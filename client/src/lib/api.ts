@@ -27,6 +27,14 @@ export interface UserProfile {
   email: string | null;
   firstName: string | null;
   lastName: string | null;
+  effectiveRole?: "admin" | "client" | null;
+  activeOrganizationId?: string | null;
+  membership?: {
+    userId: string;
+    organizationId: string;
+    role: string;
+    status: string;
+  } | null;
   profile: {
     userId: string;
     role: string;
@@ -184,6 +192,27 @@ export function useMe() {
     queryFn: () => fetchApi("/api/me"),
     retry: false,
     staleTime: 1000 * 60 * 5,
+  });
+}
+
+
+
+export interface OrganizationMembership {
+  id: string;
+  userId: string;
+  organizationId: string;
+  role: "owner" | "admin" | "client";
+  status: "active" | "inactive";
+  invitedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  profile?: UserProfile["profile"];
+}
+
+export function useAdminMemberships() {
+  return useQuery<OrganizationMembership[]>({
+    queryKey: ["admin", "memberships", "admins"],
+    queryFn: () => fetchApi("/api/admin/memberships/admins"),
   });
 }
 

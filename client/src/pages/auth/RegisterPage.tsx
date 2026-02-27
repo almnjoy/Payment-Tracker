@@ -53,7 +53,7 @@ export default function RegisterPage() {
       fetch("/api/me", { credentials: "include" })
         .then(res => res.json())
         .then(data => {
-          if (data.profile?.role === "admin") {
+          if (data.effectiveRole === "admin" || data.profile?.role === "admin") {
             navigate("/admin/dashboard");
           } else if (data.profile?.role === "client") {
             navigate("/client/dashboard");
@@ -128,7 +128,7 @@ export default function RegisterPage() {
     
     try {
       await bootstrapMutation.mutateAsync({ secretKey: adminSecret });
-      toast({ title: "Success!", description: "Admin account created." });
+      toast({ title: "Success!", description: "Owner account created for initial setup." });
       navigate("/admin/dashboard");
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -163,7 +163,7 @@ export default function RegisterPage() {
             </CardTitle>
             <CardDescription>
               {showAdminSetup 
-                ? "Enter the admin bootstrap secret to set up your admin account"
+                ? "Enter the bootstrap secret to create the initial organization owner"
                 : "Link your account using your Client ID or invite code"}
             </CardDescription>
           </CardHeader>

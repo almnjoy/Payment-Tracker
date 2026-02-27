@@ -181,6 +181,15 @@ export interface IStorage {
   setTransactionRecurringGroupForOrganization(organizationId: string, transactionIds: string[], recurringGroupId: string | null): Promise<void>;
   updateTransactionRecurrenceForOrganization(organizationId: string, transactionId: string, recurrence: string | null): Promise<void>;
   
+
+  // Organization memberships
+  getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined>;
+  getActiveMembershipsByOrganization(organizationId: string): Promise<OrganizationMembership[]>;
+  getActiveMembershipsByUser(userId: string): Promise<OrganizationMembership[]>;
+  createOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership>;
+  updateOrganizationMembershipRole(userId: string, organizationId: string, role: MembershipRole): Promise<OrganizationMembership | undefined>;
+  updateOrganizationMembershipStatus(userId: string, organizationId: string, status: "active" | "inactive"): Promise<OrganizationMembership | undefined>;
+
   // Admin utilities
   hasExistingAdmin(): Promise<boolean>;
 }
@@ -887,8 +896,8 @@ export class DatabaseStorage implements IStorage {
   async hasExistingAdmin(): Promise<boolean> {
     const [admin] = await db
       .select()
-      .from(usersProfile)
-      .where(eq(usersProfile.role, "admin"))
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.status, "active"), sql`${organizationMemberships.role} in ('owner', 'admin')`))
       .limit(1);
     return !!admin;
   }
