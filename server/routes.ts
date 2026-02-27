@@ -26,15 +26,12 @@ import {
   clients as clientsTable,
   invoices,
   invoiceSettings,
+  organizationSettings,
   paymentSettings,
   payments,
   documents,
-  generatePlaidItemId,
-  generatePlaidAccountRowId,
-  generatePlaidTransactionRowId,
-  generateFinanceEntryId,
+  usersProfile,
   generateClientBillingItemId,
-  generateRecurringGroupId,
   generatePaymentId,
   formatInvoiceNumber,
   insertFinanceEntrySchema,
@@ -152,32 +149,84 @@ function sanitizeForLog(obj: any): any {
   return sanitized;
 }
 
+async function getBrandingForRequest(req: Request) {
+  const requestHost = (req.hostname || "").toLowerCase();
+  const [domainMatch] = requestHost
+    ? await db
+        .select()
+        .from(organizationSettings)
+        .where(eq(organizationSettings.domain, requestHost))
+        .limit(1)
+    : [];
+
+  const [defaultSettings] = domainMatch
+    ? [domainMatch]
+    : await db
+        .select()
+        .from(organizationSettings)
+        .where(eq(organizationSettings.id, "default"))
+        .limit(1);
+
+  return {
+    displayName: defaultSettings?.displayName || "Quick IT Projects",
+    logoUrl: defaultSettings?.logoUrl || null,
+    primaryColor: defaultSettings?.primaryColor || "#007BFF",
+    accentColor: defaultSettings?.accentColor || "#FF6A00",
+    domain: defaultSettings?.domain || null,
+  };
+}
+
 // Helper to get user ID from request
 function getUserId(req: Request): string | undefined {
   return (req.user as any)?.claims?.sub;
+}
+
+// Tenant-safe query checklist (applies to admin + client route handlers)
+const TENANT_SAFE_QUERY_CHECKLIST = [
+  "Resolve organizationId from authenticated identity (never from request body/query).",
+  "Require organizationId in storage-layer write signatures for tenant-owned tables.",
+  "Scope every tenant-owned query by organizationId/adminUserId.",
+  "Reject cross-tenant IDs before write/delete mutations.",
+];
+
+function requireOrganizationId(req: Request): string {
+  const organizationId = getUserId(req);
+  if (!organizationId) {
+    throw new Error("organizationId is required for tenant-owned operations");
+  }
+  return organizationId;
 }
 
 // Middleware to check if user is admin
 async function isAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = getUserId(req);
   if (!userId) {
-    return res.status(401).json({ message: "Unauthorized" });
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
   }
 
   const organizationId = getActiveOrganizationId(req);
-  const profile = await storage.getUserProfile(userId);
   const membership = await storage.getOrganizationMembership(userId, organizationId);
 
-  if (!profile || profile.status !== "active" || !membership || membership.status !== "active" || membership.role !== "admin") {
-    return res.status(403).json({ message: "Forbidden: Admin membership required for active organization" });
+  if (!membership || membership.status !== "active" || !allowedRoles.includes(membership.role as any)) {
+    res.status(403).json({ message: "Forbidden: Organization membership required" });
+    return null;
   }
 
-  (req as any).userProfile = {
-    ...profile,
-    organizationId,
-    role: membership.role,
-  };
+  (req as any).organizationId = organizationId;
   (req as any).organizationMembership = membership;
+
+  return { userId, organizationId, membership };
+}
+
+// Middleware to check if user is admin
+async function isAdmin(req: Request, res: Response, next: NextFunction) {
+  const memberContext = await requireOrgMembership(req, res, ["owner", "admin"]);
+  if (!memberContext) return;
+
+  const profile = await storage.getUserProfile(memberContext.userId);
+  (req as any).userProfile = profile;
+  (req as any).activeOrganizationId = profile.organizationId || "org-default";
   next();
 }
 
@@ -199,18 +248,20 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     return res.status(403).json({ message: "Forbidden: No active membership for this organization" });
   }
 
-  const asClientId = req.query.asClientId as string | undefined;
-  if (asClientId && orgMembership.role === "admin") {
-    const targetClientMembership = await storage.findClientMembership(organizationId, asClientId);
-    if (!targetClientMembership) {
-      return res.status(404).json({ message: "Client not found in active organization for impersonation" });
-    }
+  const organizationId = getActiveOrganizationId(req);
+  const membership = await storage.getOrganizationMembership(userId, organizationId);
+  (req as any).organizationId = organizationId;
+  (req as any).organizationMembership = membership;
 
-    const client = await storage.getClient(asClientId);
+  // Check for admin impersonation
+  const asClientId = req.query.asClientId as string | undefined;
+  if (asClientId && ["owner", "admin"].includes((req as any).organizationMembership?.role || profile.role)) {
+    // Admin impersonating a client
+    const client = await storage.getClient(asClientId, getActiveOrganizationId(req));
     if (!client) {
       return res.status(404).json({ message: "Client not found for impersonation" });
     }
-
+    (req as any).activeOrganizationId = profile.organizationId || "org-default";
     (req as any).userProfile = {
       ...profile,
       organizationId,
@@ -223,19 +274,15 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
     return next();
   }
 
-  if (orgMembership.role !== "client" && orgMembership.role !== "admin") {
-    return res.status(403).json({ message: "Forbidden: Client access required" });
+  // Client role required (admins can also access for impersonation/support purposes)
+  if (profile.role !== "client" && !["owner", "admin"].includes((membership?.role || "") as string)) {
+    return res
+      .status(403)
+      .json({ message: "Forbidden: Client access required" });
   }
 
-  const clientMembership = await storage.getClientMembershipForUser(userId, organizationId);
-
-  (req as any).userProfile = {
-    ...profile,
-    organizationId,
-    role: orgMembership.role,
-    clientId: clientMembership?.clientId ?? null,
-  };
-  (req as any).organizationMembership = orgMembership;
+  (req as any).userProfile = profile;
+  (req as any).activeOrganizationId = profile.organizationId || "org-default";
   next();
 }
 
@@ -243,7 +290,8 @@ async function isClient(req: Request, res: Response, next: NextFunction) {
 async function sendPaymentReceivedWebhook(
   payment: { paymentId: string; clientId: string; amountCents: number; method: string; status: string; createdAt: Date | null; webhookSentAt?: Date | null },
   baseUrl: string,
-  executionMode: "test" | "live" = "live"
+  executionMode: "test" | "live" = "live",
+  organizationId: string = "org-default"
 ): Promise<{ sent: boolean; reason?: string }> {
   try {
     // 1. Idempotency check - don't send if already sent
@@ -253,7 +301,7 @@ async function sendPaymentReceivedWebhook(
     }
 
     // 2. Get automation settings
-    const settings = await storage.getAutomationSettings();
+    const settings = await storage.getAutomationSettings(organizationId);
     
     // 3. Check global toggle
     if (!settings?.paymentReceivedAlertsGlobalEnabled) {
@@ -273,7 +321,7 @@ async function sendPaymentReceivedWebhook(
     }
 
     // 5. Get client info and check client notification toggle
-    const client = await storage.getClient(payment.clientId);
+    const client = await storage.getClient(payment.clientId, organizationId);
     if (!client) {
       console.log(`[PaymentWebhook] Skipping - client ${payment.clientId} not found`);
       return { sent: false, reason: "client_not_found" };
@@ -347,6 +395,7 @@ export async function registerRoutes(
   // CORS CONFIGURATION
   // ============================================
   const allowedOrigins = getAllowedOrigins();
+  console.info("[TenantSafe] Checklist:", TENANT_SAFE_QUERY_CHECKLIST.join(" | "));
   app.use(cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (mobile apps, curl, etc)
@@ -364,7 +413,7 @@ export async function registerRoutes(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Organization-Id"],
   }));
 
   // ============================================
@@ -385,6 +434,12 @@ export async function registerRoutes(
       const organizationMembership = await storage.getOrganizationMembership(userId, organizationId);
       const clientMembership = await storage.getClientMembershipForUser(userId, organizationId);
 
+      const memberships = await storage.getActiveMembershipsByUser(userId);
+      const activeMembership = memberships[0] || null;
+      const effectiveRole = activeMembership && ["owner", "admin"].includes(activeMembership.role)
+        ? "admin"
+        : profile?.role || null;
+
       res.json({
         userId,
         email: userClaims?.email,
@@ -400,6 +455,9 @@ export async function registerRoutes(
             }
           : null,
         hasProfile: !!profile,
+        activeOrganizationId: activeMembership?.organizationId || null,
+        membership: activeMembership,
+        effectiveRole,
       });
     } catch (error) {
       console.error("Error fetching user profile:", error);
@@ -506,6 +564,7 @@ export async function registerRoutes(
           userId,
           clientId: code.clientId,
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -623,6 +682,7 @@ export async function registerRoutes(
           userId,
           clientId: normalizedId,
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
         res.json({
@@ -637,6 +697,149 @@ export async function registerRoutes(
   );
 
   // ============================================
+  // ADMIN: USER MANAGEMENT (Organization memberships)
+  // ============================================
+
+  app.get(
+    "/api/admin/memberships/admins",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const memberships = await storage.getActiveMembershipsByOrganization(organizationId);
+        const adminMemberships = memberships.filter((m) => ["owner", "admin"].includes(m.role));
+
+        const withProfiles = await Promise.all(
+          adminMemberships.map(async (membership) => {
+            const profile = await storage.getUserProfile(membership.userId);
+            return {
+              ...membership,
+              profile: profile || null,
+            };
+          }),
+        );
+
+        res.json(withProfiles);
+      } catch (error) {
+        console.error("Error listing admin memberships:", error);
+        res.status(500).json({ message: "Failed to list admin memberships" });
+      }
+    },
+  );
+
+  app.post(
+    "/api/admin/memberships/invite",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const actorMembership = (req as any).organizationMembership;
+        const actorId = getUserId(req)!;
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const parsed = z.object({
+          userId: z.string().min(1),
+          role: z.enum(["admin", "client"]).default("admin"),
+        }).safeParse(req.body);
+
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid payload", errors: parsed.error.issues });
+        }
+
+        if (parsed.data.role === "admin" && !["owner", "admin"].includes(actorMembership?.role)) {
+          return res.status(403).json({ message: "Only admins can invite admin members" });
+        }
+
+        const existing = await storage.getOrganizationMembership(parsed.data.userId, organizationId);
+        if (existing) {
+          await storage.updateOrganizationMembershipRole(parsed.data.userId, organizationId, parsed.data.role as any);
+          const reactivated = await storage.updateOrganizationMembershipStatus(parsed.data.userId, organizationId, "active");
+          return res.json(reactivated);
+        }
+
+        const created = await storage.createOrganizationMembership({
+          userId: parsed.data.userId,
+          organizationId,
+          role: parsed.data.role,
+          status: "active",
+          invitedByUserId: actorId,
+        });
+
+        res.status(201).json(created);
+      } catch (error) {
+        console.error("Error inviting membership:", error);
+        res.status(500).json({ message: "Failed to invite membership" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/memberships/:userId/role",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const actorMembership = (req as any).organizationMembership;
+        const actorId = getUserId(req)!;
+        const targetUserId = req.params.userId;
+        const parsed = z.object({ role: z.enum(["owner", "admin", "client"]) }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid role" });
+        }
+
+        if (parsed.data.role === "owner" && actorMembership?.role !== "owner") {
+          return res.status(403).json({ message: "Only owners can assign owner role" });
+        }
+
+        if (targetUserId === actorId && parsed.data.role === "client") {
+          return res.status(400).json({ message: "Cannot demote your own admin access to client" });
+        }
+
+        const membership = await storage.updateOrganizationMembershipRole(targetUserId, organizationId, parsed.data.role);
+        if (!membership) {
+          return res.status(404).json({ message: "Membership not found" });
+        }
+
+        res.json(membership);
+      } catch (error) {
+        console.error("Error updating membership role:", error);
+        res.status(500).json({ message: "Failed to update membership role" });
+      }
+    },
+  );
+
+  app.patch(
+    "/api/admin/memberships/:userId/status",
+    isAuthenticated,
+    isAdmin,
+    async (req: Request, res: Response) => {
+      try {
+        const actorId = getUserId(req)!;
+        const organizationId = (req as any).organizationId || getActiveOrganizationId(req);
+        const parsed = z.object({ status: z.enum(["active", "inactive"]) }).safeParse(req.body);
+        if (!parsed.success) {
+          return res.status(400).json({ message: "Invalid status" });
+        }
+
+        if (req.params.userId === actorId && parsed.data.status === "inactive") {
+          return res.status(400).json({ message: "Cannot deactivate your own membership" });
+        }
+
+        const membership = await storage.updateOrganizationMembershipStatus(req.params.userId, organizationId, parsed.data.status);
+        if (!membership) {
+          return res.status(404).json({ message: "Membership not found" });
+        }
+
+        res.json(membership);
+      } catch (error) {
+        console.error("Error updating membership status:", error);
+        res.status(500).json({ message: "Failed to update membership status" });
+      }
+    },
+  );
+
+  // ============================================
   // ADMIN: CLIENTS
   // ============================================
 
@@ -646,7 +849,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const clients = await storage.getAllClients();
+        const clients = await storage.getAllClients(getActiveOrganizationId(req));
         const now = new Date();
 
         // Get all active billing items
@@ -808,7 +1011,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const client = await storage.createClient(req.body);
+        const client = await storage.createClient({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(client);
       } catch (error) {
         console.error("Error creating client:", error);
@@ -902,7 +1105,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const lease = await storage.createLease(req.body);
+        const lease = await storage.createLease({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(lease);
       } catch (error) {
         console.error("Error creating lease:", error);
@@ -928,7 +1131,7 @@ export async function registerRoutes(
           );
           return res.json(invoices);
         }
-        const invoices = await storage.getAllInvoices();
+        const invoices = await storage.getAllInvoices(getActiveOrganizationId(req));
         res.json(invoices);
       } catch (error) {
         console.error("Error fetching invoices:", error);
@@ -943,7 +1146,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const invoice = await storage.createInvoice(req.body);
+        const invoice = await storage.createInvoice({ ...req.body, organizationId: getActiveOrganizationId(req) });
         res.status(201).json(invoice);
       } catch (error) {
         console.error("Error creating invoice:", error);
@@ -987,6 +1190,8 @@ export async function registerRoutes(
               .where(eq(invoiceSettings.adminUserId, userId!));
             
             // Generate PDF buffer using billTo fields (not client)
+            const branding = await getBrandingForRequest(req);
+            const invoiceHeaderName = settings?.businessName || branding.displayName;
             const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
               const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
               const chunks: Buffer[] = [];
@@ -1013,8 +1218,8 @@ export async function registerRoutes(
               
               // Business info (left side)
               let yPos = margin;
-              if (settings?.businessName) {
-                doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+              if (invoiceHeaderName) {
+                doc.fontSize(14).font('Helvetica-Bold').text(invoiceHeaderName, margin, yPos);
                 yPos += 20;
               }
               if (settings?.businessAddress) {
@@ -1260,14 +1465,14 @@ export async function registerRoutes(
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         if (existing) {
           // Update existing
           const [updated] = await db
             .update(invoiceSettings)
             .set({ ...req.body, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId))
+            .where(eq(invoiceSettings.organizationId, settingsId))
             .returning();
           return res.json(updated);
         }
@@ -1327,13 +1532,13 @@ export async function registerRoutes(
         const [existing] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         if (existing) {
           await db
             .update(invoiceSettings)
             .set({ businessLogo: publicUrl, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, settingsId));
         } else {
           await db
             .insert(invoiceSettings)
@@ -1381,6 +1586,68 @@ export async function registerRoutes(
   );
 
   // ============================================
+  // BRANDING / ORGANIZATION SETTINGS
+  // ============================================
+
+  app.get("/api/public/branding", async (req: Request, res: Response) => {
+    try {
+      const branding = await getBrandingForRequest(req);
+      res.json(branding);
+    } catch (error) {
+      console.error("Error fetching public branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  app.get("/api/branding", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const branding = await getBrandingForRequest(req);
+      res.json(branding);
+    } catch (error) {
+      console.error("Error fetching branding:", error);
+      res.status(500).json({ message: "Failed to fetch branding" });
+    }
+  });
+
+  app.get("/api/admin/organization-settings", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const settings = await storage.getOrganizationSettings();
+      if (!settings) {
+        return res.json({
+          id: null,
+          displayName: "Quick IT Projects",
+          logoUrl: null,
+          primaryColor: "#007BFF",
+          accentColor: "#FF6A00",
+          domain: null,
+        });
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Error fetching organization settings:", error);
+      res.status(500).json({ message: "Failed to fetch organization settings" });
+    }
+  });
+
+  app.put("/api/admin/organization-settings", isAuthenticated, isAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const settings = await storage.upsertOrganizationSettings({
+        adminUserId: userId!,
+        displayName: req.body.displayName || "Quick IT Projects",
+        logoUrl: req.body.logoUrl || null,
+        primaryColor: req.body.primaryColor || "#007BFF",
+        accentColor: req.body.accentColor || "#FF6A00",
+        domain: req.body.domain || null,
+      });
+      res.json(settings);
+    } catch (error) {
+      console.error("Error updating organization settings:", error);
+      res.status(500).json({ message: "Failed to update organization settings" });
+    }
+  });
+
+  // ============================================
   // ADMIN: PAYMENT SETTINGS
   // ============================================
 
@@ -1390,7 +1657,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getPaymentSettings();
+        const settings = await storage.getPaymentSettings(getActiveOrganizationId(req));
         
         if (!settings) {
           return res.json({
@@ -1439,7 +1706,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         if (!settings) {
           return res.json({
             id: null,
@@ -1554,7 +1821,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { webhookType } = req.body;
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         
         let webhookUrl: string | null = null;
         let token: string | null = null;
@@ -1679,7 +1946,7 @@ export async function registerRoutes(
         }
 
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         const webhookUrl = settings?.signupEmailWebhookUrl;
         
         if (!webhookUrl) {
@@ -1739,7 +2006,7 @@ export async function registerRoutes(
         const userId = getUserId(req);
         
         // Get automation settings
-        const settings = await storage.getAutomationSettings();
+        const settings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         
         // Check global toggle
         if (!settings?.monthlySummaryGlobalEnabled) {
@@ -2125,8 +2392,10 @@ export async function registerRoutes(
         
         // Business info (left side)
         let yPos = margin;
-        if (settings?.businessName) {
-          doc.fontSize(14).font('Helvetica-Bold').text(settings.businessName, margin, yPos);
+        const branding = await getBrandingForRequest(req);
+        const invoiceHeaderName = settings?.businessName || branding.displayName;
+        if (invoiceHeaderName) {
+          doc.fontSize(14).font('Helvetica-Bold').text(invoiceHeaderName, margin, yPos);
           yPos += 20;
         }
         if (settings?.businessAddress) {
@@ -2257,7 +2526,7 @@ export async function registerRoutes(
         let [settings] = await db
           .select()
           .from(invoiceSettings)
-          .where(eq(invoiceSettings.id, settingsId));
+          .where(eq(invoiceSettings.organizationId, settingsId));
         
         const prefix = settings?.invoicePrefix || "INV-";
         const nextNum = settings?.nextInvoiceNumber || 1;
@@ -2297,7 +2566,7 @@ export async function registerRoutes(
           await db
             .update(invoiceSettings)
             .set({ nextInvoiceNumber: nextNum + 1, updatedAt: new Date() })
-            .where(eq(invoiceSettings.id, settingsId));
+            .where(eq(invoiceSettings.organizationId, settingsId));
         } else {
           await db
             .insert(invoiceSettings)
@@ -2333,7 +2602,7 @@ export async function registerRoutes(
           );
           return res.json(payments);
         }
-        const payments = await storage.getAllPayments();
+        const payments = await storage.getAllPayments(getActiveOrganizationId(req));
         res.json(payments);
       } catch (error) {
         console.error("Error fetching payments:", error);
@@ -2362,7 +2631,7 @@ export async function registerRoutes(
         if (payment.status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
           
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
             console.error("[AdminPaymentCreate] Webhook error (non-blocking):", err.message);
           });
         }
@@ -2401,7 +2670,7 @@ export async function registerRoutes(
         if (status === "confirmed" && payment.clientId) {
           const baseUrl = getBaseUrl(req);
           
-          sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+          sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
             console.error("[PaymentStatusUpdate] Webhook error (non-blocking):", err.message);
           });
         }
@@ -2431,7 +2700,7 @@ export async function registerRoutes(
           );
           return res.json(documents);
         }
-        const documents = await storage.getAllDocuments();
+        const documents = await storage.getAllDocuments(getActiveOrganizationId(req));
         res.json(documents);
       } catch (error) {
         console.error("Error fetching documents:", error);
@@ -2896,8 +3165,8 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const clients = await storage.getAllClients();
-        const payments = await storage.getAllPayments();
+        const clients = await storage.getAllClients(getActiveOrganizationId(req));
+        const payments = await storage.getAllPayments(getActiveOrganizationId(req));
         
         // Get all active billing items directly from database
         const allBillingItems = await db
@@ -3348,7 +3617,7 @@ export async function registerRoutes(
                 currency: "usd",
                 product_data: {
                   name: `Payment - ${client.displayName || "Client"}`,
-                  description: note || `Payment to Quick IT Projects`,
+                  description: note || `Payment to ${(await getBrandingForRequest(req)).displayName}`,
                 },
                 unit_amount: amountCents,
               },
@@ -3468,7 +3737,7 @@ export async function registerRoutes(
         // Fire payment received webhook for confirmed Stripe payment (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[Stripe Confirm] Webhook error (non-blocking):", err.message);
         });
 
@@ -3565,7 +3834,7 @@ export async function registerRoutes(
     isClient,
     async (req: Request, res: Response) => {
       try {
-        const settings = await storage.getPaymentSettings();
+        const settings = await storage.getPaymentSettings(getActiveOrganizationId(req));
         
         // Return sanitized settings (no admin userId)
         res.json({
@@ -3730,8 +3999,24 @@ export async function registerRoutes(
           return res.status(403).json({ message: "Invalid bootstrap secret" });
         }
 
-        // Create admin profile and default org membership
-        const profile = await storage.upsertUserProfile({
+        const organizationId = DEFAULT_ORGANIZATION_ID;
+
+        const existingMembership = await storage.getOrganizationMembership(userId!, organizationId);
+        if (!existingMembership) {
+          await storage.createOrganizationMembership({
+            userId: userId!,
+            organizationId,
+            role: "owner",
+            status: "active",
+            invitedByUserId: userId!,
+          });
+        } else {
+          await storage.updateOrganizationMembershipRole(userId!, organizationId, "owner");
+          await storage.updateOrganizationMembershipStatus(userId!, organizationId, "active");
+        }
+
+        // Keep users_profile bridge for legacy client linkage and routing.
+        await storage.upsertUserProfile({
           userId: userId!,
           status: "active",
         });
@@ -3740,10 +4025,11 @@ export async function registerRoutes(
           userId: userId!,
           role: "admin",
           status: "active",
+          organizationId: getActiveOrganizationId(req),
         });
 
-        console.log(`[SECURITY] Admin bootstrapped successfully. User: ${userId}`);
-        res.json({ success: true, profile, organizationId: DEFAULT_ORGANIZATION_ID });
+        console.log(`[SECURITY] Owner bootstrapped successfully. User: ${userId}`);
+        res.json({ success: true, role: "owner", organizationId });
       } catch (error) {
         console.error("Error bootstrapping admin:", error);
         res.status(500).json({ message: "Failed to bootstrap admin" });
@@ -3763,11 +4049,15 @@ export async function registerRoutes(
       try {
         const results: Array<{ test: string; status: "pass" | "fail"; details: string }> = [];
         
+        // Get current admin profile
+        const adminProfile = (req as any).userProfile;
+        const adminMembership = (req as any).organizationMembership;
+        
         // Test 1: Verify admin middleware works
         results.push({
           test: "Admin role enforcement",
-          status: (req as any).organizationMembership?.role === "admin" ? "pass" : "fail",
-          details: `Current org-scoped role: ${(req as any).organizationMembership?.role || "unknown"}`,
+          status: ["owner", "admin"].includes(adminMembership?.role) ? "pass" : "fail",
+          details: `Current org role: ${adminMembership?.role || "unknown"}, profile role: ${adminProfile?.role || "unknown"}`,
         });
         
         // Test 2: Verify client routes require linkedClientId (not browser-provided)
@@ -3778,7 +4068,7 @@ export async function registerRoutes(
         });
         
         // Test 3: Verify webhook tokens are not exposed to frontend
-        const automationSettings = await storage.getAutomationSettings();
+        const automationSettings = await storage.getAutomationSettings(getActiveOrganizationId(req));
         const tokensExposed = automationSettings && (
           "signupEmailToken" in automationSettings ||
           "paymentReceivedToken" in automationSettings ||
@@ -3870,7 +4160,7 @@ export async function registerRoutes(
         const userId = getUserId(req);
 
         const response = await plaidClient.linkTokenCreate({
-          client_name: "Quick IT Projects",
+          client_name: (await getBrandingForRequest(req)).displayName,
           products: [Products.Transactions],
           country_codes: [CountryCode.Us],
           language: "en",
@@ -3912,16 +4202,14 @@ export async function registerRoutes(
         const accessToken = exchangeResponse.data.access_token;
         const plaidItemIdValue = exchangeResponse.data.item_id;
 
+        const organizationId = requireOrganizationId(req);
+
         // Insert into plaid_items
-        const itemId = generatePlaidItemId();
-        await db.insert(plaidItems).values({
-          itemId,
-          adminUserId: userId!,
+        const itemId = await storage.createPlaidItemForOrganization(organizationId, {
           plaidItemId: plaidItemIdValue,
           accessToken,
           institutionId: institution_id || null,
           institutionName: institution_name || null,
-          status: "linked",
         });
 
         // Fetch accounts
@@ -3930,55 +4218,21 @@ export async function registerRoutes(
         });
 
         for (const account of accountsResponse.data.accounts) {
-          const existingAccount = await db
-            .select()
-            .from(plaidAccounts)
-            .where(
-              and(
-                eq(plaidAccounts.itemId, itemId),
-                eq(plaidAccounts.plaidAccountId, account.account_id),
-              ),
-            )
-            .limit(1);
-
-          if (existingAccount.length === 0) {
-            await db.insert(plaidAccounts).values({
-              accountId: generatePlaidAccountRowId(),
-              itemId,
-              plaidAccountId: account.account_id,
-              name: account.name,
-              officialName: account.official_name || null,
-              mask: account.mask || null,
-              type: account.type,
-              subtype: account.subtype || null,
-              currentBalanceCents: account.balances.current
-                ? Math.round(account.balances.current * 100)
-                : null,
-              availableBalanceCents: account.balances.available
-                ? Math.round(account.balances.available * 100)
-                : null,
-              isoCurrencyCode: account.balances.iso_currency_code || "USD",
-            });
-          } else {
-            await db
-              .update(plaidAccounts)
-              .set({
-                name: account.name,
-                officialName: account.official_name || null,
-                mask: account.mask || null,
-                type: account.type,
-                subtype: account.subtype || null,
-                currentBalanceCents: account.balances.current
-                  ? Math.round(account.balances.current * 100)
-                  : null,
-                availableBalanceCents: account.balances.available
-                  ? Math.round(account.balances.available * 100)
-                  : null,
-                isoCurrencyCode: account.balances.iso_currency_code || "USD",
-                updatedAt: new Date(),
-              })
-              .where(eq(plaidAccounts.accountId, existingAccount[0].accountId));
-          }
+          await storage.upsertPlaidAccountForOrganization(organizationId, itemId, {
+            plaidAccountId: account.account_id,
+            name: account.name,
+            officialName: account.official_name || null,
+            mask: account.mask || null,
+            type: account.type,
+            subtype: account.subtype || null,
+            currentBalanceCents: account.balances.current
+              ? Math.round(account.balances.current * 100)
+              : null,
+            availableBalanceCents: account.balances.available
+              ? Math.round(account.balances.available * 100)
+              : null,
+            isoCurrencyCode: account.balances.iso_currency_code || "USD",
+          });
         }
 
         // Initialize transactions sync
@@ -3988,50 +4242,26 @@ export async function registerRoutes(
 
         // Upsert added transactions
         for (const txn of syncResponse.data.added) {
-          const existingTxn = await db
-            .select()
-            .from(plaidTransactions)
-            .where(
-              and(
-                eq(plaidTransactions.itemId, itemId),
-                eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-              ),
-            )
-            .limit(1);
-
-          if (existingTxn.length === 0) {
-            await db.insert(plaidTransactions).values({
-              transactionId: generatePlaidTransactionRowId(),
-              itemId,
-              plaidTransactionId: txn.transaction_id,
-              plaidAccountId: txn.account_id,
-              date: txn.date,
-              name: txn.name,
-              merchantName: txn.merchant_name || null,
-              amountCents: Math.round(txn.amount * 100),
-              isoCurrencyCode: txn.iso_currency_code || "USD",
-              pending: txn.pending,
-              categoryPrimary: txn.personal_finance_category?.primary || null,
-              rawJson: txn as any,
-            });
-          }
+          await storage.upsertPlaidTransactionForOrganization(organizationId, itemId, {
+            plaidTransactionId: txn.transaction_id,
+            plaidAccountId: txn.account_id,
+            date: txn.date,
+            name: txn.name,
+            merchantName: txn.merchant_name || null,
+            amountCents: Math.round(txn.amount * 100),
+            isoCurrencyCode: txn.iso_currency_code || "USD",
+            pending: txn.pending,
+            categoryPrimary: txn.personal_finance_category?.primary || null,
+            rawJson: txn as any,
+          });
         }
 
         // Store cursor
-        await db
-          .insert(plaidCursors)
-          .values({
-            itemId,
-            cursor: syncResponse.data.next_cursor,
-            lastSyncAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: plaidCursors.itemId,
-            set: {
-              cursor: syncResponse.data.next_cursor,
-              lastSyncAt: new Date(),
-            },
-          });
+        await storage.upsertPlaidCursorForOrganization(
+          organizationId,
+          itemId,
+          syncResponse.data.next_cursor,
+        );
 
         res.json({
           item_id: itemId,
@@ -4055,6 +4285,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
 
         // Get all items for this admin
         const items = await db
@@ -4084,56 +4315,35 @@ export async function registerRoutes(
 
           // Process added transactions
           for (const txn of syncResponse.data.added) {
-            const existingTxn = await db
-              .select()
-              .from(plaidTransactions)
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              )
-              .limit(1);
-
-            if (existingTxn.length === 0) {
-              await db.insert(plaidTransactions).values({
-                transactionId: generatePlaidTransactionRowId(),
-                itemId: item.itemId,
-                plaidTransactionId: txn.transaction_id,
-                plaidAccountId: txn.account_id,
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                isoCurrencyCode: txn.iso_currency_code || "USD",
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-              });
-              totalAdded++;
-            }
+            const created = await storage.upsertPlaidTransactionForOrganization(organizationId, item.itemId, {
+              plaidTransactionId: txn.transaction_id,
+              plaidAccountId: txn.account_id,
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              isoCurrencyCode: txn.iso_currency_code || "USD",
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+            });
+            if (created) totalAdded++;
           }
 
           // Process modified transactions
           for (const txn of syncResponse.data.modified) {
-            await db
-              .update(plaidTransactions)
-              .set({
-                date: txn.date,
-                name: txn.name,
-                merchantName: txn.merchant_name || null,
-                amountCents: Math.round(txn.amount * 100),
-                pending: txn.pending,
-                categoryPrimary: txn.personal_finance_category?.primary || null,
-                rawJson: txn as any,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidTransactions.itemId, item.itemId),
-                  eq(plaidTransactions.plaidTransactionId, txn.transaction_id),
-                ),
-              );
+            await storage.upsertPlaidTransactionForOrganization(organizationId, item.itemId, {
+              plaidTransactionId: txn.transaction_id,
+              plaidAccountId: txn.account_id,
+              date: txn.date,
+              name: txn.name,
+              merchantName: txn.merchant_name || null,
+              amountCents: Math.round(txn.amount * 100),
+              isoCurrencyCode: txn.iso_currency_code || "USD",
+              pending: txn.pending,
+              categoryPrimary: txn.personal_finance_category?.primary || null,
+              rawJson: txn as any,
+            });
             totalModified++;
           }
 
@@ -4161,40 +4371,29 @@ export async function registerRoutes(
           });
 
           for (const account of accountsResponse.data.accounts) {
-            await db
-              .update(plaidAccounts)
-              .set({
-                currentBalanceCents: account.balances.current
-                  ? Math.round(account.balances.current * 100)
-                  : null,
-                availableBalanceCents: account.balances.available
-                  ? Math.round(account.balances.available * 100)
-                  : null,
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(plaidAccounts.itemId, item.itemId),
-                  eq(plaidAccounts.plaidAccountId, account.account_id),
-                ),
-              );
+            await storage.upsertPlaidAccountForOrganization(organizationId, item.itemId, {
+              plaidAccountId: account.account_id,
+              name: account.name,
+              officialName: account.official_name || null,
+              mask: account.mask || null,
+              type: account.type,
+              subtype: account.subtype || null,
+              currentBalanceCents: account.balances.current
+                ? Math.round(account.balances.current * 100)
+                : null,
+              availableBalanceCents: account.balances.available
+                ? Math.round(account.balances.available * 100)
+                : null,
+              isoCurrencyCode: account.balances.iso_currency_code || "USD",
+            });
           }
 
           // Update cursor
-          await db
-            .insert(plaidCursors)
-            .values({
-              itemId: item.itemId,
-              cursor: syncResponse.data.next_cursor,
-              lastSyncAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: plaidCursors.itemId,
-              set: {
-                cursor: syncResponse.data.next_cursor,
-                lastSyncAt: new Date(),
-              },
-            });
+          await storage.upsertPlaidCursorForOrganization(
+            organizationId,
+            item.itemId,
+            syncResponse.data.next_cursor,
+          );
         }
 
         res.json({
@@ -4263,32 +4462,13 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { itemId } = req.params;
 
-        // Verify item belongs to this admin
-        const item = await db
-          .select()
-          .from(plaidItems)
-          .where(
-            and(
-              eq(plaidItems.itemId, itemId),
-              eq(plaidItems.adminUserId, userId!),
-            ),
-          )
-          .limit(1);
-
-        if (item.length === 0) {
+        const deleted = await storage.deletePlaidItemForOrganization(organizationId, itemId);
+        if (!deleted) {
           return res.status(404).json({ message: "Item not found" });
         }
-
-        // Delete in order: transactions, accounts, cursors, items
-        await db
-          .delete(plaidTransactions)
-          .where(eq(plaidTransactions.itemId, itemId));
-        await db.delete(plaidAccounts).where(eq(plaidAccounts.itemId, itemId));
-        await db.delete(plaidCursors).where(eq(plaidCursors.itemId, itemId));
-        await db.delete(plaidItems).where(eq(plaidItems.itemId, itemId));
 
         res.json({ success: true });
       } catch (error) {
@@ -5155,33 +5335,12 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const data = req.body;
 
-        const entryId = generateFinanceEntryId();
+        const entry = await storage.createFinanceEntryForOrganization(organizationId, data);
 
-        await db.insert(financeEntries).values({
-          entryId,
-          adminUserId: userId!,
-          clientId: data.clientId || null,
-          entryType: data.entryType || "manual",
-          categoryGroup: data.categoryGroup,
-          title: data.title,
-          amountCents: data.amountCents,
-          date: data.date,
-          recurrence: data.recurrence || null,
-          notes: data.notes || null,
-          plaidAccountId: data.plaidAccountId || null,
-          externalUrl: data.externalUrl || null,
-        });
-
-        const entry = await db
-          .select()
-          .from(financeEntries)
-          .where(eq(financeEntries.entryId, entryId))
-          .limit(1);
-
-        res.status(201).json(entry[0]);
+        res.status(201).json(entry);
       } catch (error) {
         console.error("Error creating finance entry:", error);
         res.status(500).json({ message: "Failed to create finance entry" });
@@ -5196,27 +5355,13 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { entryId } = req.params;
 
-        const entry = await db
-          .select()
-          .from(financeEntries)
-          .where(
-            and(
-              eq(financeEntries.entryId, entryId),
-              eq(financeEntries.adminUserId, userId!),
-            ),
-          )
-          .limit(1);
-
-        if (entry.length === 0) {
+        const deleted = await storage.deleteFinanceEntryForOrganization(organizationId, entryId);
+        if (!deleted) {
           return res.status(404).json({ message: "Entry not found" });
         }
-
-        await db
-          .delete(financeEntries)
-          .where(eq(financeEntries.entryId, entryId));
 
         res.json({ success: true });
       } catch (error) {
@@ -5279,13 +5424,12 @@ export async function registerRoutes(
           return res.status(400).json({ message: "Invalid recurrence value" });
         }
 
-        await db
-          .update(plaidTransactions)
-          .set({ 
-            overrideRecurrence: recurrence,
-            updatedAt: new Date() 
-          })
-          .where(eq(plaidTransactions.transactionId, transactionId));
+        const organizationId = requireOrganizationId(req);
+        await storage.updateTransactionRecurrenceForOrganization(
+          organizationId,
+          transactionId,
+          recurrence,
+        );
 
         res.json({ success: true, overrideRecurrence: recurrence });
       } catch (error) {
@@ -5325,41 +5469,29 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { label, recurrence, financeType, transactionIds } = req.body;
 
         if (!label || !recurrence) {
           return res.status(400).json({ message: "Label and recurrence are required" });
         }
 
-        const groupId = generateRecurringGroupId();
-
-        await db.insert(plaidRecurringGroups).values({
-          groupId,
-          adminUserId: userId!,
+        const group = await storage.createRecurringGroupForOrganization(organizationId, {
           label,
           recurrence,
           financeType: financeType || null,
-          isActive: true,
         });
 
         // Link transactions to the group if provided
         if (transactionIds && Array.isArray(transactionIds) && transactionIds.length > 0) {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: groupId, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
+          await storage.setTransactionRecurringGroupForOrganization(
+            organizationId,
+            transactionIds,
+            group.groupId,
+          );
         }
 
-        const group = await db
-          .select()
-          .from(plaidRecurringGroups)
-          .where(eq(plaidRecurringGroups.groupId, groupId))
-          .limit(1);
-
-        res.status(201).json(group[0]);
+        res.status(201).json(group);
       } catch (error) {
         console.error("Error creating recurring group:", error);
         res.status(500).json({ message: "Failed to create recurring group" });
@@ -5374,33 +5506,27 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
-        const userId = getUserId(req);
+        const organizationId = requireOrganizationId(req);
         const { groupId } = req.params;
         const { label, recurrence, financeType, isActive } = req.body;
 
-        const updates: any = { updatedAt: new Date() };
+        const updates: any = {};
         if (label !== undefined) updates.label = label;
         if (recurrence !== undefined) updates.recurrence = recurrence;
         if (financeType !== undefined) updates.financeType = financeType;
         if (isActive !== undefined) updates.isActive = isActive;
 
-        await db
-          .update(plaidRecurringGroups)
-          .set(updates)
-          .where(
-            and(
-              eq(plaidRecurringGroups.groupId, groupId),
-              eq(plaidRecurringGroups.adminUserId, userId!),
-            ),
-          );
+        const group = await storage.updateRecurringGroupForOrganization(
+          organizationId,
+          groupId,
+          updates,
+        );
 
-        const group = await db
-          .select()
-          .from(plaidRecurringGroups)
-          .where(eq(plaidRecurringGroups.groupId, groupId))
-          .limit(1);
+        if (!group) {
+          return res.status(404).json({ message: "Recurring group not found" });
+        }
 
-        res.json(group[0]);
+        res.json(group);
       } catch (error) {
         console.error("Error updating recurring group:", error);
         res.status(500).json({ message: "Failed to update recurring group" });
@@ -5415,6 +5541,7 @@ export async function registerRoutes(
     isAdmin,
     async (req: Request, res: Response) => {
       try {
+        const organizationId = requireOrganizationId(req);
         const { groupId } = req.params;
         const { transactionIds, action } = req.body;
 
@@ -5422,21 +5549,11 @@ export async function registerRoutes(
           return res.status(400).json({ message: "transactionIds array is required" });
         }
 
-        if (action === "remove") {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: null, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
-        } else {
-          for (const txnId of transactionIds) {
-            await db
-              .update(plaidTransactions)
-              .set({ recurringGroupId: groupId, updatedAt: new Date() })
-              .where(eq(plaidTransactions.transactionId, txnId));
-          }
-        }
+        await storage.setTransactionRecurringGroupForOrganization(
+          organizationId,
+          transactionIds,
+          action === "remove" ? null : groupId,
+        );
 
         res.json({ success: true });
       } catch (error) {
@@ -5708,7 +5825,7 @@ export async function registerRoutes(
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[StripeWebhook checkout.session.completed] Webhook error (non-blocking):", err.message);
         });
 
@@ -5753,7 +5870,7 @@ export async function registerRoutes(
         // Fire payment received webhook (non-blocking)
         const baseUrl = getBaseUrl(req);
         
-        sendPaymentReceivedWebhook(payment, baseUrl, "live").catch(err => {
+        sendPaymentReceivedWebhook(payment, baseUrl, "live", getActiveOrganizationId(req)).catch(err => {
           console.error("[StripeWebhook payment_intent.succeeded] Webhook error (non-blocking):", err.message);
         });
 

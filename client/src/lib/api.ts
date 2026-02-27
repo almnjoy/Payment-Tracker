@@ -27,6 +27,14 @@ export interface UserProfile {
   email: string | null;
   firstName: string | null;
   lastName: string | null;
+  effectiveRole?: "admin" | "client" | null;
+  activeOrganizationId?: string | null;
+  membership?: {
+    userId: string;
+    organizationId: string;
+    role: string;
+    status: string;
+  } | null;
   profile: {
     userId: string;
     role: string;
@@ -153,12 +161,58 @@ export interface InviteClaimResponse {
   redirectTo?: string;
 }
 
+export interface OrganizationBranding {
+  displayName: string;
+  logoUrl: string | null;
+  primaryColor: string;
+  accentColor: string;
+  domain: string | null;
+}
+
+export function usePublicBranding() {
+  return useQuery<OrganizationBranding>({
+    queryKey: ["branding", "public"],
+    queryFn: () => fetchApi("/api/public/branding"),
+    staleTime: 1000 * 60 * 10,
+    retry: 1,
+  });
+}
+
+export function useBranding() {
+  return useQuery<OrganizationBranding>({
+    queryKey: ["branding", "auth"],
+    queryFn: () => fetchApi("/api/branding"),
+    staleTime: 1000 * 60 * 10,
+  });
+}
+
 export function useMe() {
   return useQuery<UserProfile>({
     queryKey: ["me"],
     queryFn: () => fetchApi("/api/me"),
     retry: false,
     staleTime: 1000 * 60 * 5,
+  });
+}
+
+
+
+export interface OrganizationMembership {
+  id: string;
+  userId: string;
+  organizationId: string;
+  role: "owner" | "admin" | "client";
+  status: "active" | "inactive";
+  invitedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  profile?: UserProfile["profile"];
+}
+
+export function useAdminMemberships() {
+  return useQuery<OrganizationMembership[]>({
+    queryKey: ["admin", "memberships", "admins"],
+    queryFn: () => fetchApi("/api/admin/memberships/admins"),
   });
 }
 

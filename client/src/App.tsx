@@ -1,8 +1,11 @@
 import { Switch, Route } from "wouter";
+import { useEffect } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { usePublicBranding } from "@/lib/api";
+import { applyBrandingCssVariables } from "@/lib/branding";
 import NotFound from "@/pages/not-found";
 
 import LoginPage from "@/pages/auth/LoginPage";
@@ -24,6 +27,7 @@ import AccountSummaries from "@/pages/admin/AccountSummaries";
 import SpendingHabits from "@/pages/admin/SpendingHabits";
 import FinanceTracker from "@/pages/admin/FinanceTracker";
 import InvoiceSettings from "@/pages/admin/InvoiceSettings";
+import AdminUserManagement from "@/pages/admin/UserManagement";
 
 function Router() {
   return (
@@ -48,6 +52,7 @@ function Router() {
       <Route path="/admin/invoices" component={AdminInvoices} />
       <Route path="/admin/invoice-settings" component={InvoiceSettings} />
       <Route path="/admin/settings" component={AdminSettings} />
+      <Route path="/admin/user-management" component={AdminUserManagement} />
       
       {/* New Admin Finance Routes */}
       <Route path="/admin/accounts" component={AccountSummaries} />
@@ -60,6 +65,14 @@ function Router() {
 }
 
 function App() {
+  const { data: branding } = usePublicBranding();
+
+  useEffect(() => {
+    if (!branding) return;
+    applyBrandingCssVariables(branding.primaryColor, branding.accentColor);
+    document.title = `${branding.displayName} Portal`;
+  }, [branding]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
