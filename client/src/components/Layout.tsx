@@ -20,6 +20,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { useBranding } from "@/lib/api";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -31,6 +32,8 @@ export function Layout({ children, role, clientName }: LayoutProps) {
   const [location, setLocation] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { user } = useAuth();
+  const { data: branding } = useBranding();
+  const orgName = branding?.displayName || "Quick IT";
   
   // Check for admin impersonation mode
   const searchParams = new URLSearchParams(window.location.search);
@@ -103,9 +106,9 @@ export function Layout({ children, role, clientName }: LayoutProps) {
         <div className="p-6 border-b border-gray-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-lg">Q</span>
+              <span className="text-white font-bold text-lg">{orgName.charAt(0).toUpperCase()}</span>
             </div>
-            <span className="font-bold text-lg tracking-tight">Quick IT</span>
+            <span className="font-bold text-lg tracking-tight truncate">{orgName}</span>
           </div>
           <button 
             onClick={() => setSidebarOpen(false)}

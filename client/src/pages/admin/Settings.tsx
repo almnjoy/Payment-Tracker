@@ -974,6 +974,118 @@ function AutomationSettingsCard() {
   );
 }
 
+
+interface OrganizationBrandingSettings {
+  id: string | null;
+  displayName: string;
+  logoUrl: string | null;
+  primaryColor: string;
+  accentColor: string;
+  domain: string | null;
+}
+
+function OrganizationBrandingCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<OrganizationBrandingSettings>({
+    id: null,
+    displayName: "Quick IT Projects",
+    logoUrl: null,
+    primaryColor: "#007BFF",
+    accentColor: "#FF6A00",
+    domain: null,
+  });
+
+  const { data: settings, isLoading } = useQuery<OrganizationBrandingSettings>({
+    queryKey: ["admin", "organization-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/admin/organization-settings", { credentials: "include" });
+      if (!response.ok) throw new Error("Failed to fetch organization settings");
+      return response.json();
+    },
+  });
+
+  useEffect(() => {
+    if (!settings) return;
+    setFormData({
+      id: settings.id,
+      displayName: settings.displayName || "Quick IT Projects",
+      logoUrl: settings.logoUrl,
+      primaryColor: settings.primaryColor || "#007BFF",
+      accentColor: settings.accentColor || "#FF6A00",
+      domain: settings.domain,
+    });
+  }, [settings]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: OrganizationBrandingSettings) => {
+      const response = await fetch("/api/admin/organization-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error("Failed to save organization settings");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "organization-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["branding"] });
+      toast({ title: "Saved", description: "Organization branding updated." });
+      setIsEditing(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return <Card><CardContent className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></CardContent></Card>;
+  }
+
+  return (
+    <Card className="border-gray-200 shadow-sm">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5" />Organization Branding</CardTitle>
+          <CardDescription>Set display name, logo, and brand colors for auth pages and integrations.</CardDescription>
+        </div>
+        {!isEditing ? <Button variant="outline" onClick={() => setIsEditing(true)}>Edit</Button> : (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setIsEditing(false)}>Cancel</Button>
+            <Button onClick={() => saveMutation.mutate(formData)} disabled={saveMutation.isPending}>Save</Button>
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="grid md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Display Name</Label>
+          <Input disabled={!isEditing} value={formData.displayName} onChange={(e) => setFormData({ ...formData, displayName: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <Label>Optional Domain</Label>
+          <Input disabled={!isEditing} value={formData.domain || ""} onChange={(e) => setFormData({ ...formData, domain: e.target.value })} placeholder="portal.example.com" />
+        </div>
+        <div className="space-y-2">
+          <Label>Logo URL</Label>
+          <Input disabled={!isEditing} value={formData.logoUrl || ""} onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })} placeholder="https://..." />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label>Primary Color</Label>
+            <Input disabled={!isEditing} value={formData.primaryColor} onChange={(e) => setFormData({ ...formData, primaryColor: e.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <Label>Accent Color</Label>
+            <Input disabled={!isEditing} value={formData.accentColor} onChange={(e) => setFormData({ ...formData, accentColor: e.target.value })} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminSettings() {
   const { data: plaidItems, isLoading, refetch } = useAdminPlaidItems();
   const syncTransactions = useSyncPlaidTransactions();
@@ -1109,6 +1221,8 @@ export default function AdminSettings() {
               )}
            </CardContent>
         </Card>
+
+        <OrganizationBrandingCard />
 
         <StripeGatewayCard />
 

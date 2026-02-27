@@ -8,6 +8,7 @@ import {
   date,
   boolean,
   index,
+  uniqueIndex,
   jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
@@ -16,11 +17,30 @@ import { z } from "zod";
 // Re-export auth models (sessions and users tables)
 export * from "./models/auth";
 
+export const organizations = pgTable(
+  "organizations",
+  {
+    organizationId: varchar("organization_id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    status: text("status").notNull().default("active"),
+    primaryColor: text("primary_color"),
+    accentColor: text("accent_color"),
+    logoUrl: text("logo_url"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    slugUniqueIdx: uniqueIndex("organizations_slug_unique_idx").on(table.slug),
+  }),
+);
+
 // ============================================
 // USERS PROFILE (Bridge between Replit Auth and app data)
 // ============================================
 export const usersProfile = pgTable("users_profile", {
   userId: varchar("user_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   role: text("role").notNull().default("client"),
   clientId: varchar("client_id"),
   status: text("status").notNull().default("active"),
@@ -44,6 +64,7 @@ export type UsersProfile = typeof usersProfile.$inferSelect;
 // ============================================
 export const clients = pgTable("clients", {
   clientId: varchar("client_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   displayName: text("display_name").notNull(),
   email: text("email"),
   phone: text("phone"),
@@ -76,6 +97,7 @@ export type Client = typeof clients.$inferSelect;
 // ============================================
 export const leases = pgTable("leases", {
   leaseId: varchar("lease_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   clientId: varchar("client_id").notNull(),
   description: text("description"),
   rentAmountCents: integer("rent_amount_cents").notNull(),
@@ -109,6 +131,7 @@ export type Lease = typeof leases.$inferSelect;
 // ============================================
 export const inviteCodes = pgTable("invite_codes", {
   magicNumber: varchar("magic_number").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   clientId: varchar("client_id").notNull(),
   leaseId: varchar("lease_id"),
   expiresAt: timestamp("expires_at").notNull(),
@@ -136,6 +159,29 @@ export const insertInviteCodeSchema = createInsertSchema(inviteCodes).omit({
 });
 export type InsertInviteCode = z.infer<typeof insertInviteCodeSchema>;
 export type InviteCode = typeof inviteCodes.$inferSelect;
+
+// ============================================
+// ORGANIZATION SETTINGS (Branding defaults)
+// ============================================
+export const organizationSettings = pgTable("organization_settings", {
+  id: varchar("id").primaryKey().default("default"),
+  adminUserId: varchar("admin_user_id").notNull(),
+  displayName: text("display_name").notNull().default("Quick IT Projects"),
+  logoUrl: text("logo_url"),
+  primaryColor: text("primary_color").notNull().default("#007BFF"),
+  accentColor: text("accent_color").notNull().default("#FF6A00"),
+  domain: text("domain"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOrganizationSettingsSchema = createInsertSchema(organizationSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertOrganizationSettings = z.infer<typeof insertOrganizationSettingsSchema>;
+export type OrganizationSettings = typeof organizationSettings.$inferSelect;
 
 // ============================================
 // INVOICE SETTINGS (Business defaults)
@@ -243,6 +289,7 @@ export type InvoiceLineItem = z.infer<typeof invoiceLineItemSchema>;
 // ============================================
 export const invoices = pgTable("invoices", {
   invoiceId: varchar("invoice_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   invoiceNumber: varchar("invoice_number").notNull(), // e.g., "INV-000001"
   clientId: varchar("client_id"), // Optional - for backwards compatibility only
   leaseId: varchar("lease_id"),
@@ -268,7 +315,10 @@ export const invoices = pgTable("invoices", {
   stripeHostedInvoiceUrl: text("stripe_hosted_invoice_url"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  organizationIdIdx: index("invoices_organization_id_idx").on(table.organizationId),
+  orgInvoiceNumberUniqueIdx: uniqueIndex("invoices_org_invoice_number_unique_idx").on(table.organizationId, table.invoiceNumber),
+}));
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   client: one(clients, {
@@ -296,6 +346,7 @@ export type Invoice = typeof invoices.$inferSelect;
 // ============================================
 export const payments = pgTable("payments", {
   paymentId: varchar("payment_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   clientId: varchar("client_id").notNull(),
   invoiceId: varchar("invoice_id"),
   amountCents: integer("amount_cents").notNull(),
@@ -334,6 +385,7 @@ export type Payment = typeof payments.$inferSelect;
 // ============================================
 export const documents = pgTable("documents", {
   documentId: varchar("document_id").primaryKey(),
+  organizationId: varchar("organization_id").notNull(),
   clientId: varchar("client_id").notNull(),
   leaseId: varchar("lease_id"),
   invoiceId: varchar("invoice_id"),
@@ -405,6 +457,7 @@ export const plaidItems = pgTable(
   "plaid_items",
   {
     itemId: varchar("item_id").primaryKey(), // ITEM-000001
+    organizationId: varchar("organization_id").notNull(),
     adminUserId: varchar("admin_user_id").notNull(),
     plaidItemId: varchar("plaid_item_id").notNull(),
     accessToken: text("access_token").notNull(),
@@ -421,6 +474,7 @@ export const plaidItems = pgTable(
     adminUserIdIdx: index("plaid_items_admin_user_id_idx").on(
       table.adminUserId,
     ),
+    orgIdIdx: index("plaid_items_organization_id_idx").on(table.organizationId),
   }),
 );
 
@@ -439,6 +493,7 @@ export const plaidAccounts = pgTable(
   "plaid_accounts",
   {
     accountId: varchar("account_id").primaryKey(), // PACCT-000001
+    organizationId: varchar("organization_id").notNull(),
     itemId: varchar("item_id").notNull(),
     plaidAccountId: varchar("plaid_account_id").notNull(),
     name: text("name").notNull(),
@@ -458,6 +513,7 @@ export const plaidAccounts = pgTable(
     plaidAccountIdIdx: index("plaid_accounts_plaid_account_id_idx").on(
       table.plaidAccountId,
     ),
+    orgIdIdx: index("plaid_accounts_organization_id_idx").on(table.organizationId),
   }),
 );
 
@@ -476,6 +532,7 @@ export const plaidTransactions = pgTable(
   "plaid_transactions",
   {
     transactionId: varchar("transaction_id").primaryKey(), // PTXN-000001
+    organizationId: varchar("organization_id").notNull(),
     itemId: varchar("item_id").notNull(),
     plaidTransactionId: varchar("plaid_transaction_id").notNull(),
     plaidAccountId: varchar("plaid_account_id").notNull(),
@@ -504,6 +561,7 @@ export const plaidTransactions = pgTable(
     recurringGroupIdIdx: index("plaid_transactions_recurring_group_id_idx").on(
       table.recurringGroupId,
     ),
+    orgIdIdx: index("plaid_transactions_organization_id_idx").on(table.organizationId),
   }),
 );
 
@@ -536,6 +594,7 @@ export const plaidRecurringGroups = pgTable(
   "plaid_recurring_groups",
   {
     groupId: varchar("group_id").primaryKey(),
+    organizationId: varchar("organization_id").notNull(),
     adminUserId: varchar("admin_user_id").notNull(),
     label: text("label").notNull(), // e.g., "Gusto Payroll"
     recurrence: text("recurrence").notNull().default("monthly"), // one_time, weekly, biweekly, monthly, yearly
@@ -546,6 +605,7 @@ export const plaidRecurringGroups = pgTable(
   },
   (table) => ({
     adminUserIdIdx: index("plaid_recurring_groups_admin_user_id_idx").on(table.adminUserId),
+    orgIdIdx: index("plaid_recurring_groups_organization_id_idx").on(table.organizationId),
   }),
 );
 
@@ -573,6 +633,7 @@ export const clientBillingItems = pgTable(
   "client_billing_items",
   {
     id: varchar("id").primaryKey(),
+    organizationId: varchar("organization_id").notNull(),
     clientId: varchar("client_id").notNull(),
     type: text("type").notNull().default("other"), // rent, other
     title: text("title").notNull(),
@@ -586,6 +647,7 @@ export const clientBillingItems = pgTable(
   },
   (table) => ({
     clientIdIdx: index("client_billing_items_client_id_idx").on(table.clientId),
+    orgIdIdx: index("client_billing_items_organization_id_idx").on(table.organizationId),
   }),
 );
 
@@ -611,6 +673,7 @@ export const financeEntries = pgTable(
   "finance_entries",
   {
     entryId: varchar("entry_id").primaryKey(),
+    organizationId: varchar("organization_id").notNull(),
     adminUserId: varchar("admin_user_id").notNull(),
     clientId: varchar("client_id"), // Optional: links entry to specific client
     entryType: text("entry_type").notNull().default("manual"), // "manual" | "linked"
@@ -629,6 +692,7 @@ export const financeEntries = pgTable(
     adminUserIdIdx: index("finance_entries_admin_user_id_idx").on(table.adminUserId),
     categoryGroupIdx: index("finance_entries_category_group_idx").on(table.categoryGroup),
     clientIdIdx: index("finance_entries_client_id_idx").on(table.clientId),
+    orgIdIdx: index("finance_entries_organization_id_idx").on(table.organizationId),
   }),
 );
 

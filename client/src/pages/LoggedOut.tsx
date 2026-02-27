@@ -3,9 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { LogIn, CheckCircle } from "lucide-react";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { usePublicBranding } from "@/lib/api";
 
 export default function LoggedOut() {
   const queryClient = useQueryClient();
+  const { data: branding } = usePublicBranding();
+  const orgName = branding?.displayName || "your organization";
 
   useEffect(() => {
     queryClient.clear();
@@ -26,7 +29,7 @@ export default function LoggedOut() {
           </div>
           <CardTitle className="text-2xl">Logged Out</CardTitle>
           <CardDescription>
-            You have been successfully signed out of your account.
+            You have been successfully signed out of your {orgName} account.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
