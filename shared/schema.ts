@@ -86,6 +86,36 @@ export const insertOrganizationMembershipSchema = createInsertSchema(organizatio
 export type InsertOrganizationMembership = z.infer<typeof insertOrganizationMembershipSchema>;
 export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
 
+export const clientMemberships = pgTable(
+  "client_memberships",
+  {
+    id: varchar("id").primaryKey(),
+    userId: varchar("user_id").notNull(),
+    organizationId: varchar("organization_id").notNull(),
+    clientId: varchar("client_id").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userOrgIdx: index("client_memberships_user_org_idx").on(table.userId, table.organizationId),
+    clientOrgIdx: index("client_memberships_client_org_idx").on(table.clientId, table.organizationId),
+    userClientUniqueIdx: uniqueIndex("client_memberships_user_client_unique_idx").on(
+      table.organizationId,
+      table.userId,
+      table.clientId,
+    ),
+  }),
+);
+
+export const insertClientMembershipSchema = createInsertSchema(clientMemberships).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertClientMembership = z.infer<typeof insertClientMembershipSchema>;
+export type ClientMembership = typeof clientMemberships.$inferSelect;
+
 // ============================================
 // CLIENTS (Business records)
 // ============================================

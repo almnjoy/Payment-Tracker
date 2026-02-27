@@ -76,6 +76,13 @@ const RECURRENCE_OPTIONS: { value: RecurrenceType | "one_time"; label: string }[
 const getRecurrenceMultiplier = sharedGetRecurrenceMultiplier;
 const getMultiplierLabel = sharedGetMultiplierLabel;
 
+const RECURRENCE_VALUES: RecurrenceType[] = ["one_time", "static", "weekly", "biweekly", "monthly", "yearly"];
+
+function normalizeRecurrence(value: string | null | undefined): RecurrenceType | null {
+  if (!value) return null;
+  return RECURRENCE_VALUES.includes(value as RecurrenceType) ? (value as RecurrenceType) : null;
+}
+
 export default function FinanceTracker() {
   const [activeTab, setActiveTab] = useState("income");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -258,7 +265,7 @@ export default function FinanceTracker() {
   const manualTotal = useMemo(() => {
     return currentEntries.reduce((sum, entry) => {
       // Static entries always count at full value, regardless of timeframe
-      if (isStaticRecurrence(entry.recurrence)) {
+      if (isStaticRecurrence(normalizeRecurrence(entry.recurrence))) {
         return sum + entry.amountCents;
       }
       
@@ -273,7 +280,7 @@ export default function FinanceTracker() {
       }
       
       // Recurring entries get multiplied
-      const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
+      const multiplier = getRecurrenceMultiplier(normalizeRecurrence(entry.recurrence), selectedPeriod);
       return sum + Math.round(entry.amountCents * multiplier);
     }, 0);
   }, [currentEntries, selectedPeriod]);
@@ -296,7 +303,7 @@ export default function FinanceTracker() {
     if (!typedTransactions.data?.transactions) return 0;
     
     return typedTransactions.data.transactions.reduce((sum, tx) => {
-      const txRecurrence = tx.override_recurrence || null;
+      const txRecurrence = normalizeRecurrence(tx.override_recurrence);
       const baseAmount = Math.abs(tx.amount_cents);
       
       // For one-time transactions (already filtered by API date range), include as-is
@@ -478,7 +485,7 @@ export default function FinanceTracker() {
                     )}
                     {formData.recurrence && formData.recurrence !== "one_time" && formData.recurrence !== "static" && (
                       <p className="text-xs text-purple-600">
-                        {getMultiplierLabel(formData.recurrence, selectedPeriod) || `Recurs ${formData.recurrence}`}
+                        {getMultiplierLabel(normalizeRecurrence(formData.recurrence), selectedPeriod) || `Recurs ${formData.recurrence}`}
                       </p>
                     )}
                   </div>
@@ -594,8 +601,8 @@ export default function FinanceTracker() {
                     </div>
                   ) : currentEntries.length > 0 ? (
                     currentEntries.map((entry) => {
-                      const multiplier = getRecurrenceMultiplier(entry.recurrence, selectedPeriod);
-                      const multiplierLabel = getMultiplierLabel(entry.recurrence, selectedPeriod);
+                      const multiplier = getRecurrenceMultiplier(normalizeRecurrence(entry.recurrence), selectedPeriod);
+                      const multiplierLabel = getMultiplierLabel(normalizeRecurrence(entry.recurrence), selectedPeriod);
                       const effectiveAmount = Math.round(entry.amountCents * multiplier);
                       
                       return (
@@ -693,7 +700,7 @@ export default function FinanceTracker() {
                   <ScrollArea className="h-[400px]">
                     <div className="space-y-2">
                       {typedTransactions.data.transactions.map((tx) => {
-                        const txRecurrence = tx.override_recurrence || null;
+                        const txRecurrence = normalizeRecurrence(tx.override_recurrence);
                         const multiplier = getRecurrenceMultiplier(txRecurrence, selectedPeriod);
                         const multiplierLabel = getMultiplierLabel(txRecurrence, selectedPeriod);
                         const baseAmount = Math.abs(tx.amount_cents);

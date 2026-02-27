@@ -523,6 +523,7 @@ export interface TypedPlaidTransaction {
   amount_cents: number;
   pending: boolean;
   effective_type: string;
+  override_recurrence?: RecurrenceType | null;
 }
 
 export interface SpendingSummaryTransaction {

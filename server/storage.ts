@@ -62,6 +62,16 @@ import {
 } from "@shared/schema";
 
 const DEFAULT_ORG_ID = "org-default";
+type MembershipRole = "owner" | "admin" | "client";
+
+function generateMembershipId(prefix: string): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let result = `${prefix}-`;
+  for (let i = 0; i < 8; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
 export interface IStorage {
   // Users Profile
@@ -233,6 +243,17 @@ export class DatabaseStorage implements IStorage {
     return profile;
   }
 
+  async getUserProfileByClientId(clientId: string): Promise<UsersProfile | undefined> {
+    const [membership] = await db
+      .select()
+      .from(clientMemberships)
+      .where(and(eq(clientMemberships.clientId, clientId), eq(clientMemberships.status, "active")))
+      .limit(1);
+
+    if (!membership) return undefined;
+    return this.getUserProfile(membership.userId, membership.organizationId);
+  }
+
   async getOrganizationMembership(userId: string, organizationId: string): Promise<OrganizationMembership | undefined> {
     const [membership] = await db
       .select()
@@ -247,7 +268,7 @@ export class DatabaseStorage implements IStorage {
   async upsertOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership> {
     const [membership] = await db
       .insert(organizationMemberships)
-      .values(data)
+      .values({ ...data, id: generateMembershipId("OM") })
       .onConflictDoUpdate({
         target: [organizationMemberships.organizationId, organizationMemberships.userId],
         set: {
@@ -256,6 +277,64 @@ export class DatabaseStorage implements IStorage {
           updatedAt: new Date(),
         },
       })
+      .returning();
+    return membership;
+  }
+
+  async getActiveMembershipsByOrganization(organizationId: string): Promise<OrganizationMembership[]> {
+    return db
+      .select()
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.organizationId, organizationId), eq(organizationMemberships.status, "active")));
+  }
+
+  async getActiveMembershipsByUser(userId: string): Promise<OrganizationMembership[]> {
+    return db
+      .select()
+      .from(organizationMemberships)
+      .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.status, "active")));
+  }
+
+  async createOrganizationMembership(data: InsertOrganizationMembership): Promise<OrganizationMembership> {
+    const [membership] = await db
+      .insert(organizationMemberships)
+      .values({ ...data, id: generateMembershipId("OM") })
+      .returning();
+    return membership;
+  }
+
+  async updateOrganizationMembershipRole(
+    userId: string,
+    organizationId: string,
+    role: MembershipRole,
+  ): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .update(organizationMemberships)
+      .set({ role, updatedAt: new Date() })
+      .where(
+        and(
+          eq(organizationMemberships.userId, userId),
+          eq(organizationMemberships.organizationId, organizationId),
+        ),
+      )
+      .returning();
+    return membership;
+  }
+
+  async updateOrganizationMembershipStatus(
+    userId: string,
+    organizationId: string,
+    status: "active" | "inactive",
+  ): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .update(organizationMemberships)
+      .set({ status, updatedAt: new Date() })
+      .where(
+        and(
+          eq(organizationMemberships.userId, userId),
+          eq(organizationMemberships.organizationId, organizationId),
+        ),
+      )
       .returning();
     return membership;
   }
@@ -289,7 +368,7 @@ export class DatabaseStorage implements IStorage {
   async upsertClientMembership(data: InsertClientMembership): Promise<ClientMembership> {
     const [membership] = await db
       .insert(clientMemberships)
-      .values(data)
+      .values({ ...data, id: generateMembershipId("CM") })
       .onConflictDoUpdate({
         target: [clientMemberships.organizationId, clientMemberships.userId, clientMemberships.clientId],
         set: {
@@ -574,6 +653,26 @@ export class DatabaseStorage implements IStorage {
     return settings;
   }
 
+  async getOrganizationSettings(): Promise<OrganizationSettings | undefined> {
+    const [settings] = await db.select().from(organizationSettings).orderBy(desc(organizationSettings.updatedAt)).limit(1);
+    return settings;
+  }
+
+  async upsertOrganizationSettings(data: InsertOrganizationSettings): Promise<OrganizationSettings> {
+    const [settings] = await db
+      .insert(organizationSettings)
+      .values(data)
+      .onConflictDoUpdate({
+        target: organizationSettings.id,
+        set: {
+          ...data,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return settings;
+  }
+
   async upsertPaymentSettings(
     organizationId: string,
     data: Omit<InsertPaymentSettings, "organizationId">,
@@ -666,6 +765,7 @@ export class DatabaseStorage implements IStorage {
 
     await db.insert(plaidItems).values({
       itemId,
+      organizationId: tenantId,
       adminUserId: tenantId,
       plaidItemId: data.plaidItemId,
       accessToken: data.accessToken,
@@ -710,6 +810,7 @@ export class DatabaseStorage implements IStorage {
     if (!existingAccount) {
       await db.insert(plaidAccounts).values({
         accountId: generatePlaidAccountRowId(),
+        organizationId: tenantId,
         itemId,
         plaidAccountId: account.plaidAccountId,
         name: account.name,
@@ -774,6 +875,7 @@ export class DatabaseStorage implements IStorage {
     if (!existingTxn) {
       await db.insert(plaidTransactions).values({
         transactionId: generatePlaidTransactionRowId(),
+        organizationId: tenantId,
         itemId,
         plaidTransactionId: txn.plaidTransactionId,
         plaidAccountId: txn.plaidAccountId,
@@ -861,6 +963,7 @@ export class DatabaseStorage implements IStorage {
     const entryId = generateFinanceEntryId();
     await db.insert(financeEntries).values({
       entryId,
+      organizationId: tenantId,
       adminUserId: tenantId,
       clientId: data.clientId || null,
       entryType: data.entryType || "manual",
@@ -895,6 +998,7 @@ export class DatabaseStorage implements IStorage {
     const groupId = generateRecurringGroupId();
     await db.insert(plaidRecurringGroups).values({
       groupId,
+      organizationId: tenantId,
       adminUserId: tenantId,
       label: data.label,
       recurrence: data.recurrence,
