@@ -51,7 +51,7 @@ async function buildAll() {
     platform: "node",
     bundle: true,
     format: "cjs",
-    outfile: "dist/index.cjs",
+    outfile: "dist/index.js",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -59,6 +59,14 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  // Write a local package.json so Node treats dist/index.js as CommonJS
+  // even though the root package.json has "type": "module".
+  const { writeFile } = await import("fs/promises");
+  await writeFile(
+    "dist/package.json",
+    JSON.stringify({ type: "commonjs" }, null, 2),
+  );
 }
 
 buildAll().catch((err) => {
