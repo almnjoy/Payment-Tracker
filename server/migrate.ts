@@ -2,17 +2,78 @@ import fs from "fs";
 import path from "path";
 import { pool } from "./db";
 
-// Strip SQL comments and split into individual executable statements.
-// Removes -- line comments and /* */ block comments, then splits on
-// semicolons. BEGIN / COMMIT / ROLLBACK are stripped because the runner
-// manages its own transaction.
+// Split SQL into individual executable statements, correctly handling:
+//   - Dollar-quoted strings: $$ ... $$ and $tag$ ... $tag$
+//   - Line comments:  -- ...
+//   - Block comments: /* ... */
+// BEGIN / COMMIT / ROLLBACK are dropped because the runner manages its own
+// transaction.  Every other semicolon-terminated statement is kept intact.
 function splitStatements(sql: string): string[] {
-  const noLineComments = sql.replace(/--[^\n]*/g, "");
-  const noBlockComments = noLineComments.replace(/\/\*[\s\S]*?\*\//g, "");
-  return noBlockComments
-    .split(";")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !/^(BEGIN|COMMIT|ROLLBACK)$/i.test(s));
+  const statements: string[] = [];
+  let current = "";
+  let i = 0;
+  let inDollarQuote = false;
+  let dollarTag = "";
+
+  while (i < sql.length) {
+    if (inDollarQuote) {
+      // Look for the matching closing dollar-quote tag
+      if (sql.startsWith(dollarTag, i)) {
+        current += dollarTag;
+        i += dollarTag.length;
+        inDollarQuote = false;
+        dollarTag = "";
+      } else {
+        current += sql[i++];
+      }
+      continue;
+    }
+
+    // Line comment — skip to end of line
+    if (sql[i] === "-" && sql[i + 1] === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+
+    // Block comment — skip to */
+    if (sql[i] === "/" && sql[i + 1] === "*") {
+      i += 2;
+      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+
+    // Dollar-quote open: $tag$ where tag is zero or more non-$ chars
+    const dollarMatch = sql.slice(i).match(/^(\$[^$]*\$)/);
+    if (dollarMatch) {
+      dollarTag = dollarMatch[1];
+      inDollarQuote = true;
+      current += dollarTag;
+      i += dollarTag.length;
+      continue;
+    }
+
+    // Statement terminator
+    if (sql[i] === ";") {
+      const stmt = current.trim();
+      if (stmt.length > 0 && !/^(BEGIN|COMMIT|ROLLBACK)$/i.test(stmt)) {
+        statements.push(stmt);
+      }
+      current = "";
+      i++;
+      continue;
+    }
+
+    current += sql[i++];
+  }
+
+  // Trailing statement without a semicolon
+  const last = current.trim();
+  if (last.length > 0 && !/^(BEGIN|COMMIT|ROLLBACK)$/i.test(last)) {
+    statements.push(last);
+  }
+
+  return statements;
 }
 
 export async function runMigrations(): Promise<void> {
