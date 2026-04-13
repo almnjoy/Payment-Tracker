@@ -11,9 +11,9 @@ BEGIN;
 -- STEP 1: Create organizations table
 -- ============================================================
 CREATE TABLE IF NOT EXISTS organizations (
-    id      SERIAL PRIMARY KEY,
-    name    TEXT        NOT NULL,
-    slug    TEXT        NOT NULL UNIQUE,
+    id         SERIAL PRIMARY KEY,
+    name       TEXT        NOT NULL,
+    slug       TEXT        NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -33,269 +33,200 @@ SELECT setval(
 );
 
 -- ============================================================
--- STEP 3: Add org_id to all affected tables
+-- STEP 3: Add org_id to core business tables
 --
 --   Pattern for each table:
---     a) ADD COLUMN nullable (safe if rows already exist)
---     b) Backfill existing rows to org_id = 1
---     c) SET NOT NULL (safe now that every row has a value)
---     d) ADD FK CONSTRAINT referencing organizations(id)
+--     a) ADD COLUMN nullable      (safe if rows already exist)
+--     b) Backfill existing rows   SET org_id = 1
+--     c) SET NOT NULL             (safe now that every row has a value)
+--     d) ADD FK CONSTRAINT        NOT VALID skips full-table scan
+--     e) CREATE INDEX             for query performance
 --
---   Using ADD COLUMN IF NOT EXISTS so re-running is safe.
+--   ADD COLUMN IF NOT EXISTS and ON CONFLICT guards make
+--   the migration safe to re-run.
 -- ============================================================
 
 -- ----- clients -----
-ALTER TABLE clients
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE clients
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE clients
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE clients
-    ADD CONSTRAINT fk_clients_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;   -- NOT VALID skips full-table scan; validate separately if desired
-
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE clients SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE clients ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE clients ADD CONSTRAINT fk_clients_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_clients_org_id ON clients(org_id);
 
 -- ----- leases -----
-ALTER TABLE leases
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE leases
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE leases
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE leases
-    ADD CONSTRAINT fk_leases_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE leases ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE leases SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE leases ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE leases ADD CONSTRAINT fk_leases_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_leases_org_id ON leases(org_id);
 
 -- ----- invoices -----
-ALTER TABLE invoices
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE invoices
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE invoices
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE invoices
-    ADD CONSTRAINT fk_invoices_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE invoices SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE invoices ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE invoices ADD CONSTRAINT fk_invoices_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_invoices_org_id ON invoices(org_id);
 
 -- ----- payments -----
-ALTER TABLE payments
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE payments
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE payments
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE payments
-    ADD CONSTRAINT fk_payments_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE payments SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE payments ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE payments ADD CONSTRAINT fk_payments_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_payments_org_id ON payments(org_id);
 
 -- ----- documents -----
-ALTER TABLE documents
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE documents
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE documents
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE documents
-    ADD CONSTRAINT fk_documents_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE documents SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE documents ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE documents ADD CONSTRAINT fk_documents_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_documents_org_id ON documents(org_id);
 
 -- ----- invite_codes -----
-ALTER TABLE invite_codes
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE invite_codes
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE invite_codes
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE invite_codes
-    ADD CONSTRAINT fk_invite_codes_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE invite_codes SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE invite_codes ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE invite_codes ADD CONSTRAINT fk_invite_codes_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_invite_codes_org_id ON invite_codes(org_id);
 
 -- ----- invoice_settings -----
--- NOTE: This table uses id = 'default' as a singleton PK.
---       After this migration the app must query by org_id instead of id = 'default'.
---       New orgs will insert rows with a distinct id (e.g. 'org-2').
-ALTER TABLE invoice_settings
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE invoice_settings
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE invoice_settings
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE invoice_settings
-    ADD CONSTRAINT fk_invoice_settings_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+-- NOTE: Uses id = 'default' as singleton PK today.
+--       App code will move to WHERE org_id = $1 after migration.
+--       New orgs insert a new row with a distinct id value.
+ALTER TABLE invoice_settings ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE invoice_settings SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE invoice_settings ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE invoice_settings ADD CONSTRAINT fk_invoice_settings_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_invoice_settings_org_id ON invoice_settings(org_id);
 
 -- ----- payment_settings -----
 -- Same singleton-PK note as invoice_settings above.
-ALTER TABLE payment_settings
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE payment_settings
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE payment_settings
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE payment_settings
-    ADD CONSTRAINT fk_payment_settings_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE payment_settings SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE payment_settings ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE payment_settings ADD CONSTRAINT fk_payment_settings_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_payment_settings_org_id ON payment_settings(org_id);
 
 -- ----- automation_settings -----
 -- Same singleton-PK note as invoice_settings above.
-ALTER TABLE automation_settings
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE automation_settings
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE automation_settings
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE automation_settings
-    ADD CONSTRAINT fk_automation_settings_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE automation_settings ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE automation_settings SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE automation_settings ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE automation_settings ADD CONSTRAINT fk_automation_settings_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_automation_settings_org_id ON automation_settings(org_id);
 
 -- ----- finance_entries -----
-ALTER TABLE finance_entries
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
+ALTER TABLE finance_entries ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE finance_entries SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE finance_entries ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE finance_entries ADD CONSTRAINT fk_finance_entries_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_finance_entries_org_id ON finance_entries(org_id);
 
-UPDATE finance_entries
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE finance_entries
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE finance_entries
-    ADD CONSTRAINT fk_finance_entries_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+-- ----- client_billing_items -----
+ALTER TABLE client_billing_items ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE client_billing_items SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE client_billing_items ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE client_billing_items ADD CONSTRAINT fk_client_billing_items_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_client_billing_items_org_id ON client_billing_items(org_id);
 
 -- ============================================================
 -- STEP 4: Add org_id to users_profile
 --
 --   users_profile is the bridge between Replit Auth and app data.
 --   It already has `role` (admin/client). We add org_id here.
---   The base `users` table is managed by Replit Auth and should
---   not be org-scoped (a Replit user account could theoretically
---   belong to multiple orgs in the future).
+--   The base `users` table is managed by Replit Auth and is not
+--   org-scoped (a user could belong to multiple orgs in future).
 -- ============================================================
-ALTER TABLE users_profile
-    ADD COLUMN IF NOT EXISTS org_id INTEGER;
-
-UPDATE users_profile
-    SET org_id = 1
-    WHERE org_id IS NULL;
-
-ALTER TABLE users_profile
-    ALTER COLUMN org_id SET NOT NULL;
-
-ALTER TABLE users_profile
-    ADD CONSTRAINT fk_users_profile_org_id
-    FOREIGN KEY (org_id) REFERENCES organizations(id)
-    NOT VALID;
-
+ALTER TABLE users_profile ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE users_profile SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE users_profile ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE users_profile ADD CONSTRAINT fk_users_profile_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_users_profile_org_id ON users_profile(org_id);
 
 -- ============================================================
--- STEP 5: Performance indexes on every new org_id column
+-- STEP 5: Add org_id to Plaid tables
+--
+--   plaid_items / plaid_accounts / plaid_transactions were previously
+--   scoped only by adminUserId. Adding org_id makes isolation explicit.
+--
+--   plaid_accounts and plaid_transactions do not have a direct
+--   adminUserId — they are reached via their parent itemId — so
+--   we backfill them by joining up through the ownership chain:
+--     plaid_transactions -> plaid_accounts -> plaid_items -> org_id = 1
+--   Since all existing data belongs to org 1, a direct SET = 1
+--   is equivalent and simpler.
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_clients_org_id            ON clients(org_id);
-CREATE INDEX IF NOT EXISTS idx_leases_org_id              ON leases(org_id);
-CREATE INDEX IF NOT EXISTS idx_invoices_org_id            ON invoices(org_id);
-CREATE INDEX IF NOT EXISTS idx_payments_org_id            ON payments(org_id);
-CREATE INDEX IF NOT EXISTS idx_documents_org_id           ON documents(org_id);
-CREATE INDEX IF NOT EXISTS idx_invite_codes_org_id        ON invite_codes(org_id);
-CREATE INDEX IF NOT EXISTS idx_invoice_settings_org_id   ON invoice_settings(org_id);
-CREATE INDEX IF NOT EXISTS idx_payment_settings_org_id   ON payment_settings(org_id);
-CREATE INDEX IF NOT EXISTS idx_automation_settings_org_id ON automation_settings(org_id);
-CREATE INDEX IF NOT EXISTS idx_finance_entries_org_id     ON finance_entries(org_id);
-CREATE INDEX IF NOT EXISTS idx_users_profile_org_id       ON users_profile(org_id);
+
+-- ----- plaid_items -----
+ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE plaid_items SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE plaid_items ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE plaid_items ADD CONSTRAINT fk_plaid_items_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_plaid_items_org_id ON plaid_items(org_id);
+
+-- ----- plaid_accounts -----
+ALTER TABLE plaid_accounts ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE plaid_accounts SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE plaid_accounts ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE plaid_accounts ADD CONSTRAINT fk_plaid_accounts_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_plaid_accounts_org_id ON plaid_accounts(org_id);
+
+-- ----- plaid_transactions -----
+ALTER TABLE plaid_transactions ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE plaid_transactions SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE plaid_transactions ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE plaid_transactions ADD CONSTRAINT fk_plaid_transactions_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_plaid_transactions_org_id ON plaid_transactions(org_id);
+
+-- ----- plaid_cursors -----
+-- plaid_cursors has no adminUserId column; it links 1:1 to plaid_items.
+ALTER TABLE plaid_cursors ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE plaid_cursors SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE plaid_cursors ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE plaid_cursors ADD CONSTRAINT fk_plaid_cursors_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_plaid_cursors_org_id ON plaid_cursors(org_id);
+
+-- ----- plaid_recurring_groups -----
+ALTER TABLE plaid_recurring_groups ADD COLUMN IF NOT EXISTS org_id INTEGER;
+UPDATE plaid_recurring_groups SET org_id = 1 WHERE org_id IS NULL;
+ALTER TABLE plaid_recurring_groups ALTER COLUMN org_id SET NOT NULL;
+ALTER TABLE plaid_recurring_groups ADD CONSTRAINT fk_plaid_recurring_groups_org_id
+    FOREIGN KEY (org_id) REFERENCES organizations(id) NOT VALID;
+CREATE INDEX IF NOT EXISTS idx_plaid_recurring_groups_org_id ON plaid_recurring_groups(org_id);
 
 COMMIT;
 
 -- ============================================================
--- POST-MIGRATION NOTES FOR REVIEWER
+-- TABLES NOT ORG-SCOPED (and why)
 -- ============================================================
+--   sessions            Replit Auth session store. Not app-scoped.
+--   users               Replit Auth user identity. Not org-scoped;
+--                       users_profile is the org bridge instead.
+--   external_accounts   Scoped by createdByUserId. Not in spec;
+--                       add in a follow-up if needed.
+--   mobile_refresh_tokens / mobile_revoked_jtis
+--                       Auth tokens scoped to userId; org access
+--                       is validated via users_profile at the route level.
 --
--- Tables in spec that are NOT org-scoped (and why):
---   - plaid_items / plaid_accounts / plaid_transactions / plaid_cursors / plaid_recurring_groups
---       These are currently scoped by adminUserId. They represent the
---       admin's personal bank connections. If you want org-level
---       Plaid isolation, add org_id here in a follow-up.
---   - client_billing_items
---       Not listed in the spec, but it references clients(client_id).
---       Since clients are org-scoped, billing items are implicitly
---       scoped. If you want an explicit org_id column here, add one
---       in a follow-up.
---   - external_accounts
---       Scoped by createdByUserId. Same situation as plaid tables.
---   - sessions / users (auth)
---       Managed by Replit Auth. Not org-scoped by design.
---       users_profile is the app-side org bridge.
---   - mobile_refresh_tokens / mobile_revoked_jtis
---       Mobile auth tokens. Not org-scoped; access is validated
---       against users_profile.org_id at the route level.
---
--- Settings table singleton PK concern:
---   invoice_settings, payment_settings, automation_settings all use
---   id = 'default' as a primary key (single row per app currently).
---   After this migration, the app will query these by org_id.
---   New orgs will need a new id value per row — the application
---   code must be updated to use a unique id per org (e.g.
---   'org-{org_id}-invoice-settings') when creating settings for
---   new organizations.
---
--- FK constraints use NOT VALID intentionally:
---   This avoids a full-table scan on large tables at migration time.
---   To validate them (optional), run after migration:
+-- FK CONSTRAINT NOTE
+-- ============================================================
+--   All FK constraints use NOT VALID to avoid a full-table scan
+--   at migration time. To validate them after migration (optional):
 --     ALTER TABLE clients VALIDATE CONSTRAINT fk_clients_org_id;
---     (repeat for each table)
+--     (repeat for each table listed above)
 -- ============================================================
