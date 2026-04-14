@@ -1,0 +1,81 @@
+I need to refactor this application to support multi-tenancy. 
+Right now it's a single-org app. I want to support multiple 
+organizations (businesses), each with their own admin users 
+and clients, fully isolated from each other.
+
+Here is exactly what needs to change:
+
+---
+
+DATABASE CHANGES:
+
+1. Create a new `organizations` table:
+   - id (PK)
+   - name (string)
+   - slug (unique, used in URLs)
+   - created_at
+   - updated_at
+
+2. Add `org_id` (integer, FK to organizations.id, NOT NULL) to 
+   these existing tables:
+   - clients
+   - invoices
+   - payments
+   - documents
+   - leases
+   - payment_settings
+   - invoice_settings
+   - invoice_settings
+   - automation_settings
+   - finance_entries
+   - invite_codes
+
+3. Add `org_id` and `role` (enum: 'admin', 'client') to the 
+   `users` table.
+
+4. Write a migration that seeds the existing data:
+   - Create org_id = 1 named "Quick IT Projects"
+   - Set all existing rows in every affected table to org_id = 1
+   - Set the existing admin user role to 'admin', org_id = 1
+   - Set existing client users to role = 'client', org_id = 1
+
+   Do NOT delete or alter any existing data — additive only.
+
+---
+
+APPLICATION CHANGES:
+
+5. Create an org context middleware that:
+   - Reads the logged-in user's org_id from the session
+   - Attaches it to req.org_id
+   - Applies to all authenticated routes
+
+6. Update EVERY database query in the app to include 
+   WHERE org_id = req.org_id (or equivalent scoping).
+   No query should return data across org boundaries.
+
+7. Update the invite code flow so generated codes are 
+   scoped to the creating admin's org_id.
+
+8. Update file/object storage paths to include org namespace:
+   /org-{org_id}/documents/{filename}
+   Do this for all upload and retrieval operations.
+
+9. Create a new org onboarding flow:
+   - Route: POST /api/orgs/register
+   - Creates a new organization record
+   - Creates the first admin user for that org
+   - Returns a session for that admin
+
+---
+
+IMPORTANT CONSTRAINTS:
+- Do not change the existing UI or any existing features
+- Do not remove or rename any existing API routes
+- The app must continue to work exactly as before for the 
+  existing org (org_id = 1) after migration
+- All changes should be backwards compatible
+- Write migrations, don't manually alter tables
+
+Start with the database migration file, show it to me for 
+review before touching any application code.

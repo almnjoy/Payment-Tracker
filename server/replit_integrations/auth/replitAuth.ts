@@ -165,6 +165,9 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
+  // Bearer-authenticated mobile requests bypass OIDC session checks
+  if ((req as any).mobileUser) return next();
+
   const user = req.user as any;
 
   if (!req.isAuthenticated() || !user.expires_at) {

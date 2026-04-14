@@ -30,6 +30,13 @@ export function getAllowedOrigins(): string[] {
   if (process.env.APP_BASE_URL) {
     origins.push(process.env.APP_BASE_URL);
   }
+
+  if (process.env.MOBILE_CORS_ORIGINS) {
+    process.env.MOBILE_CORS_ORIGINS.split(",")
+      .map((o) => o.trim())
+      .filter(Boolean)
+      .forEach((o) => origins.push(o));
+  }
   
   if (process.env.NODE_ENV !== "production") {
     if (process.env.REPLIT_DEV_DOMAIN) {
